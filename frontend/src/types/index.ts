@@ -29,6 +29,117 @@ export interface RegisterGymRequest {
   owner_password: string;
 }
 
+export interface SaaSPlan {
+  key: string;
+  name: string;
+  description: string;
+  license_type: 'monthly' | 'annual' | 'perpetual';
+  currency: string;
+  price: number;
+  billing_interval: 'month' | 'year' | 'manual';
+  trial_days: number;
+  max_members: number;
+  max_branches: number;
+  features: string[];
+  highlighted: boolean;
+  checkout_enabled: boolean;
+}
+
+export interface SaaSSignupRequest extends RegisterGymRequest {
+  plan_key: string;
+  success_url?: string;
+  cancel_url?: string;
+}
+
+export interface AdminSaaSPlan extends SaaSPlan {
+  id: string;
+  stripe_price_id?: string;
+  is_active: boolean;
+  is_public: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminSaaSPlanCreateRequest {
+  key: string;
+  name: string;
+  description: string;
+  license_type: 'monthly' | 'annual' | 'perpetual';
+  currency: string;
+  price: number;
+  billing_interval: 'month' | 'year' | 'manual';
+  trial_days: number;
+  max_members: number;
+  max_branches: number;
+  features: string[];
+  stripe_price_id?: string | null;
+  highlighted: boolean;
+  is_active: boolean;
+  is_public: boolean;
+  sort_order: number;
+}
+
+export interface AdminSaaSPlanUpdateRequest {
+  name?: string;
+  description?: string;
+  license_type?: 'monthly' | 'annual' | 'perpetual';
+  currency?: string;
+  price?: number;
+  billing_interval?: 'month' | 'year' | 'manual';
+  trial_days?: number;
+  max_members?: number;
+  max_branches?: number;
+  features?: string[];
+  stripe_price_id?: string | null;
+  highlighted?: boolean;
+  is_active?: boolean;
+  is_public?: boolean;
+  sort_order?: number;
+}
+
+export interface SaaSSignupResponse {
+  tenant: Tenant;
+  user: User;
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  plan: SaaSPlan;
+  billing_status: string;
+  checkout_required: boolean;
+  checkout_url?: string;
+  checkout_session_id?: string;
+  next_action: string;
+  message: string;
+}
+
+export interface TenantBilling {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  status: 'active' | 'trial' | 'suspended' | 'expired' | 'cancelled';
+  license_type: 'monthly' | 'annual' | 'perpetual';
+  plan_key: string;
+  plan_name: string;
+  currency: string;
+  trial_ends_at?: string;
+  license_expires_at?: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
+  checkout_enabled: boolean;
+  is_active: boolean;
+  max_members?: number;
+  max_branches?: number;
+  features: string[];
+  owner_email?: string;
+  owner_name?: string;
+  created_at: string;
+}
+
+export interface AdminTenantBilling extends TenantBilling {
+  owner_user_id?: string;
+}
+
 /* ─── User ───────────────────────────────────────────────────── */
 
 export interface User {

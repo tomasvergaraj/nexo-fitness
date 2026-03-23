@@ -65,6 +65,16 @@ export const authApi = {
     api.post('/auth/refresh', { refresh_token: refreshToken }),
 };
 
+export const billingApi = {
+  listPublicPlans: () => api.get('/billing/public/plans'),
+  signup: (data: unknown) => api.post('/billing/signup', data),
+  currentSubscription: () => api.get('/billing/subscription'),
+  listAdminTenants: (params?: Record<string, unknown>) => api.get('/billing/admin/tenants', { params }),
+  listAdminPlans: () => api.get('/billing/admin/plans'),
+  createAdminPlan: (data: unknown) => api.post('/billing/admin/plans', data),
+  updateAdminPlan: (planId: string, data: unknown) => api.patch(`/billing/admin/plans/${planId}`, data),
+};
+
 export const dashboardApi = {
   getMetrics: () => api.get('/dashboard/metrics'),
 };

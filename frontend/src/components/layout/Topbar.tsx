@@ -40,6 +40,16 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const notificationsList = user?.role === 'superadmin'
+    ? [
+        {
+          id: 'tenants',
+          title: 'Revisa el pipeline SaaS',
+          description: 'Monitorea trials, activaciones y tenants con riesgo.',
+          path: '/platform/tenants',
+        },
+      ]
+    : notifications;
 
   const handleLogout = () => {
     logout();
@@ -159,7 +169,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                   <p className="text-xs text-surface-500">Acciones rapidas del sistema</p>
                 </div>
                 <div className="p-2">
-                  {notifications.map((item) => (
+                  {notificationsList.map((item) => (
                     <button
                       key={item.id}
                       type="button"

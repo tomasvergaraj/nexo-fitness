@@ -22,7 +22,7 @@ export default function LoginPage() {
     try {
       const { data } = await authApi.login(email, password);
       setAuth(data.user, data.access_token, data.refresh_token);
-      navigate('/dashboard');
+      navigate(data.user.role === 'superadmin' ? '/platform/tenants' : '/dashboard');
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Error al iniciar sesión');
     } finally {

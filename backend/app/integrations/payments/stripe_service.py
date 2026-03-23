@@ -1,7 +1,6 @@
 """Stripe payment integration for Nexo Fitness."""
 
 from typing import Optional
-from decimal import Decimal
 
 from app.core.config import get_settings
 
@@ -15,7 +14,12 @@ class StripeService:
         self._initialized = False
         self._stripe = None
 
+    def is_configured(self) -> bool:
+        return bool(settings.STRIPE_SECRET_KEY)
+
     def _ensure_init(self):
+        if not self.is_configured():
+            raise RuntimeError("Stripe is not configured")
         if not self._initialized:
             try:
                 import stripe

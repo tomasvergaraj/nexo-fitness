@@ -1,17 +1,18 @@
-"""FastAPI dependencies: authentication, tenant context, authorization."""
-
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.models.user import User
 from app.models.tenant import Tenant
+from app.models.user import User
+from app.services.billing_service import evaluate_tenant_access
 
 security_scheme = HTTPBearer()
 
@@ -45,7 +46,7 @@ async def get_current_user(
 async def get_current_tenant(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Tenant:
+) -> Optional[Tenant]:
     """Get the tenant for the current user. Superadmins may not have a tenant."""
     if current_user.is_superadmin:
         # Superadmins can specify tenant via header or default to None
@@ -55,12 +56,21 @@ async def get_current_tenant(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no tenant assigned")
 
     result = await db.execute(
-        select(Tenant).where(Tenant.id == current_user.tenant_id, Tenant.is_active == True)
+        select(Tenant).options(selectinload(Tenant.users)).where(Tenant.id == current_user.tenant_id, Tenant.is_active == True)
     )
     tenant = result.scalar_one_or_none()
 
     if not tenant:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant not found or suspended")
+
+    access_state = evaluate_tenant_access(tenant, now=datetime.now(timezone.utc))
+    if not access_state.allow_access:
+        if access_state.status_to_apply:
+            tenant.status = access_state.status_to_apply
+        if access_state.deactivate:
+            tenant.is_active = False
+        await db.flush()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_state.detail)
 
     return tenant
 

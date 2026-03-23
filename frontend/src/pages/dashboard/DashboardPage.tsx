@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   DollarSign, Users, CalendarDays, ClipboardCheck, AlertTriangle, TrendingUp, UserCheck, ArrowUpRight,
@@ -8,12 +8,18 @@ import {
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import { dashboardApi } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import { formatCurrency, parseApiNumber } from '@/utils';
 import type { DashboardMetrics } from '@/types';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+
+  if (user?.role === 'superadmin') {
+    return <Navigate to="/platform/tenants" replace />;
+  }
 
   const { data, isLoading, isError } = useQuery<DashboardMetrics>({
     queryKey: ['dashboard-metrics'],

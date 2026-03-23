@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, CalendarDays, Users, CreditCard,
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
-  ChevronLeft, Zap,
+  ChevronLeft, ShieldCheck, WalletCards, Zap,
 } from 'lucide-react';
 import { cn } from '@/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -21,7 +21,7 @@ interface NavItemDef {
   roles?: UserRole[];
 }
 
-const navItems: NavItemDef[] = [
+const tenantNavItems: NavItemDef[] = [
   { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
   { label: 'Clases', path: '/classes', icon: <CalendarDays size={20} />, roles: ['owner', 'admin', 'reception', 'trainer'] },
   { label: 'Clientes', path: '/clients', icon: <Users size={20} />, roles: ['owner', 'admin', 'reception', 'trainer'] },
@@ -34,13 +34,19 @@ const navItems: NavItemDef[] = [
   { label: 'Configuración', path: '/settings', icon: <Settings size={20} />, roles: ['owner', 'admin'] },
 ];
 
+const superadminNavItems: NavItemDef[] = [
+  { label: 'Tenants SaaS', path: '/platform/tenants', icon: <ShieldCheck size={20} />, roles: ['superadmin'] },
+  { label: 'Planes SaaS', path: '/platform/plans', icon: <WalletCards size={20} />, roles: ['superadmin'] },
+];
+
 export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const userRole = user?.role;
+  const homePath = userRole === 'superadmin' ? '/platform/tenants' : '/dashboard';
 
-  const filteredItems = navItems.filter(
-    (item) => !item.roles || (userRole && item.roles.includes(userRole)) || userRole === 'superadmin'
+  const filteredItems = (userRole === 'superadmin' ? superadminNavItems : tenantNavItems).filter(
+    (item) => !item.roles || (userRole && item.roles.includes(userRole))
   );
 
   return (
@@ -73,7 +79,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
       >
         {/* Brand Header */}
         <div className="flex items-center justify-between px-5 py-5 border-b border-surface-100 dark:border-surface-800/50">
-          <NavLink to="/dashboard" className="flex items-center gap-2.5 group">
+          <NavLink to={homePath} className="flex items-center gap-2.5 group">
             <motion.div
               whileHover={{ rotate: [0, -10, 10, 0], scale: 1.05 }}
               transition={{ duration: 0.5 }}

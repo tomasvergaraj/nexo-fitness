@@ -1,8 +1,10 @@
 """Security utilities: password hashing, JWT token management."""
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Optional
 
+import bcrypt as bcrypt_module
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -10,6 +12,20 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+
+def _ensure_bcrypt_metadata() -> None:
+    """Backfill bcrypt metadata expected by passlib 1.7.x."""
+    if hasattr(bcrypt_module, "__about__"):
+        return
+
+    version = getattr(bcrypt_module, "__version__", None)
+    if version is None:
+        return
+
+    bcrypt_module.__about__ = SimpleNamespace(__version__=version)
+
+
+_ensure_bcrypt_metadata()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 

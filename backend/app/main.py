@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.api.v1.endpoints import auth, dashboard, classes, clients
+from app.api.v1.endpoints import auth, billing, dashboard, classes, clients
 
 settings = get_settings()
 
@@ -62,6 +62,7 @@ async def health():
 # Mount routers
 prefix = settings.API_V1_PREFIX
 app.include_router(auth.router, prefix=prefix)
+app.include_router(billing.router, prefix=prefix)
 app.include_router(dashboard.router, prefix=prefix)
 app.include_router(classes.router, prefix=prefix)
 app.include_router(clients.clients_router, prefix=prefix)

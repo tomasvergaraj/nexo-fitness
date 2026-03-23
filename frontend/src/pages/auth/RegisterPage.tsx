@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ArrowRight, Loader2, Zap } from 'lucide-react';
-import { authApi } from '@/services/api';
+import { ArrowLeft, ArrowRight, Check, Loader2, Zap } from 'lucide-react';
+import { billingApi } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
+import type { SaaSPlan } from '@/types';
 import { cn } from '@/utils';
 
 const initialForm = {
@@ -23,7 +25,11 @@ const initialForm = {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const setAuth = useAuthStore((state) => state.setAuth);
   const [form, setForm] = useState(initialForm);
+  const [plans, setPlans] = useState<SaaSPlan[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState<SaaSPlan['key']>('monthly');
+  const [plansLoading, setPlansLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,15 +37,78 @@ export default function RegisterPage() {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
+  useEffect(() => {
+    let active = true;
+
+    const loadPlans = async () => {
+      try {
+        const response = await billingApi.listPublicPlans();
+        if (!active) {
+          return;
+        }
+
+        const nextPlans = response.data as SaaSPlan[];
+        setPlans(nextPlans);
+        if (nextPlans.length > 0) {
+          setSelectedPlan(nextPlans[0].key);
+          setForm((current) => ({ ...current, license_type: nextPlans[0].license_type }));
+        }
+      } catch {
+        if (active) {
+          toast.error('No pudimos cargar los planes SaaS. Puedes intentar de nuevo en unos segundos.');
+        }
+      } finally {
+        if (active) {
+          setPlansLoading(false);
+        }
+      }
+    };
+
+    loadPlans();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const activePlan = plans.find((plan) => plan.key === selectedPlan);
+
+  const formatPrice = (plan: SaaSPlan) =>
+    new Intl.NumberFormat('es-CL', {
+      style: 'currency',
+      currency: plan.currency,
+      maximumFractionDigits: 0,
+    }).format(plan.price);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!activePlan) {
+      setError('Selecciona un plan para continuar');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
-      await authApi.registerGym(form);
-      toast.success('Gimnasio registrado. Ya puedes iniciar sesion.');
-      navigate('/login');
+      const response = await billingApi.signup({
+        ...form,
+        license_type: activePlan.license_type,
+        plan_key: activePlan.key,
+        success_url: `${window.location.origin}/dashboard?billing=success`,
+        cancel_url: `${window.location.origin}/dashboard?billing=cancelled`,
+      });
+      const data = response.data;
+
+      setAuth(data.user, data.access_token, data.refresh_token);
+
+      if (data.checkout_url) {
+        toast.success('Cuenta creada. Te llevamos al checkout para activar la suscripcion.');
+        window.location.href = data.checkout_url;
+        return;
+      }
+
+      toast.success(data.message || 'Cuenta creada con trial activo.');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'No se pudo registrar el gimnasio');
     } finally {
@@ -48,143 +117,319 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface-950 px-6 py-10">
-      <div className="mx-auto max-w-5xl">
+    <div className="relative min-h-screen overflow-hidden bg-surface-950 px-4 py-8 sm:px-6 lg:px-10">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-[-5rem] top-[-4rem] h-72 w-72 rounded-full bg-brand-500/20 blur-3xl" />
+        <div className="absolute bottom-[-7rem] right-[-4rem] h-80 w-80 rounded-full bg-amber-500/10 blur-3xl" />
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+      </div>
+
+      <div className="relative z-10 mx-auto max-w-7xl">
         <button
           type="button"
           onClick={() => navigate('/login')}
-          className="mb-6 inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2 text-sm text-surface-300 transition-colors hover:bg-white/5"
+          className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-surface-300 transition-colors hover:bg-white/10"
         >
           <ArrowLeft size={16} />
           Volver al login
         </button>
 
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="grid gap-8 xl:grid-cols-[0.92fr_1.08fr]">
           <motion.div
             initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
-            className="rounded-3xl bg-gradient-to-br from-brand-500 to-brand-700 p-8 text-white shadow-2xl shadow-brand-500/20"
+            className="space-y-6 xl:sticky xl:top-8 xl:self-start"
           >
-            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15">
-              <Zap size={26} />
-            </div>
-            <h1 className="text-4xl font-bold font-display">Registra tu gimnasio</h1>
-            <p className="mt-4 max-w-xl text-sm text-white/80">
-              Crea una instancia nueva de NexoFitness para administrar clases, clientes, pagos y operacion diaria.
-            </p>
-            <div className="mt-8 grid gap-4 sm:grid-cols-3">
-              {[
-                { label: 'Setup inicial', value: '5 min' },
-                { label: 'Owner creado', value: 'Automatico' },
-                { label: 'Pais base', value: 'Chile' },
-              ].map((item) => (
-                <div key={item.label} className="rounded-2xl bg-white/10 px-4 py-4 backdrop-blur-sm">
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/55">{item.label}</p>
-                  <p className="mt-2 text-lg font-semibold">{item.value}</p>
+            <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-brand-500 via-cyan-500 to-sky-700 p-8 text-white shadow-2xl shadow-brand-500/20">
+              <div className="flex items-center justify-between gap-4">
+                <div className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/80">
+                  Onboarding SaaS
                 </div>
-              ))}
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15">
+                  <Zap size={26} />
+                </div>
+              </div>
+
+              <h1 className="mt-8 max-w-lg text-4xl font-bold font-display leading-tight">
+                Registra tu gimnasio con una distribucion mucho mas clara
+              </h1>
+              <p className="mt-4 max-w-xl text-sm leading-6 text-white/82">
+                Primero eliges el plan, despues completas los datos del gimnasio y del owner. Todo queda listo para activar trial o pasar directo al checkout online.
+              </p>
+
+              <div className="mt-8 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+                {[
+                  { label: 'Setup inicial', value: '5 min' },
+                  { label: 'Owner creado', value: 'Automatico' },
+                  { label: 'Trial', value: `${activePlan?.trial_days ?? 14} dias` },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-2xl bg-white/12 px-4 py-4 backdrop-blur-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-white/55">{item.label}</p>
+                    <p className="mt-2 text-lg font-semibold">{item.value}</p>
+                  </div>
+                ))}
+              </div>
             </div>
+
+            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-white">Plan SaaS</p>
+                  <p className="mt-1 text-sm text-surface-400">Elige el paquete antes de completar el onboarding.</p>
+                </div>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-surface-400">
+                  {plansLoading ? 'Cargando' : activePlan?.checkout_enabled ? 'Checkout online' : 'Trial'}
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                {plans.map((plan) => {
+                  const isSelected = plan.key === selectedPlan;
+                  return (
+                    <button
+                      key={plan.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedPlan(plan.key);
+                        updateField('license_type', plan.license_type);
+                      }}
+                      className={cn(
+                        'rounded-[1.5rem] border px-5 py-5 text-left transition-all',
+                        isSelected
+                          ? 'border-brand-400 bg-brand-500/15 shadow-lg shadow-brand-500/10'
+                          : 'border-white/10 bg-black/10 hover:border-white/20 hover:bg-white/[0.07]',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">{plan.name}</p>
+                          <p className="mt-1 text-xs leading-5 text-surface-400">{plan.description}</p>
+                        </div>
+                        {plan.highlighted ? (
+                          <span className="rounded-full bg-brand-500/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-100">
+                            Recomendado
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-5 flex items-end justify-between gap-4">
+                        <div>
+                          <p className="text-3xl font-bold text-white">{formatPrice(plan)}</p>
+                          <p className="mt-1 text-xs uppercase tracking-[0.18em] text-surface-500">
+                            por {plan.billing_interval === 'year' ? 'ano' : 'mes'}
+                          </p>
+                        </div>
+                        <div className="text-right text-xs text-surface-400">
+                          <p>{plan.trial_days} dias de trial</p>
+                          <p>{plan.max_members} miembros</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {activePlan ? (
+              <div className="rounded-[2rem] border border-white/10 bg-black/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Resumen de {activePlan.name}</p>
+                    <p className="mt-1 max-w-lg text-sm leading-6 text-surface-400">
+                      {activePlan.checkout_enabled
+                        ? 'El owner entra al dashboard y puede continuar el pago online de inmediato.'
+                        : 'El gimnasio parte con trial activo y el checkout quedara listo cuando configures Stripe.'}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-right">
+                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Total</p>
+                    <p className="text-xl font-semibold text-white">{formatPrice(activePlan)}</p>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {activePlan.features.map((feature) => (
+                    <div key={feature} className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3 text-sm text-surface-300">
+                      <Check size={16} className="shrink-0 text-brand-300" />
+                      <span>{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Capacidad</p>
+                    <p className="mt-2 text-sm text-white">{activePlan.max_members} miembros y {activePlan.max_branches} sedes</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Activacion</p>
+                    <p className="mt-2 text-sm text-white">
+                      {activePlan.checkout_enabled ? 'Pago online inmediato disponible' : 'Trial primero, cobro despues'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </motion.div>
 
-          <motion.div
+          <motion.form
+            onSubmit={handleSubmit}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-2xl"
+            className="space-y-6"
           >
-            <h2 className="text-2xl font-bold font-display text-white">Onboarding</h2>
-            <p className="mt-1 text-sm text-surface-400">Completa los datos basicos del gimnasio y su cuenta owner.</p>
-
-            <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Nombre del gimnasio</label>
-                  <input className="input bg-white/5 text-white" value={form.gym_name} onChange={(event) => updateField('gym_name', event.target.value)} required />
+                  <h2 className="text-3xl font-bold font-display text-white">Onboarding del gimnasio</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-400">
+                    Completa los datos operativos en un bloque y los datos del owner en otro. Asi el formulario respira mejor y cada paso se entiende de inmediato.
+                  </p>
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Slug</label>
-                  <input className="input bg-white/5 text-white" value={form.slug} onChange={(event) => updateField('slug', event.target.value.toLowerCase().replace(/\s+/g, '-'))} required />
+                <div className="grid gap-2 text-right text-xs text-surface-400">
+                  <span className="rounded-full border border-white/10 bg-black/10 px-3 py-1 uppercase tracking-[0.18em]">
+                    {activePlan?.trial_days ?? 14} dias de trial
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-black/10 px-3 py-1 uppercase tracking-[0.18em]">
+                    {activePlan?.checkout_enabled ? 'Stripe listo' : 'Stripe opcional'}
+                  </span>
                 </div>
               </div>
+            </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Email del gimnasio</label>
-                  <input type="email" className="input bg-white/5 text-white" value={form.email} onChange={(event) => updateField('email', event.target.value)} required />
+            <div className="grid gap-6 2xl:grid-cols-[1.05fr_0.95fr]">
+              <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
+                <div className="mb-6 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-300">Gimnasio</p>
+                    <h3 className="mt-2 text-2xl font-bold font-display text-white">Datos del negocio</h3>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-2 text-xs text-surface-400">
+                    Tenant + sucursal principal
+                  </div>
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Ciudad</label>
-                  <input className="input bg-white/5 text-white" value={form.city} onChange={(event) => updateField('city', event.target.value)} />
+
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Nombre del gimnasio</label>
+                    <input className="input bg-white/5 text-white" value={form.gym_name} onChange={(event) => updateField('gym_name', event.target.value)} required />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Slug</label>
+                    <input className="input bg-white/5 text-white" value={form.slug} onChange={(event) => updateField('slug', event.target.value.toLowerCase().replace(/\s+/g, '-'))} required />
+                    <p className="mt-2 text-xs text-surface-500">Se usa en la URL interna del tenant. Conviene corto, claro y sin espacios.</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Email del gimnasio</label>
+                    <input type="email" className="input bg-white/5 text-white" value={form.email} onChange={(event) => updateField('email', event.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Ciudad</label>
+                    <input className="input bg-white/5 text-white" value={form.city} onChange={(event) => updateField('city', event.target.value)} />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Pais</label>
+                    <input className="input bg-white/5 text-white" value={form.country} onChange={(event) => updateField('country', event.target.value)} />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Zona horaria</label>
+                    <input className="input bg-white/5 text-white" value={form.timezone} onChange={(event) => updateField('timezone', event.target.value)} />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Moneda</label>
+                    <input className="input bg-white/5 text-white" value={form.currency} onChange={(event) => updateField('currency', event.target.value)} />
+                  </div>
                 </div>
+              </section>
+
+              <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
+                <div className="mb-6 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Owner</p>
+                    <h3 className="mt-2 text-2xl font-bold font-display text-white">Cuenta principal</h3>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-2 text-xs text-surface-400">
+                    Acceso inicial del cliente
+                  </div>
+                </div>
+
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Nombre owner</label>
+                    <input className="input bg-white/5 text-white" value={form.owner_first_name} onChange={(event) => updateField('owner_first_name', event.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Apellido owner</label>
+                    <input className="input bg-white/5 text-white" value={form.owner_last_name} onChange={(event) => updateField('owner_last_name', event.target.value)} required />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Email owner</label>
+                    <input type="email" className="input bg-white/5 text-white" value={form.owner_email} onChange={(event) => updateField('owner_email', event.target.value)} required />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Contrasena owner</label>
+                    <input type="password" className="input bg-white/5 text-white" value={form.owner_password} onChange={(event) => updateField('owner_password', event.target.value)} required />
+                    <p className="mt-2 text-xs text-surface-500">Este usuario queda listo para entrar al dashboard apenas se cree la cuenta.</p>
+                  </div>
+                </div>
+
+                <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-black/10 px-4 py-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Lo que ocurre al enviar</p>
+                  <div className="mt-3 space-y-3 text-sm text-surface-300">
+                    <div className="flex items-center gap-2">
+                      <Check size={16} className="text-brand-300" />
+                      <span>Se crea el tenant y la sede principal.</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Check size={16} className="text-brand-300" />
+                      <span>Se genera el owner con acceso inmediato.</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Check size={16} className="text-brand-300" />
+                      <span>Se activa trial o checkout segun el plan elegido.</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            {error ? (
+              <div className="rounded-[1.5rem] border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                {error}
               </div>
+            ) : null}
 
-              <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Pais</label>
-                  <input className="input bg-white/5 text-white" value={form.country} onChange={(event) => updateField('country', event.target.value)} />
+                  <p className="text-sm font-semibold text-white">Listo para crear el gimnasio</p>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-400">
+                    El registro deja al owner autenticado y lo redirige al dashboard o al checkout, segun la configuracion del plan.
+                  </p>
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Zona horaria</label>
-                  <input className="input bg-white/5 text-white" value={form.timezone} onChange={(event) => updateField('timezone', event.target.value)} />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Licencia</label>
-                  <select className="input bg-white/5 text-white" value={form.license_type} onChange={(event) => updateField('license_type', event.target.value)}>
-                    <option value="monthly">Mensual</option>
-                    <option value="annual">Anual</option>
-                    <option value="perpetual">Perpetua</option>
-                  </select>
-                </div>
+
+                <motion.button
+                  type="submit"
+                  disabled={loading || plansLoading || !activePlan}
+                  whileHover={{ scale: loading || plansLoading || !activePlan ? 1 : 1.01 }}
+                  whileTap={{ scale: loading || plansLoading || !activePlan ? 1 : 0.98 }}
+                  className={cn(
+                    'flex min-w-[280px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-4 font-semibold text-white shadow-xl shadow-brand-500/25',
+                    (loading || plansLoading || !activePlan) && 'cursor-not-allowed opacity-80',
+                  )}
+                >
+                  {loading || plansLoading ? (
+                    <Loader2 size={20} className="animate-spin" />
+                  ) : (
+                    <>
+                      {activePlan?.checkout_enabled ? 'Crear gimnasio e ir a pagar' : 'Crear gimnasio y activar trial'}
+                      <ArrowRight size={18} />
+                    </>
+                  )}
+                </motion.button>
               </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Nombre owner</label>
-                  <input className="input bg-white/5 text-white" value={form.owner_first_name} onChange={(event) => updateField('owner_first_name', event.target.value)} required />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Apellido owner</label>
-                  <input className="input bg-white/5 text-white" value={form.owner_last_name} onChange={(event) => updateField('owner_last_name', event.target.value)} required />
-                </div>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Email owner</label>
-                  <input type="email" className="input bg-white/5 text-white" value={form.owner_email} onChange={(event) => updateField('owner_email', event.target.value)} required />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-surface-300">Contrasena owner</label>
-                  <input type="password" className="input bg-white/5 text-white" value={form.owner_password} onChange={(event) => updateField('owner_password', event.target.value)} required />
-                </div>
-              </div>
-
-              {error ? (
-                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-                  {error}
-                </div>
-              ) : null}
-
-              <motion.button
-                type="submit"
-                disabled={loading}
-                whileHover={{ scale: loading ? 1 : 1.01 }}
-                whileTap={{ scale: loading ? 1 : 0.98 }}
-                className={cn(
-                  'flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-500 to-brand-600 py-3.5 font-semibold text-white shadow-xl shadow-brand-500/25',
-                  loading && 'cursor-not-allowed opacity-80',
-                )}
-              >
-                {loading ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
-                  <>
-                    Crear gimnasio
-                    <ArrowRight size={18} />
-                  </>
-                )}
-              </motion.button>
-            </form>
-          </motion.div>
+            </div>
+          </motion.form>
         </div>
       </div>
     </div>

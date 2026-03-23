@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     SUPERADMIN_EMAIL: str = "admin@nexofitness.com"
     SUPERADMIN_PASSWORD: str = "change-me-admin"
 
+    # SaaS Billing
+    FRONTEND_URL: str = "http://localhost:3000"
+    SAAS_TRIAL_DAYS: int = 14
+    SAAS_CURRENCY: str = "CLP"
+    SAAS_MONTHLY_PRICE: int = 34990
+    SAAS_ANNUAL_PRICE: int = 349900
+    STRIPE_SAAS_MONTHLY_PRICE_ID: str = ""
+    STRIPE_SAAS_ANNUAL_PRICE_ID: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

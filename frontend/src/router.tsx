@@ -13,6 +13,14 @@ import MarketingPage from '@/pages/marketing/MarketingPage';
 import ReportsPage from '@/pages/reports/ReportsPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
 import SupportPage from '@/pages/support/SupportPage';
+import PlatformTenantsPage from '@/pages/platform/PlatformTenantsPage';
+import PlatformPlansPage from '@/pages/platform/PlatformPlansPage';
+import { useAuthStore } from '@/stores/authStore';
+
+function HomeRedirect() {
+  const user = useAuthStore((state) => state.user);
+  return <Navigate to={user?.role === 'superadmin' ? '/platform/tenants' : '/dashboard'} replace />;
+}
 
 export const router = createBrowserRouter([
   {
@@ -31,7 +39,7 @@ export const router = createBrowserRouter([
       </AuthGuard>
     ),
     children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
+      { index: true, element: <HomeRedirect /> },
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'classes', element: <ClassesPage /> },
       { path: 'clients', element: <ClientsPage /> },
@@ -42,6 +50,22 @@ export const router = createBrowserRouter([
       { path: 'reports', element: <ReportsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'support', element: <SupportPage /> },
+      {
+        path: 'platform/tenants',
+        element: (
+          <AuthGuard roles={['superadmin']}>
+            <PlatformTenantsPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'platform/plans',
+        element: (
+          <AuthGuard roles={['superadmin']}>
+            <PlatformPlansPage />
+          </AuthGuard>
+        ),
+      },
     ],
   },
   {

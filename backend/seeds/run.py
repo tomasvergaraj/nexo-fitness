@@ -18,6 +18,7 @@ from app.models.business import (
     Payment, PaymentStatus, PaymentMethod,
     Campaign, CampaignStatus, CampaignChannel,
 )
+from app.services.saas_plan_service import ensure_default_saas_plans
 
 
 async def create_tables():
@@ -29,6 +30,7 @@ async def seed():
     await create_tables()
 
     async with async_session_factory() as db:
+        await ensure_default_saas_plans(db)
         # ─── Superadmin ──────────────────────────────────
         superadmin = User(
             email="admin@nexofitness.com",
