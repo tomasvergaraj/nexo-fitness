@@ -7,7 +7,7 @@ import Modal from '@/components/ui/Modal';
 import { campaignsApi, clientsApi, notificationsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatDateTime, toDateInputValue } from '@/utils';
-import type { AppNotification, Campaign, NotificationBroadcastResponse, PaginatedResponse, User } from '@/types';
+import type { AppNotification, Campaign, CampaignOverview, NotificationBroadcastResponse, PaginatedResponse, User } from '@/types';
 
 type CampaignSegmentFilter = NonNullable<Campaign['segment_filter']>;
 
@@ -63,6 +63,22 @@ const emptyForm: CampaignForm = {
   audience_status: 'active',
   audience_search: '',
   scheduled_at: '',
+};
+
+const emptyOverview: CampaignOverview = {
+  total_campaigns: 0,
+  scheduled_pending: 0,
+  sending_now: 0,
+  sent_total: 0,
+  opened_total: 0,
+  clicked_total: 0,
+  manual_runs: 0,
+  scheduler_runs: 0,
+  scheduler_failures: 0,
+  pending_push_receipts: 0,
+  failed_push_receipts: 0,
+  open_rate: 0,
+  click_rate: 0,
 };
 
 function normalizeSegmentFilter(segmentFilter?: Campaign['segment_filter'] | null): CampaignSegmentFilter {
@@ -165,6 +181,14 @@ export default function MarketingPage() {
     },
   });
 
+  const { data: overviewData } = useQuery<CampaignOverview>({
+    queryKey: ['campaigns-overview'],
+    queryFn: async () => {
+      const response = await campaignsApi.overview();
+      return response.data;
+    },
+  });
+
   const { data: clientsData, isLoading: isLoadingClients, isError: isClientsError } = useQuery<PaginatedResponse<User>>({
     queryKey: ['marketing-clients'],
     enabled: showBroadcastModal,
@@ -208,6 +232,7 @@ export default function MarketingPage() {
       setShowModal(false);
       setForm(emptyForm);
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns-overview'] });
     },
     onError: (error: any) => {
       toast.error(error?.response?.data?.detail || 'No se pudo guardar la campana');
@@ -231,6 +256,7 @@ export default function MarketingPage() {
       setLastBroadcastResult(result);
       setLastBroadcastUsedPush(broadcastForm.send_push);
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns-overview'] });
 
       if (!broadcastForm.send_push) {
         toast.success(`Broadcast creado para ${result.total_recipients} cliente(s) sin envio push.`);
@@ -248,6 +274,7 @@ export default function MarketingPage() {
   });
 
   const campaigns = data?.items ?? [];
+  const overview = overviewData ?? emptyOverview;
   const clientItems = clientsData?.items ?? [];
   const editingCampaign = useMemo(
     () => (form.id ? campaigns.find((campaign) => campaign.id === form.id) : undefined),
@@ -281,18 +308,13 @@ export default function MarketingPage() {
     setHasAppliedInitialSegmentSelection(true);
   }, [showBroadcastModal, hasAppliedInitialSegmentSelection, clientItems.length, broadcastForm.segment_filter, segmentMatchedClients]);
 
-  const stats = useMemo(() => {
-    const sent = campaigns.reduce((sum, item) => sum + item.total_sent, 0);
-    const opened = campaigns.reduce((sum, item) => sum + item.total_opened, 0);
-    const clicked = campaigns.reduce((sum, item) => sum + item.total_clicked, 0);
-    return {
-      active: campaigns.filter((item) => item.status === 'scheduled' || item.status === 'sending').length,
-      sent,
-      clicked,
-      openRate: calculateRate(opened, sent),
-      clickRate: calculateRate(clicked, sent),
-    };
-  }, [campaigns]);
+  const stats = {
+    active: overview.scheduled_pending + overview.sending_now,
+    sent: overview.sent_total,
+    clicked: overview.clicked_total,
+    openRate: overview.open_rate,
+    clickRate: overview.click_rate,
+  };
 
   const toggleRecipient = (userId: string) => {
     setBroadcastForm((current) => ({
@@ -379,6 +401,29 @@ export default function MarketingPage() {
           <div className="flex items-center gap-3"><MousePointerClick size={18} className="text-amber-500" /><span className="text-sm text-surface-500">CTR</span></div>
           <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.clickRate}%</p>
           <p className="mt-1 text-xs text-surface-500">{stats.clicked} click(s) registrados</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <div className="flex items-center gap-3"><Clock3 size={18} className="text-sky-500" /><span className="text-sm text-surface-500">Pendientes</span></div>
+          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.scheduled_pending}</p>
+          <p className="mt-1 text-xs text-surface-500">{overview.total_campaigns} campana(s) persistidas</p>
+        </div>
+        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <div className="flex items-center gap-3"><Send size={18} className="text-emerald-500" /><span className="text-sm text-surface-500">Scheduler OK</span></div>
+          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.scheduler_runs}</p>
+          <p className="mt-1 text-xs text-surface-500">{overview.manual_runs} corrida(s) manuales exitosas</p>
+        </div>
+        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <div className="flex items-center gap-3"><AlertTriangle size={18} className="text-amber-500" /><span className="text-sm text-surface-500">Scheduler error</span></div>
+          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.scheduler_failures}</p>
+          <p className="mt-1 text-xs text-surface-500">{overview.sending_now} campana(s) en envio ahora</p>
+        </div>
+        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <div className="flex items-center gap-3"><Bell size={18} className="text-brand-500" /><span className="text-sm text-surface-500">Receipts push</span></div>
+          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.pending_push_receipts}</p>
+          <p className="mt-1 text-xs text-surface-500">{overview.failed_push_receipts} con receipt final en error</p>
         </div>
       </div>
 

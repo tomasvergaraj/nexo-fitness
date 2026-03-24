@@ -128,6 +128,7 @@ export const membershipsApi = {
 
 export const campaignsApi = {
   list: (params?: Record<string, unknown>) => api.get('/campaigns', { params }),
+  overview: () => api.get('/campaigns/overview'),
   create: (data: Record<string, unknown>) => api.post('/campaigns', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/campaigns/${id}`, data),
 };

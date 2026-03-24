@@ -9,6 +9,7 @@ export function StoreScreen({ app, accentColor }: MobileScreenProps) {
   const {
     isRestoringSession,
     isCreatingCheckout,
+    tenantProfile,
     plans,
     selectedPlanId,
     setSelectedPlanId,
@@ -60,6 +61,13 @@ export function StoreScreen({ app, accentColor }: MobileScreenProps) {
         <Metric label="Planes" value={String(plans.length)} />
         <Metric label="Seleccion" value={selectedPlan ? 'lista' : 'pendiente'} />
       </View>
+      <View style={styles.metricRow}>
+        <Metric
+          label="Checkout"
+          value={tenantProfile ? (tenantProfile.checkout_enabled ? 'activo' : 'bloqueado') : 'sin tenant'}
+        />
+        <Metric label="Tenant" value={tenantProfile ? 'listo' : 'pendiente'} />
+      </View>
 
       <View style={styles.planGrid}>
         {plans.length ? (
@@ -82,7 +90,14 @@ export function StoreScreen({ app, accentColor }: MobileScreenProps) {
       <ActionButton
         label={isCreatingCheckout ? 'Generando checkout...' : 'Generar checkout session'}
         accentColor={accentColor}
-        disabled={isRestoringSession || isCreatingCheckout || !selectedPlan || !customerName.trim() || !customerEmail.trim()}
+        disabled={
+          isRestoringSession ||
+          isCreatingCheckout ||
+          !selectedPlan ||
+          !customerName.trim() ||
+          !customerEmail.trim() ||
+          tenantProfile?.checkout_enabled === false
+        }
         onPress={() => {
           void createCheckoutSession();
         }}

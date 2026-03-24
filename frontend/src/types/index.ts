@@ -293,6 +293,22 @@ export interface Campaign {
   created_at: string;
 }
 
+export interface CampaignOverview {
+  total_campaigns: number;
+  scheduled_pending: number;
+  sending_now: number;
+  sent_total: number;
+  opened_total: number;
+  clicked_total: number;
+  manual_runs: number;
+  scheduler_runs: number;
+  scheduler_failures: number;
+  pending_push_receipts: number;
+  failed_push_receipts: number;
+  open_rate: number;
+  click_rate: number;
+}
+
 /* ─── Dashboard ──────────────────────────────────────────────── */
 
 export interface DashboardMetrics {

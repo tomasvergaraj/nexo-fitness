@@ -6,7 +6,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -34,7 +34,7 @@ from app.models.business import (
     SupportInteraction,
     TrainingProgram,
 )
-from app.models.platform import PushSubscription, TenantPaymentProviderAccount
+from app.models.platform import PushDelivery, PushSubscription, TenantPaymentProviderAccount
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.business import (
@@ -46,6 +46,7 @@ from app.schemas.business import (
     PaginatedResponse,
 )
 from app.schemas.platform import (
+    CampaignOverviewResponse,
     CampaignUpdateRequest,
     MembershipCreateRequest,
     MembershipResponse,
@@ -80,6 +81,7 @@ from app.schemas.platform import (
 from app.services.campaign_service import (
     CampaignDispatchRecipientResult,
     DISPATCH_TRIGGER_MANUAL,
+    DISPATCH_TRIGGER_SCHEDULED,
     dispatch_campaign_broadcast,
     normalize_campaign_status,
     parse_segment_filter,
@@ -466,6 +468,71 @@ async def list_campaigns(
         page=page,
         per_page=per_page,
         pages=(total + per_page - 1) // per_page,
+    )
+
+
+@campaigns_router.get("/overview", response_model=CampaignOverviewResponse)
+async def get_campaigns_overview(
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "marketing")),
+):
+    campaigns = (
+        await db.execute(select(Campaign).where(Campaign.tenant_id == ctx.tenant_id))
+    ).scalars().all()
+
+    sent_total = sum(int(campaign.total_sent or 0) for campaign in campaigns)
+    opened_total = sum(int(campaign.total_opened or 0) for campaign in campaigns)
+    clicked_total = sum(int(campaign.total_clicked or 0) for campaign in campaigns)
+
+    pending_push_receipts = (
+        await db.execute(
+            select(func.count()).select_from(PushDelivery).where(
+                PushDelivery.tenant_id == ctx.tenant_id,
+                PushDelivery.status == "ok",
+                or_(PushDelivery.receipt_status.is_(None), PushDelivery.receipt_status == "pending"),
+            )
+        )
+    ).scalar() or 0
+    failed_push_receipts = (
+        await db.execute(
+            select(func.count()).select_from(PushDelivery).where(
+                PushDelivery.tenant_id == ctx.tenant_id,
+                PushDelivery.receipt_status == "error",
+            )
+        )
+    ).scalar() or 0
+
+    return CampaignOverviewResponse(
+        total_campaigns=len(campaigns),
+        scheduled_pending=sum(1 for campaign in campaigns if campaign.status == CampaignStatus.SCHEDULED),
+        sending_now=sum(1 for campaign in campaigns if campaign.status == CampaignStatus.SENDING),
+        sent_total=sent_total,
+        opened_total=opened_total,
+        clicked_total=clicked_total,
+        manual_runs=sum(
+            1
+            for campaign in campaigns
+            if campaign.last_dispatch_trigger == DISPATCH_TRIGGER_MANUAL
+            and campaign.last_dispatch_finished_at is not None
+            and not campaign.last_dispatch_error
+        ),
+        scheduler_runs=sum(
+            1
+            for campaign in campaigns
+            if campaign.last_dispatch_trigger == DISPATCH_TRIGGER_SCHEDULED
+            and campaign.last_dispatch_finished_at is not None
+            and not campaign.last_dispatch_error
+        ),
+        scheduler_failures=sum(
+            1
+            for campaign in campaigns
+            if campaign.last_dispatch_trigger == DISPATCH_TRIGGER_SCHEDULED and bool(campaign.last_dispatch_error)
+        ),
+        pending_push_receipts=int(pending_push_receipts),
+        failed_push_receipts=int(failed_push_receipts),
+        open_rate=round((opened_total / sent_total) * 100, 1) if sent_total else 0.0,
+        click_rate=round((clicked_total / sent_total) * 100, 1) if sent_total else 0.0,
     )
 
 

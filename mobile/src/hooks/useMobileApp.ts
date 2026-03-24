@@ -538,6 +538,16 @@ export function useMobileApp() {
       return;
     }
 
+    if (tenantProfile && !tenantProfile.checkout_enabled) {
+      const message =
+        'Este tenant todavia no tiene una cuenta de pago conectada, asi que el checkout publico no esta disponible.';
+      setCommerceMessage(message);
+      if (origin === 'renewal') {
+        setWalletMessage(message);
+      }
+      return;
+    }
+
     if (!customerName.trim() || !customerEmail.trim()) {
       setCommerceMessage('Completa nombre y email del cliente para generar el checkout.');
       return;
@@ -565,13 +575,17 @@ export function useMobileApp() {
       }
     } catch (error) {
       const errorText = String(error);
+      const normalizedErrorText =
+        errorText.includes('Tenant has no connected payment account')
+          ? 'Este tenant todavia no tiene una cuenta de pago conectada, asi que el checkout publico no esta disponible.'
+          : errorText;
       setCommerceMessage(
         origin === 'renewal'
-          ? `No se pudo generar el checkout de renovacion: ${errorText}`
-          : `No se pudo generar la checkout session: ${errorText}`,
+          ? `No se pudo generar el checkout de renovacion: ${normalizedErrorText}`
+          : `No se pudo generar la checkout session: ${normalizedErrorText}`,
       );
       if (origin === 'renewal') {
-        setWalletMessage(`No se pudo preparar la renovacion desde la wallet: ${errorText}`);
+        setWalletMessage(`No se pudo preparar la renovacion desde la wallet: ${normalizedErrorText}`);
       }
     } finally {
       setIsCreatingCheckout(false);

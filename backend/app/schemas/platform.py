@@ -59,6 +59,22 @@ class CampaignUpdateRequest(BaseModel):
     total_clicked: Optional[int] = Field(default=None, ge=0)
 
 
+class CampaignOverviewResponse(BaseModel):
+    total_campaigns: int = 0
+    scheduled_pending: int = 0
+    sending_now: int = 0
+    sent_total: int = 0
+    opened_total: int = 0
+    clicked_total: int = 0
+    manual_runs: int = 0
+    scheduler_runs: int = 0
+    scheduler_failures: int = 0
+    pending_push_receipts: int = 0
+    failed_push_receipts: int = 0
+    open_rate: float = 0
+    click_rate: float = 0
+
+
 class SupportInteractionCreateRequest(BaseModel):
     user_id: Optional[UUID] = None
     channel: str = Field(pattern=r"^(whatsapp|email|phone|in_person)$")

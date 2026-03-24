@@ -62,6 +62,10 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 - Se extendio `PATCH /api/v1/notifications/{id}` para registrar lectura, apertura y click en una sola llamada idempotente, recalculando `total_opened` y `total_clicked` de la campana asociada dentro de la misma transaccion.
 - Se conecto mobile para que al abrir el destino de una notificacion desde la bandeja o desde una push se registre automaticamente engagement real en backend, y Perfil ahora muestra aperturas/clicks por item.
 - Se actualizo Marketing web para exponer `CTR`, clicks agregados por campana y tasas derivadas sobre `sent`, tomando los nuevos contadores reales del backend.
+- Se agrego `GET /api/v1/campaigns/overview` para resumir salud operativa del modulo Marketing por tenant: pendientes programadas, corridas scheduler/manuales, errores scheduler y receipts push pendientes/fallidos.
+- Se actualizo Marketing web con una franja de overview operativo para que soporte/marketing puedan detectar rapido backlog del scheduler y tracking push sin abrir campana por campana.
+- Se protegieron los hooks de `expo-notifications` para entorno web, evitando que la app web intente leer `getLastNotificationResponseAsync` o montar listeners nativos no soportados por navegador.
+- Se bloqueo en la tab Checkout mobile/web la generacion de checkout cuando el tenant informa `checkout_enabled=false`, mostrando un mensaje operativo mas claro cuando falta una cuenta de pago conectada.
 
 ## Experiencia que ya queda disponible
 1. El usuario puede apuntar la app a una `API base URL`.
@@ -93,6 +97,7 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 27. El staff puede revisar el tracking de una notificacion push individual, ver si Expo solo acepto el ticket o si ya devolvio receipt final, y refrescar ese estado desde la pantalla de Clientes.
 28. El miembro puede abrir una notificacion desde mobile y dejar registrada la apertura/click sobre la notificacion original, incluyendo las que nacieron desde un broadcast de campana.
 29. Marketing puede ver `open rate` y `CTR` reales por campana desde el panel, sin depender solo de valores cargados manualmente.
+30. Marketing puede ver el estado agregado del scheduler y de los receipts push del tenant desde una sola pantalla, sin revisar tarjeta por tarjeta.
 
 ## Endpoints utilizados por esta base
 - `POST /api/v1/auth/login`
@@ -112,6 +117,7 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 - `POST /api/v1/notifications/broadcast`
 - `PATCH /api/v1/notifications/{id}` para `is_read`, `mark_opened` y `mark_clicked`
 - `GET /api/v1/campaigns`
+- `GET /api/v1/campaigns/overview`
 - `POST /api/v1/campaigns`
 - `PATCH /api/v1/campaigns/{id}`
 - `POST /api/v1/mobile/push-subscriptions`

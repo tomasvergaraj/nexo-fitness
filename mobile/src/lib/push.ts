@@ -3,14 +3,16 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 type PushActionStatus =
   | 'success'
@@ -184,6 +186,9 @@ export function getNotificationActionPayloadFromResponse(
 }
 
 export async function getLastNotificationResponsePayload() {
+  if (Platform.OS === 'web') {
+    return null;
+  }
   const response = await Notifications.getLastNotificationResponseAsync();
   return response ? getNotificationActionPayloadFromResponse(response) : null;
 }
@@ -191,6 +196,14 @@ export async function getLastNotificationResponsePayload() {
 export function addNotificationResponseListener(
   listener: (payload: NotificationActionPayload) => void,
 ) {
+  if (Platform.OS === 'web') {
+    return {
+      remove() {
+        // No-op: Expo notification response listeners are not available on web.
+      },
+    };
+  }
+
   return Notifications.addNotificationResponseReceivedListener((response) => {
     listener(getNotificationActionPayloadFromResponse(response));
   });
