@@ -120,7 +120,12 @@ class PushSubscription(Base):
     )
     device_type: Mapped[str] = mapped_column(String(30), default="mobile")
     device_name: Mapped[Optional[str]] = mapped_column(String(200))
-    expo_push_token: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(20), default="expo", index=True)
+    expo_push_token: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    web_endpoint: Mapped[Optional[str]] = mapped_column(String(1000), index=True)
+    web_p256dh_key: Mapped[Optional[str]] = mapped_column(String(255))
+    web_auth_key: Mapped[Optional[str]] = mapped_column(String(255))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -165,7 +170,9 @@ class PushDelivery(Base):
         nullable=False,
         index=True,
     )
-    expo_push_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), default="expo", index=True)
+    delivery_target: Mapped[str] = mapped_column(String(1000), nullable=False)
+    expo_push_token: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(30), default="error")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     ticket_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)

@@ -1,22 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Bell,
   CalendarDays,
+  CheckCircle2,
+  Copy,
   CreditCard,
   Download,
   ExternalLink,
   Home,
   LogOut,
+  MapPin,
   QrCode,
   RefreshCcw,
+  ShieldCheck,
   Smartphone,
   Ticket,
   Wallet,
+  Wifi,
+  WifiOff,
   XCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { SetURLSearchParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { browserSupportsWebPush, ensureWebPushSubscription, subscriptionToApiPayload } from '@/lib/webPush';
 import { authApi, classesApi, mobileApi, notificationsApi, publicApi, reservationsApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
@@ -26,9 +33,11 @@ import type {
   MobileWallet,
   PaginatedResponse,
   Plan,
+  PushSubscriptionRecord,
   PublicCheckoutSession,
   Reservation,
   TenantPublicProfile,
+  WebPushConfig,
 } from '@/types';
 import {
   classStatusColor,
@@ -43,9 +52,20 @@ import {
 } from '@/utils';
 
 type MemberTabId = 'home' | 'agenda' | 'plans' | 'payments' | 'notifications';
+type NotificationPermissionState = NotificationPermission | 'unsupported';
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+};
+type MemberSnapshot = {
+  updatedAt?: string;
+  wallet?: MobileWallet;
+  profile?: TenantPublicProfile;
+  plans?: Plan[];
+  classes?: PaginatedResponse<GymClass>;
+  reservations?: PaginatedResponse<Reservation>;
+  payments?: MobilePaymentHistoryItem[];
+  notifications?: AppNotification[];
 };
 
 const TABS: Array<{ id: MemberTabId; label: string; icon: typeof Home }> = [
@@ -63,12 +83,18 @@ export default function MemberAppPage() {
   const { user, logout } = useAuthStore();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionState>('unsupported');
   const [checkoutSession, setCheckoutSession] = useState<PublicCheckoutSession | null>(null);
+  const memberSnapshot = useMemo(() => loadMemberSnapshot(user?.id), [user?.id]);
   const activeTab = getActiveTab(searchParams);
 
   const walletQuery = useQuery<MobileWallet>({
     queryKey: ['member-wallet'],
     queryFn: async () => (await mobileApi.wallet()).data,
+    enabled: Boolean(user),
+    initialData: memberSnapshot?.wallet,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
   const tenantSlug = walletQuery.data?.tenant_slug;
@@ -77,12 +103,16 @@ export default function MemberAppPage() {
     queryKey: ['member-tenant-profile', tenantSlug],
     queryFn: async () => (await publicApi.getTenantProfile(tenantSlug!)).data,
     enabled: Boolean(tenantSlug),
+    initialData: memberSnapshot?.profile,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
   const plansQuery = useQuery<Plan[]>({
     queryKey: ['member-plans', tenantSlug],
     queryFn: async () => (await publicApi.getTenantPlans(tenantSlug!)).data,
     enabled: Boolean(tenantSlug),
+    initialData: memberSnapshot?.plans,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
   const classesQuery = useQuery<PaginatedResponse<GymClass>>({
@@ -95,21 +125,45 @@ export default function MemberAppPage() {
           date_from: new Date().toISOString(),
         })
       ).data,
+    enabled: Boolean(user),
+    initialData: memberSnapshot?.classes,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
   const reservationsQuery = useQuery<PaginatedResponse<Reservation>>({
     queryKey: ['member-reservations'],
     queryFn: async () => (await reservationsApi.list({ upcoming_only: true, per_page: 24 })).data,
+    enabled: Boolean(user),
+    initialData: memberSnapshot?.reservations,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
   const paymentsQuery = useQuery<MobilePaymentHistoryItem[]>({
     queryKey: ['member-payments'],
     queryFn: async () => (await mobileApi.listPayments({ limit: 12 })).data,
+    enabled: Boolean(user),
+    initialData: memberSnapshot?.payments,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
   const notificationsQuery = useQuery<AppNotification[]>({
     queryKey: ['member-notifications'],
     queryFn: async () => (await notificationsApi.list()).data,
+    enabled: Boolean(user),
+    initialData: memberSnapshot?.notifications,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
+  });
+
+  const pushConfigQuery = useQuery<WebPushConfig>({
+    queryKey: ['member-web-push-config'],
+    queryFn: async () => (await mobileApi.getPushConfig()).data,
+    enabled: Boolean(user),
+  });
+
+  const pushSubscriptionsQuery = useQuery<PushSubscriptionRecord[]>({
+    queryKey: ['member-push-subscriptions'],
+    queryFn: async () => (await mobileApi.listPushSubscriptions()).data,
+    enabled: Boolean(user),
   });
 
   const reserveMutation = useMutation({
@@ -162,6 +216,13 @@ export default function MemberAppPage() {
     onError: (error: any) => toast.error(error?.response?.data?.detail || error?.message || 'No se pudo generar el checkout.'),
   });
 
+  const registerPushSubscriptionMutation = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => (await mobileApi.registerPushSubscription(payload)).data,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['member-push-subscriptions'] });
+    },
+  });
+
   const classes = useMemo(
     () =>
       [...(classesQuery.data?.items ?? [])].sort(
@@ -173,7 +234,64 @@ export default function MemberAppPage() {
   const payments = paymentsQuery.data ?? [];
   const notifications = notificationsQuery.data ?? [];
   const plans = plansQuery.data ?? [];
+  const pushSubscriptions = pushSubscriptionsQuery.data ?? [];
   const accentColor = profileQuery.data?.branding.primary_color || '#0f766e';
+  const unreadNotifications = notifications.filter((item) => !item.is_read).length;
+  const installHint = getInstallHint({ isStandalone, canPromptInstall: Boolean(deferredPrompt) });
+  const notificationPermissionMeta = getNotificationPermissionMeta(notificationPermission);
+  const hasCheckinCode = Boolean(walletQuery.data?.qr_payload);
+  const gymLocation = [profileQuery.data?.address, profileQuery.data?.city].filter(Boolean).join(', ');
+  const webPushSupported = browserSupportsWebPush();
+  const webPushConfigured = Boolean(pushConfigQuery.data?.enabled && pushConfigQuery.data?.public_vapid_key);
+  const activeWebPushSubscription = pushSubscriptions.find((item) => item.provider === 'webpush' && item.is_active);
+  const webPushStateLabel = activeWebPushSubscription
+    ? 'Activa'
+    : webPushSupported
+      ? webPushConfigured
+        ? 'Lista para activar'
+        : 'Pendiente de backend'
+      : 'No soportada';
+  const lastSyncedAt = useMemo(() => {
+    const timestamps = [
+      walletQuery.dataUpdatedAt,
+      profileQuery.dataUpdatedAt,
+      plansQuery.dataUpdatedAt,
+      classesQuery.dataUpdatedAt,
+      reservationsQuery.dataUpdatedAt,
+      paymentsQuery.dataUpdatedAt,
+      notificationsQuery.dataUpdatedAt,
+      pushSubscriptionsQuery.dataUpdatedAt,
+    ].filter((value) => value > 0);
+
+    if (timestamps.length) {
+      return new Date(Math.max(...timestamps));
+    }
+    if (memberSnapshot?.updatedAt) {
+      return new Date(memberSnapshot.updatedAt);
+    }
+    return null;
+  }, [
+    classesQuery.dataUpdatedAt,
+    memberSnapshot?.updatedAt,
+    notificationsQuery.dataUpdatedAt,
+    paymentsQuery.dataUpdatedAt,
+    plansQuery.dataUpdatedAt,
+    profileQuery.dataUpdatedAt,
+    pushSubscriptionsQuery.dataUpdatedAt,
+    reservationsQuery.dataUpdatedAt,
+    walletQuery.dataUpdatedAt,
+  ]);
+  const isSyncing = [
+    walletQuery.isFetching,
+    profileQuery.isFetching,
+    plansQuery.isFetching,
+    classesQuery.isFetching,
+    reservationsQuery.isFetching,
+    paymentsQuery.isFetching,
+    notificationsQuery.isFetching,
+    pushConfigQuery.isFetching,
+    pushSubscriptionsQuery.isFetching,
+  ].some(Boolean);
   const reservationByClassId = new Map(
     reservations.filter((item) => item.status !== 'cancelled').map((item) => [item.gym_class_id, item]),
   );
@@ -189,6 +307,27 @@ export default function MemberAppPage() {
     setSearchParams(next, { replace: true });
     void refreshMemberQueries(queryClient);
   }, [queryClient, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    setNotificationPermission('Notification' in window ? Notification.permission : 'unsupported');
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia('(display-mode: standalone)');
@@ -217,6 +356,34 @@ export default function MemberAppPage() {
       window.removeEventListener('appinstalled', handleInstalled);
     };
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    const nextSnapshot: Partial<MemberSnapshot> = {};
+    if (walletQuery.data) nextSnapshot.wallet = walletQuery.data;
+    if (profileQuery.data) nextSnapshot.profile = profileQuery.data;
+    if (plansQuery.data) nextSnapshot.plans = plansQuery.data;
+    if (classesQuery.data) nextSnapshot.classes = classesQuery.data;
+    if (reservationsQuery.data) nextSnapshot.reservations = reservationsQuery.data;
+    if (paymentsQuery.data) nextSnapshot.payments = paymentsQuery.data;
+    if (notificationsQuery.data) nextSnapshot.notifications = notificationsQuery.data;
+
+    if (Object.keys(nextSnapshot).length) {
+      saveMemberSnapshot(user.id, nextSnapshot, lastSyncedAt?.toISOString());
+    }
+  }, [
+    classesQuery.data,
+    lastSyncedAt,
+    notificationsQuery.data,
+    paymentsQuery.data,
+    plansQuery.data,
+    profileQuery.data,
+    reservationsQuery.data,
+    user,
+    walletQuery.data,
+  ]);
 
   if (!user) {
     return null;
@@ -248,6 +415,7 @@ export default function MemberAppPage() {
 
   const showLocalNotification = async () => {
     if (!('Notification' in window)) {
+      setNotificationPermission('unsupported');
       toast.error('Este navegador no soporta notificaciones web.');
       return;
     }
@@ -255,6 +423,7 @@ export default function MemberAppPage() {
     if (permission === 'default') {
       permission = await Notification.requestPermission();
     }
+    setNotificationPermission(permission);
     if (permission !== 'granted') {
       toast.error('No se concedio permiso.');
       return;
@@ -281,11 +450,75 @@ export default function MemberAppPage() {
     toast.success('Notificacion web enviada.');
   };
 
+  const enableWebPush = async () => {
+    if (!webPushSupported) {
+      toast.error('Este navegador no soporta Web Push.');
+      return;
+    }
+    if (!isOnline) {
+      toast('Necesitas conexion para registrar esta suscripcion web.');
+      return;
+    }
+    const publicKey = pushConfigQuery.data?.public_vapid_key;
+    if (!pushConfigQuery.data?.enabled || !publicKey) {
+      toast.error('Web Push aun no esta configurado en backend.');
+      return;
+    }
+
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+    }
+    if (permission !== 'granted') {
+      toast.error('Debes permitir las notificaciones para activar Web Push.');
+      return;
+    }
+
+    try {
+      const subscription = await ensureWebPushSubscription(publicKey);
+      await registerPushSubscriptionMutation.mutateAsync(subscriptionToApiPayload(subscription));
+      toast.success('Notificaciones web remotas activadas para este dispositivo.');
+    } catch (error: any) {
+      toast.error(error?.message || 'No se pudo registrar la suscripcion Web Push.');
+    }
+  };
+
+  const syncMemberData = async () => {
+    if (!isOnline) {
+      toast('Sin conexion. Mostrando la ultima informacion guardada en este dispositivo.');
+      return;
+    }
+    await refreshMemberQueries(queryClient);
+    toast.success('Datos del miembro sincronizados.');
+  };
+
+  const copyCheckinCode = async () => {
+    const code = walletQuery.data?.qr_payload;
+    if (!code) {
+      toast.error('Todavia no hay codigo de acceso sincronizado.');
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      toast.error('Este navegador no permite copiar automaticamente.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(code);
+      toast.success('Codigo de check-in copiado.');
+    } catch {
+      toast.error('No se pudo copiar el codigo.');
+    }
+  };
+
   const logoutMember = async () => {
     try {
       await authApi.logout();
     } catch {
       // Ignore transport errors on logout.
+    }
+    if (user) {
+      clearMemberSnapshot(user.id);
     }
     logout();
     navigate('/login');
@@ -293,7 +526,22 @@ export default function MemberAppPage() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(15,118,110,0.26),_transparent_28%),linear-gradient(180deg,#04141a_0%,#08161d_48%,#04141a_100%)] text-white">
-      <div className="mx-auto max-w-6xl px-4 pb-28 pt-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl px-4 pb-28 sm:px-6 lg:px-8" style={{ paddingTop: 'max(1.25rem, env(safe-area-inset-top))' }}>
+        {!isOnline ? (
+          <section className="mb-5 rounded-[1.5rem] border border-amber-400/20 bg-amber-500/10 px-4 py-4 text-amber-50/90">
+            <div className="flex items-start gap-3">
+              <WifiOff size={18} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold">Estas sin conexion.</p>
+                <p className="mt-1 text-sm leading-6">
+                  La app mostrara el ultimo snapshot guardado
+                  {lastSyncedAt ? ` (${formatRelative(lastSyncedAt)}).` : '.'}
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <section className="rounded-[2rem] border border-white/10 bg-white/5 p-5 backdrop-blur-2xl sm:p-7">
           <div className="flex flex-col gap-5 lg:flex-row lg:justify-between">
             <div className="max-w-3xl">
@@ -325,13 +573,17 @@ export default function MemberAppPage() {
                 <Download size={16} />
                 {isStandalone ? 'Instalada' : 'Instalar'}
               </button>
+              <button type="button" onClick={() => void enableWebPush()} className="btn-secondary" disabled={registerPushSubscriptionMutation.isPending || !webPushSupported}>
+                <Bell size={16} />
+                {activeWebPushSubscription ? 'Push web activa' : registerPushSubscriptionMutation.isPending ? 'Activando' : 'Activar push web'}
+              </button>
               <button type="button" onClick={showLocalNotification} className="btn-secondary">
                 <Bell size={16} />
                 Probar aviso
               </button>
-              <button type="button" onClick={() => void refreshMemberQueries(queryClient)} className="btn-secondary">
-                <RefreshCcw size={16} />
-                Sincronizar
+              <button type="button" onClick={() => void syncMemberData()} className="btn-secondary" disabled={isSyncing}>
+                <RefreshCcw size={16} className={cn(isSyncing && 'animate-spin')} />
+                {isSyncing ? 'Sincronizando' : isOnline ? 'Sincronizar' : 'Usar cache'}
               </button>
               <button type="button" onClick={logoutMember} className="btn-secondary">
                 <LogOut size={16} />
@@ -344,48 +596,108 @@ export default function MemberAppPage() {
         <section className="mt-5 grid gap-4 md:grid-cols-3">
           <MetricCard icon={Wallet} label="Plan" value={walletQuery.data?.plan_name || 'Sin plan'} caption={walletQuery.data?.membership_status || 'Membresia pendiente'} accentColor={accentColor} />
           <MetricCard icon={CalendarDays} label="Reservas" value={String(reservations.length)} caption={walletQuery.data?.next_class?.start_time ? formatDateTime(walletQuery.data.next_class.start_time) : 'Sin proxima clase'} accentColor={accentColor} />
-          <MetricCard icon={Bell} label="Sin leer" value={String(notifications.filter((item) => !item.is_read).length)} caption={isStandalone ? 'App instalada' : 'Lista para instalar'} accentColor={accentColor} />
+          <MetricCard icon={Bell} label="Sin leer" value={String(unreadNotifications)} caption={notificationPermissionMeta.label} accentColor={accentColor} />
         </section>
 
         <section className="mt-5 rounded-[2rem] border border-white/10 bg-white/5 p-5 backdrop-blur-2xl">
           {activeTab === 'home' ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel title="Wallet">
-                <p className="text-xl font-semibold">{walletQuery.data?.plan_name || 'Sin plan activo'}</p>
-                <p className="mt-2 text-sm text-surface-300">
-                  Renovacion {walletQuery.data?.auto_renew ? 'automatica' : 'manual'}.
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+              <Panel title="Pase digital">
+                <p className="text-sm leading-6 text-surface-300">
+                  Tu acceso, estado de membresia y codigo de respaldo viven ahora en una sola vista optimizada para el telefono.
                 </p>
-                <div className="mt-4 rounded-2xl border border-white/10 bg-surface-950/40 p-4">
-                  <div className="grid grid-cols-[auto,1fr] items-start gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                      <QrCode size={22} />
-                    </div>
-                    <div className="min-w-0 space-y-1">
-                      <p className="text-sm font-semibold leading-5 text-surface-100">Credencial lista para check-in</p>
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">QR del miembro</p>
-                      <p className="break-all font-mono text-xs leading-5 text-surface-400">
-                        {walletQuery.data?.qr_payload || 'Pendiente de sincronizar'}
-                      </p>
-                    </div>
-                  </div>
+                <MemberPassCard
+                  accentColor={accentColor}
+                  expiresAt={walletQuery.data?.expires_at}
+                  memberName={`${user.first_name} ${user.last_name}`.trim()}
+                  membershipStatus={walletQuery.data?.membership_status}
+                  planName={walletQuery.data?.plan_name || 'Sin plan activo'}
+                  qrPayload={walletQuery.data?.qr_payload}
+                  onCopyCode={() => void copyCheckinCode()}
+                />
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <QuickActionCard
+                    icon={CalendarDays}
+                    title="Agenda"
+                    description={reservations.length ? `${reservations.length} reservas activas` : 'Ver clases y reservar'}
+                    accentColor={accentColor}
+                    onClick={() => setTab(searchParams, setSearchParams, 'agenda')}
+                  />
+                  <QuickActionCard
+                    icon={Ticket}
+                    title="Planes"
+                    description={plans.length ? `${plans.length} opciones disponibles` : 'Revisa tu plan actual'}
+                    accentColor={accentColor}
+                    onClick={() => setTab(searchParams, setSearchParams, 'plans')}
+                  />
+                  <QuickActionCard
+                    icon={CreditCard}
+                    title="Pagos"
+                    description={payments.length ? `${payments.length} movimientos recientes` : 'Historial y comprobantes'}
+                    accentColor={accentColor}
+                    onClick={() => setTab(searchParams, setSearchParams, 'payments')}
+                  />
+                  <QuickActionCard
+                    icon={Bell}
+                    title="Bandeja"
+                    description={unreadNotifications ? `${unreadNotifications} notificaciones nuevas` : 'Sin pendientes por leer'}
+                    accentColor={accentColor}
+                    onClick={() => setTab(searchParams, setSearchParams, 'notifications')}
+                  />
                 </div>
               </Panel>
-              <Panel title="Proxima actividad">
-                {walletQuery.data?.next_class ? (
-                  <>
-                    <p className="text-xl font-semibold">{walletQuery.data.next_class.name}</p>
+              <div className="space-y-4">
+                <Panel title="Proxima actividad">
+                  {walletQuery.data?.next_class ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="badge badge-info">{walletQuery.data.next_class.modality}</span>
+                        <span className="badge badge-neutral">{formatRelative(walletQuery.data.next_class.start_time)}</span>
+                    </div>
+                    <p className="mt-4 text-xl font-semibold">{walletQuery.data.next_class.name}</p>
                     <p className="mt-2 text-sm text-surface-300">
-                      {formatDateTime(walletQuery.data.next_class.start_time)} · {walletQuery.data.next_class.modality}
+                      {formatDateTime(walletQuery.data.next_class.start_time)} | {walletQuery.data.next_class.modality}
                     </p>
+                    {gymLocation ? (
+                      <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/10 bg-surface-950/40 px-4 py-3">
+                        <MapPin size={18} className="mt-0.5 text-teal-200" />
+                        <p className="text-sm leading-6 text-surface-300">{gymLocation}</p>
+                      </div>
+                    ) : null}
                     <button type="button" className="btn-primary mt-4" style={{ backgroundImage: `linear-gradient(135deg, ${accentColor}, #0f766e)` }} onClick={() => setTab(searchParams, setSearchParams, 'agenda')}>
                       <CalendarDays size={16} />
                       Abrir agenda
                     </button>
                   </>
                 ) : (
-                  <p className="text-sm leading-6 text-surface-300">Todavia no hay una clase proxima vinculada.</p>
+                  <>
+                    <p className="text-sm leading-6 text-surface-300">Todavia no hay una clase proxima vinculada.</p>
+                    <button type="button" className="btn-secondary mt-4" onClick={() => setTab(searchParams, setSearchParams, 'agenda')}>
+                      <CalendarDays size={16} />
+                      Explorar clases
+                    </button>
+                  </>
                 )}
-              </Panel>
+                </Panel>
+
+                <Panel title="Estado del dispositivo">
+                  <div className="space-y-3">
+                    <DeviceStatusItem label="Conexion" value={isOnline ? 'En linea' : 'Sin conexion'} tone={isOnline ? 'success' : 'warning'} />
+                    <DeviceStatusItem label="Instalacion" value={isStandalone ? 'App instalada' : 'Modo navegador'} tone={isStandalone ? 'success' : 'neutral'} />
+                    <DeviceStatusItem label="Notificaciones" value={notificationPermissionMeta.label} tone={notificationPermissionMeta.tone} />
+                    <DeviceStatusItem label="Push remota" value={webPushStateLabel} tone={activeWebPushSubscription ? 'success' : webPushConfigured ? 'info' : 'warning'} />
+                    <DeviceStatusItem label="Ultima sync" value={lastSyncedAt ? formatRelative(lastSyncedAt) : 'Sin snapshot aun'} tone={lastSyncedAt ? 'info' : 'neutral'} />
+                    <DeviceStatusItem label="Checkout" value={profileQuery.data?.checkout_enabled ? 'Listo para compras' : 'Pendiente de configurar'} tone={profileQuery.data?.checkout_enabled ? 'success' : 'warning'} />
+                    <DeviceStatusItem label="Check-in" value={hasCheckinCode ? 'Codigo listo para respaldo' : 'Pendiente de sincronizar'} tone={hasCheckinCode ? 'success' : 'warning'} />
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-surface-950/40 px-4 py-4">
+                    <div className="flex items-start gap-3">
+                      {isOnline ? <Wifi size={18} className="mt-0.5 text-teal-200" /> : <ShieldCheck size={18} className="mt-0.5 text-teal-200" />}
+                      <p className="text-sm leading-6 text-surface-300">{installHint}</p>
+                    </div>
+                  </div>
+                </Panel>
+              </div>
             </div>
           ) : null}
 
@@ -400,8 +712,23 @@ export default function MemberAppPage() {
                       {reservation ? <span className="badge badge-success">{reservation.status === 'waitlisted' ? 'Lista de espera' : 'Reservada'}</span> : null}
                     </div>
                     <p className="mt-3 text-sm text-surface-300">
-                      {formatDateTime(gymClass.start_time)} · {gymClass.modality} · Cupos {gymClass.current_bookings}/{gymClass.max_capacity}
+                      {formatDateTime(gymClass.start_time)} | {gymClass.modality} | Cupos {gymClass.current_bookings}/{gymClass.max_capacity}
                     </p>
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-surface-500">
+                        <span>Ocupacion</span>
+                        <span>{Math.min(100, Math.round((gymClass.current_bookings / Math.max(gymClass.max_capacity, 1)) * 100))}%</span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/5">
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${Math.min(100, Math.round((gymClass.current_bookings / Math.max(gymClass.max_capacity, 1)) * 100))}%`,
+                            background: `linear-gradient(90deg, ${accentColor}, #14b8a6)`,
+                          }}
+                        />
+                      </div>
+                    </div>
                     <div className="mt-4 flex flex-wrap gap-3">
                       {gymClass.online_link ? <a href={gymClass.online_link} target="_blank" rel="noreferrer" className="btn-secondary"><ExternalLink size={16} />Abrir link</a> : null}
                       {reservation ? (
@@ -482,8 +809,8 @@ export default function MemberAppPage() {
                   </p>
                   <p className="mt-2 text-xs text-surface-400">
                     {formatRelative(notification.created_at)}
-                    {notification.opened_at ? ` · Apertura ${formatRelative(notification.opened_at)}` : ''}
-                    {notification.clicked_at ? ` · Click ${formatRelative(notification.clicked_at)}` : ''}
+                    {notification.opened_at ? ` | Apertura ${formatRelative(notification.opened_at)}` : ''}
+                    {notification.clicked_at ? ` | Click ${formatRelative(notification.clicked_at)}` : ''}
                   </p>
                   <div className="mt-4 flex flex-wrap gap-3">
                     {notification.action_url ? <button type="button" className="btn-primary" style={{ backgroundImage: `linear-gradient(135deg, ${accentColor}, #0f766e)` }} onClick={() => void openNotificationAction(notification)}><ExternalLink size={16} />Abrir accion</button> : null}
@@ -498,14 +825,21 @@ export default function MemberAppPage() {
         </section>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/10 bg-surface-950/90 px-3 py-3 backdrop-blur-2xl">
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/10 bg-surface-950/90 px-3 pt-3 backdrop-blur-2xl" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         <div className="mx-auto grid max-w-5xl grid-cols-5 gap-2">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = tab.id === activeTab;
             return (
               <button key={tab.id} type="button" onClick={() => setTab(searchParams, setSearchParams, tab.id)} className={cn('flex flex-col items-center gap-1 rounded-2xl px-2 py-3 text-[11px] font-semibold transition-all', isActive ? 'bg-white text-surface-950' : 'bg-white/[0.04] text-surface-400 hover:bg-white/[0.08] hover:text-white')}>
-                <Icon size={18} />
+                <span className="relative">
+                  <Icon size={18} />
+                  {tab.id === 'notifications' && unreadNotifications ? (
+                    <span className="absolute -right-3 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-400 px-1 text-[10px] font-bold text-surface-950">
+                      {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                    </span>
+                  ) : null}
+                </span>
                 <span>{tab.label}</span>
               </button>
             );
@@ -534,6 +868,143 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
     <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
       <h2 className="text-xl font-semibold">{title}</h2>
       <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function MemberPassCard({
+  accentColor,
+  expiresAt,
+  memberName,
+  membershipStatus,
+  onCopyCode,
+  planName,
+  qrPayload,
+}: {
+  accentColor: string;
+  expiresAt?: string;
+  memberName: string;
+  membershipStatus?: string;
+  onCopyCode: () => void;
+  planName: string;
+  qrPayload?: string;
+}) {
+  const hasCode = Boolean(qrPayload);
+
+  return (
+    <div
+      className="relative mt-4 overflow-hidden rounded-[1.75rem] border border-white/10 p-5 shadow-[0_24px_80px_rgba(4,20,26,0.38)]"
+      style={{ background: `radial-gradient(circle at top right, ${accentColor}55, transparent 34%), linear-gradient(135deg, rgba(6,10,15,0.94), rgba(6,24,31,0.96))` }}
+    >
+      <div className="absolute -right-10 top-0 h-40 w-40 rounded-full bg-white/5 blur-3xl" />
+      <div className="absolute bottom-0 left-0 h-28 w-28 rounded-full bg-teal-400/10 blur-3xl" />
+      <div className="relative">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-teal-100/80">Acceso movil</p>
+            <p className="mt-2 text-2xl font-bold font-display text-white">{planName}</p>
+            <p className="mt-2 truncate text-sm text-surface-200">{memberName}</p>
+          </div>
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-teal-50">
+            <QrCode size={22} />
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {membershipStatus ? <span className={cn('badge', membershipStatusColor(membershipStatus))}>{membershipStatus}</span> : null}
+          <span className={cn('badge', hasCode ? 'badge-success' : 'badge-neutral')}>
+            {hasCode ? 'Codigo sincronizado' : 'Sin codigo'}
+          </span>
+          {expiresAt ? <span className="badge badge-neutral">Vence {formatDate(expiresAt)}</span> : null}
+        </div>
+
+        <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-surface-950/55 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Credencial lista para check-in</p>
+              <p className="mt-1 text-sm font-semibold text-surface-100">
+                {hasCode ? 'Usa este codigo como respaldo rapido de acceso.' : 'Aun no hay un codigo sincronizado para esta credencial.'}
+              </p>
+            </div>
+            <button type="button" onClick={onCopyCode} disabled={!hasCode} className="btn-secondary shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
+              <Copy size={16} />
+              Copiar codigo
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-[1.35rem] border border-dashed border-white/10 bg-white/[0.03] p-4">
+            <div className="grid grid-cols-[auto,1fr] items-start gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-teal-100">
+                <CheckCircle2 size={20} />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Codigo del miembro</p>
+                <p className="break-all font-mono text-xs leading-5 text-surface-300">
+                  {qrPayload || 'Pendiente de sincronizar'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickActionCard({
+  accentColor,
+  description,
+  icon: Icon,
+  onClick,
+  title,
+}: {
+  accentColor: string;
+  description: string;
+  icon: typeof Home;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-[1.35rem] border border-white/10 bg-surface-950/35 p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-white/20 hover:bg-surface-950/55"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+          style={{ background: `linear-gradient(135deg, ${accentColor}, #0f766e)` }}
+        >
+          <Icon size={18} />
+        </div>
+        <span className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Abrir</span>
+      </div>
+      <p className="mt-4 text-base font-semibold text-white">{title}</p>
+      <p className="mt-1 text-sm leading-6 text-surface-300">{description}</p>
+    </button>
+  );
+}
+
+function DeviceStatusItem({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone: 'success' | 'info' | 'warning' | 'neutral';
+  value: string;
+}) {
+  const valueColorClass = {
+    success: 'text-emerald-200',
+    info: 'text-cyan-200',
+    warning: 'text-amber-200',
+    neutral: 'text-surface-200',
+  }[tone];
+
+  return (
+    <div className="flex items-start justify-between gap-4 rounded-2xl border border-white/10 bg-surface-950/30 px-4 py-3">
+      <p className="text-sm text-surface-400">{label}</p>
+      <p className={cn('text-right text-sm font-semibold', valueColorClass)}>{value}</p>
     </div>
   );
 }
@@ -578,5 +1049,86 @@ async function refreshMemberQueries(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: ['member-reservations'] }),
     queryClient.invalidateQueries({ queryKey: ['member-payments'] }),
     queryClient.invalidateQueries({ queryKey: ['member-notifications'] }),
+    queryClient.invalidateQueries({ queryKey: ['member-web-push-config'] }),
+    queryClient.invalidateQueries({ queryKey: ['member-push-subscriptions'] }),
   ]);
 }
+
+function loadMemberSnapshot(userId?: string | null): MemberSnapshot | null {
+  if (!userId || typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getMemberSnapshotStorageKey(userId));
+    return raw ? (JSON.parse(raw) as MemberSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveMemberSnapshot(userId: string, partialSnapshot: Partial<MemberSnapshot>, updatedAt?: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const current = loadMemberSnapshot(userId) ?? {};
+    const next: MemberSnapshot = {
+      ...current,
+      ...partialSnapshot,
+      updatedAt: updatedAt || new Date().toISOString(),
+    };
+    window.localStorage.setItem(getMemberSnapshotStorageKey(userId), JSON.stringify(next));
+  } catch {
+    // Ignore quota/storage errors; the app still works online.
+  }
+}
+
+function clearMemberSnapshot(userId: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(getMemberSnapshotStorageKey(userId));
+  } catch {
+    // Ignore storage errors on logout cleanup.
+  }
+}
+
+function getMemberSnapshotStorageKey(userId: string) {
+  return `nexo.member.snapshot.${userId}`;
+}
+
+function getInstallHint({ isStandalone, canPromptInstall }: { isStandalone: boolean; canPromptInstall: boolean }) {
+  if (isStandalone) {
+    return 'La app ya esta instalada y puede usarse como acceso directo desde la pantalla principal del telefono.';
+  }
+  if (canPromptInstall) {
+    return 'Toca Instalar para guardar esta PWA en tu dispositivo y entrar sin depender del navegador completo.';
+  }
+  if (typeof navigator === 'undefined') {
+    return 'Instala esta app desde el menu del navegador para tener una experiencia movil mas directa.';
+  }
+
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (/iphone|ipad|ipod/.test(userAgent)) {
+    return 'En Safari usa Compartir y luego Agregar a pantalla de inicio para instalar esta app.';
+  }
+  return 'En Chrome o Edge usa el menu del navegador y elige Instalar app para guardar este acceso.';
+}
+
+function getNotificationPermissionMeta(permission: NotificationPermissionState) {
+  if (permission === 'granted') {
+    return { label: 'Avisos permitidos', tone: 'success' as const };
+  }
+  if (permission === 'denied') {
+    return { label: 'Avisos bloqueados', tone: 'warning' as const };
+  }
+  if (permission === 'default') {
+    return { label: 'Permiso pendiente', tone: 'info' as const };
+  }
+  return { label: 'Avisos no disponibles', tone: 'neutral' as const };
+}
+

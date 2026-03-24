@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,12 @@ from uuid import UUID
 import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:  # pragma: no cover - optional dependency in local dev
+    WebPushException = Exception
+    webpush = None
 
 from app.core.config import get_settings
 from app.models.business import Campaign, Notification
@@ -24,7 +31,9 @@ EXPO_PUSH_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$"
 @dataclass
 class PushDeliveryResult:
     subscription_id: UUID
-    expo_push_token: str
+    provider: str
+    delivery_target: str
+    expo_push_token: str | None
     status: str
     is_active: bool
     ticket_id: str | None = None
@@ -47,8 +56,16 @@ def _chunked(items: Sequence[PushSubscription], chunk_size: int) -> Iterable[Seq
         yield items[index:index + chunk_size]
 
 
-def _is_expo_push_token(token: str) -> bool:
-    return bool(EXPO_PUSH_TOKEN_RE.match(token.strip()))
+def _is_expo_push_token(token: str | None) -> bool:
+    return bool(token and EXPO_PUSH_TOKEN_RE.match(token.strip()))
+
+
+def _subscription_target(subscription: PushSubscription) -> str:
+    return subscription.expo_push_token or subscription.web_endpoint or ""
+
+
+def _is_web_push_subscription(subscription: PushSubscription) -> bool:
+    return bool(subscription.web_endpoint and subscription.web_p256dh_key and subscription.web_auth_key)
 
 
 def _build_expo_message(notification: Notification, subscription: PushSubscription) -> dict[str, Any]:
@@ -67,6 +84,20 @@ def _build_expo_message(notification: Notification, subscription: PushSubscripti
             "action_url": notification.action_url,
             "type": notification.type,
         },
+    }
+
+
+def _build_webpush_payload(notification: Notification) -> dict[str, Any]:
+    body = notification.message or notification.title
+    return {
+        "title": notification.title,
+        "body": body,
+        "message": notification.message,
+        "url": notification.action_url or "/member?tab=notifications",
+        "notification_id": str(notification.id),
+        "campaign_id": str(notification.campaign_id) if notification.campaign_id else None,
+        "type": notification.type,
+        "tag": f"notification-{notification.id}",
     }
 
 
@@ -241,6 +272,8 @@ async def record_notification_engagement(
 def push_delivery_result_from_model(delivery: PushDelivery) -> PushDeliveryResult:
     return PushDeliveryResult(
         subscription_id=delivery.subscription_id,
+        provider=delivery.provider,
+        delivery_target=delivery.delivery_target,
         expo_push_token=delivery.expo_push_token,
         status=delivery.status,
         is_active=delivery.is_active,
@@ -267,6 +300,8 @@ async def store_push_delivery_results(
             user_id=notification.user_id,
             notification_id=notification.id,
             subscription_id=delivery.subscription_id,
+            provider=delivery.provider,
+            delivery_target=delivery.delivery_target,
             expo_push_token=delivery.expo_push_token,
             status=delivery.status,
             is_active=delivery.is_active,
@@ -302,6 +337,8 @@ async def send_notification_via_expo(
         deliveries.append(
             PushDeliveryResult(
                 subscription_id=subscription.id,
+                provider="expo",
+                delivery_target=_subscription_target(subscription),
                 expo_push_token=subscription.expo_push_token,
                 status="error",
                 is_active=subscription.is_active,
@@ -330,6 +367,8 @@ async def send_notification_via_expo(
                 deliveries.extend(
                     PushDeliveryResult(
                         subscription_id=subscription.id,
+                        provider="expo",
+                        delivery_target=_subscription_target(subscription),
                         expo_push_token=subscription.expo_push_token,
                         status="error",
                         is_active=subscription.is_active,
@@ -351,6 +390,8 @@ async def send_notification_via_expo(
                 deliveries.extend(
                     PushDeliveryResult(
                         subscription_id=subscription.id,
+                        provider="expo",
+                        delivery_target=_subscription_target(subscription),
                         expo_push_token=subscription.expo_push_token,
                         status="error",
                         is_active=subscription.is_active,
@@ -366,6 +407,8 @@ async def send_notification_via_expo(
                 deliveries.extend(
                     PushDeliveryResult(
                         subscription_id=subscription.id,
+                        provider="expo",
+                        delivery_target=_subscription_target(subscription),
                         expo_push_token=subscription.expo_push_token,
                         status="error",
                         is_active=subscription.is_active,
@@ -386,6 +429,8 @@ async def send_notification_via_expo(
                 deliveries.append(
                     PushDeliveryResult(
                         subscription_id=subscription.id,
+                        provider="expo",
+                        delivery_target=_subscription_target(subscription),
                         expo_push_token=subscription.expo_push_token,
                         status=status,
                         is_active=subscription.is_active,
@@ -398,6 +443,163 @@ async def send_notification_via_expo(
     finally:
         if owns_client:
             await client.aclose()
+
+    return deliveries
+
+
+async def send_notification_via_webpush(
+    notification: Notification,
+    subscriptions: Sequence[PushSubscription],
+) -> list[PushDeliveryResult]:
+    deliveries: list[PushDeliveryResult] = []
+
+    if webpush is None:
+        return [
+            PushDeliveryResult(
+                subscription_id=subscription.id,
+                provider="webpush",
+                delivery_target=_subscription_target(subscription),
+                expo_push_token=subscription.expo_push_token,
+                status="error",
+                is_active=subscription.is_active,
+                error="WebPushLibraryMissing",
+                message="pywebpush no esta instalado en el backend.",
+            )
+            for subscription in subscriptions
+        ]
+
+    if not settings.WEB_PUSH_VAPID_PUBLIC_KEY.strip() or not settings.WEB_PUSH_VAPID_PRIVATE_KEY.strip():
+        return [
+            PushDeliveryResult(
+                subscription_id=subscription.id,
+                provider="webpush",
+                delivery_target=_subscription_target(subscription),
+                expo_push_token=subscription.expo_push_token,
+                status="error",
+                is_active=subscription.is_active,
+                error="WebPushNotConfigured",
+                message="Faltan las credenciales VAPID para Web Push.",
+            )
+            for subscription in subscriptions
+        ]
+
+    payload = json.dumps(_build_webpush_payload(notification))
+    vapid_claims = {"sub": settings.WEB_PUSH_VAPID_SUBJECT.strip() or "mailto:soporte@nexofitness.com"}
+
+    for subscription in subscriptions:
+        if not _is_web_push_subscription(subscription):
+            deliveries.append(
+                PushDeliveryResult(
+                    subscription_id=subscription.id,
+                    provider="webpush",
+                    delivery_target=_subscription_target(subscription),
+                    expo_push_token=subscription.expo_push_token,
+                    status="error",
+                    is_active=subscription.is_active,
+                    error="InvalidWebPushSubscription",
+                    message="La subscription web no tiene endpoint o llaves validas.",
+                )
+            )
+            continue
+
+        try:
+            response = webpush(
+                subscription_info={
+                    "endpoint": subscription.web_endpoint,
+                    "keys": {
+                        "p256dh": subscription.web_p256dh_key,
+                        "auth": subscription.web_auth_key,
+                    },
+                },
+                data=payload,
+                vapid_private_key=settings.WEB_PUSH_VAPID_PRIVATE_KEY.strip(),
+                vapid_claims=vapid_claims,
+                ttl=60,
+            )
+            status_code = getattr(response, "status_code", 201)
+            if status_code in (404, 410):
+                subscription.is_active = False
+
+            deliveries.append(
+                PushDeliveryResult(
+                    subscription_id=subscription.id,
+                    provider="webpush",
+                    delivery_target=_subscription_target(subscription),
+                    expo_push_token=subscription.expo_push_token,
+                    status="ok" if status_code < 400 else "error",
+                    is_active=subscription.is_active,
+                    message="Web Push enviado." if status_code < 400 else f"Web Push HTTP {status_code}",
+                    error=None if status_code < 400 else "WebPushHttpError",
+                )
+            )
+        except WebPushException as exc:  # type: ignore[misc]
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+            if status_code in (404, 410):
+                subscription.is_active = False
+
+            deliveries.append(
+                PushDeliveryResult(
+                    subscription_id=subscription.id,
+                    provider="webpush",
+                    delivery_target=_subscription_target(subscription),
+                    expo_push_token=subscription.expo_push_token,
+                    status="error",
+                    is_active=subscription.is_active,
+                    error="WebPushSubscriptionExpired" if status_code in (404, 410) else "WebPushError",
+                    message=str(exc),
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            deliveries.append(
+                PushDeliveryResult(
+                    subscription_id=subscription.id,
+                    provider="webpush",
+                    delivery_target=_subscription_target(subscription),
+                    expo_push_token=subscription.expo_push_token,
+                    status="error",
+                    is_active=subscription.is_active,
+                    error="WebPushError",
+                    message=str(exc),
+                )
+            )
+
+    return deliveries
+
+
+async def send_notification_via_push(
+    notification: Notification,
+    subscriptions: Sequence[PushSubscription],
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> list[PushDeliveryResult]:
+    deliveries: list[PushDeliveryResult] = []
+    expo_subscriptions = [subscription for subscription in subscriptions if subscription.provider == "expo"]
+    webpush_subscriptions = [subscription for subscription in subscriptions if subscription.provider == "webpush"]
+
+    unsupported_subscriptions = [
+        subscription
+        for subscription in subscriptions
+        if subscription.provider not in {"expo", "webpush"}
+    ]
+    deliveries.extend(
+        PushDeliveryResult(
+            subscription_id=subscription.id,
+            provider=subscription.provider,
+            delivery_target=_subscription_target(subscription),
+            expo_push_token=subscription.expo_push_token,
+            status="error",
+            is_active=subscription.is_active,
+            error="UnsupportedPushProvider",
+            message=f"El proveedor {subscription.provider} no esta soportado.",
+        )
+        for subscription in unsupported_subscriptions
+    )
+
+    if expo_subscriptions:
+        deliveries.extend(await send_notification_via_expo(notification, expo_subscriptions, http_client=http_client))
+    if webpush_subscriptions:
+        deliveries.extend(await send_notification_via_webpush(notification, webpush_subscriptions))
 
     return deliveries
 
@@ -429,7 +631,7 @@ async def create_and_dispatch_notification(
     deliveries: list[PushDeliveryResult] = []
     if send_push:
         subscriptions = await list_active_push_subscriptions(db, tenant_id=tenant_id, user_id=user_id)
-        deliveries = await send_notification_via_expo(
+        deliveries = await send_notification_via_push(
             notification,
             subscriptions,
             http_client=http_client,
@@ -475,6 +677,7 @@ async def refresh_push_receipts(
     http_client: httpx.AsyncClient | None = None,
 ) -> int:
     query = select(PushDelivery).where(
+        PushDelivery.provider == "expo",
         PushDelivery.ticket_id.is_not(None),
         PushDelivery.status == "ok",
         or_(PushDelivery.receipt_status.is_(None), PushDelivery.receipt_status == "pending"),

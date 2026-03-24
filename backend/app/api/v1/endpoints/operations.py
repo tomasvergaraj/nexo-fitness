@@ -5,11 +5,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.core.dependencies import (
     TenantContext,
     get_current_tenant,
@@ -77,6 +78,7 @@ from app.schemas.platform import (
     TrainingProgramCreateRequest,
     TrainingProgramResponse,
     TrainingProgramUpdateRequest,
+    WebPushConfigResponse,
 )
 from app.services.campaign_service import (
     CampaignDispatchRecipientResult,
@@ -101,6 +103,7 @@ reports_router = APIRouter(prefix="/reports", tags=["Reports"])
 notifications_router = APIRouter(prefix="/notifications", tags=["Notifications"])
 payment_accounts_router = APIRouter(prefix="/payment-provider/accounts", tags=["Payment Accounts"])
 mobile_router = APIRouter(prefix="/mobile", tags=["Mobile"])
+settings = get_settings()
 
 
 def _loads_dict(raw_value: Optional[str]) -> dict[str, Any]:
@@ -143,6 +146,8 @@ def _notification_dispatch_payload(result: NotificationDispatchResult) -> Notifi
         push_deliveries=[
             PushDeliveryResponse(
                 subscription_id=delivery.subscription_id,
+                provider=delivery.provider,
+                delivery_target=delivery.delivery_target,
                 expo_push_token=delivery.expo_push_token,
                 status=delivery.status,
                 is_active=delivery.is_active,
@@ -1315,9 +1320,25 @@ async def list_push_subscriptions(
     return [PushSubscriptionResponse.model_validate(item) for item in result.scalars().all()]
 
 
+@mobile_router.get("/push-config", response_model=WebPushConfigResponse)
+async def get_mobile_push_config(
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    if tenant is None or current_user is None:
+        raise HTTPException(status_code=400, detail="Tenant context is required")
+
+    public_key = settings.WEB_PUSH_VAPID_PUBLIC_KEY.strip()
+    return WebPushConfigResponse(
+        enabled=bool(public_key and settings.WEB_PUSH_VAPID_PRIVATE_KEY.strip()),
+        public_vapid_key=public_key or None,
+    )
+
+
 @mobile_router.post("/push-subscriptions", response_model=PushSubscriptionResponse, status_code=201)
 async def create_push_subscription(
     data: PushSubscriptionCreateRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
@@ -1325,18 +1346,30 @@ async def create_push_subscription(
     if tenant is None:
         raise HTTPException(status_code=400, detail="Tenant context is required")
 
+    lookup_field = (
+        PushSubscription.expo_push_token == data.expo_push_token
+        if data.provider == "expo"
+        else PushSubscription.web_endpoint == data.web_endpoint
+    )
     existing = (
         await db.execute(
             select(PushSubscription).where(
                 PushSubscription.tenant_id == tenant.id,
                 PushSubscription.user_id == current_user.id,
-                PushSubscription.expo_push_token == data.expo_push_token,
+                PushSubscription.provider == data.provider,
+                lookup_field,
             )
         )
     ).scalars().first()
     if existing:
+        existing.provider = data.provider
         existing.device_type = data.device_type
         existing.device_name = data.device_name
+        existing.expo_push_token = data.expo_push_token
+        existing.web_endpoint = data.web_endpoint
+        existing.web_p256dh_key = data.web_p256dh_key
+        existing.web_auth_key = data.web_auth_key
+        existing.user_agent = data.user_agent or request.headers.get("user-agent")
         existing.is_active = True
         existing.last_seen_at = datetime.now(timezone.utc)
         await db.flush()
@@ -1346,9 +1379,14 @@ async def create_push_subscription(
     subscription = PushSubscription(
         tenant_id=tenant.id,
         user_id=current_user.id,
+        provider=data.provider,
         device_type=data.device_type,
         device_name=data.device_name,
         expo_push_token=data.expo_push_token,
+        web_endpoint=data.web_endpoint,
+        web_p256dh_key=data.web_p256dh_key,
+        web_auth_key=data.web_auth_key,
+        user_agent=data.user_agent or request.headers.get("user-agent"),
         is_active=True,
     )
     db.add(subscription)

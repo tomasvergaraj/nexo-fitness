@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class MembershipCreateRequest(BaseModel):
@@ -191,7 +191,9 @@ class MobilePushPreviewRequest(BaseModel):
 
 class PushDeliveryResponse(BaseModel):
     subscription_id: UUID
-    expo_push_token: str
+    provider: str
+    delivery_target: str
+    expo_push_token: Optional[str] = None
     status: str
     is_active: bool
     ticket_id: Optional[str] = None
@@ -412,18 +414,46 @@ class PlatformLeadResponse(BaseModel):
 
 
 class PushSubscriptionCreateRequest(BaseModel):
+    provider: str = Field(default="expo", pattern=r"^(expo|webpush)$")
     device_type: str = Field(default="mobile", min_length=2, max_length=30)
     device_name: Optional[str] = None
-    expo_push_token: str = Field(min_length=10, max_length=255)
+    expo_push_token: Optional[str] = Field(default=None, min_length=10, max_length=255)
+    web_endpoint: Optional[str] = Field(default=None, min_length=10, max_length=1000)
+    web_p256dh_key: Optional[str] = Field(default=None, min_length=10, max_length=255)
+    web_auth_key: Optional[str] = Field(default=None, min_length=10, max_length=255)
+    user_agent: Optional[str] = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_provider_payload(self) -> "PushSubscriptionCreateRequest":
+        if self.provider == "expo":
+            if not self.expo_push_token:
+                raise ValueError("expo_push_token is required for Expo subscriptions")
+            self.web_endpoint = None
+            self.web_p256dh_key = None
+            self.web_auth_key = None
+            return self
+
+        if not self.web_endpoint or not self.web_p256dh_key or not self.web_auth_key:
+            raise ValueError("web_endpoint, web_p256dh_key and web_auth_key are required for Web Push subscriptions")
+        self.expo_push_token = None
+        return self
+
+
+class WebPushConfigResponse(BaseModel):
+    enabled: bool
+    public_vapid_key: Optional[str] = None
 
 
 class PushSubscriptionResponse(BaseModel):
     id: UUID
     tenant_id: UUID
     user_id: UUID
+    provider: str
     device_type: str
     device_name: Optional[str] = None
-    expo_push_token: str
+    expo_push_token: Optional[str] = None
+    web_endpoint: Optional[str] = None
+    user_agent: Optional[str] = None
     is_active: bool
     last_seen_at: datetime
     created_at: datetime

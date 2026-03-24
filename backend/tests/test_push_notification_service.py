@@ -6,7 +6,12 @@ import pytest
 
 from app.models.business import Campaign, CampaignChannel, CampaignStatus, Notification
 from app.models.platform import PushSubscription
-from app.services.push_notification_service import record_notification_engagement, send_notification_via_expo
+from app.services import push_notification_service
+from app.services.push_notification_service import (
+    record_notification_engagement,
+    send_notification_via_expo,
+    send_notification_via_push,
+)
 
 
 def make_notification(**overrides) -> Notification:
@@ -85,6 +90,7 @@ def make_subscription(token: str, **overrides) -> PushSubscription:
         id=uuid4(),
         tenant_id=uuid4(),
         user_id=uuid4(),
+        provider="expo",
         device_type="mobile",
         device_name="Pixel 8",
         expo_push_token=token,
@@ -190,6 +196,29 @@ async def test_send_notification_via_expo_surfaces_transport_errors_per_subscrip
     assert deliveries[0].status == "error"
     assert deliveries[0].error == "ExpoRequestError"
     assert "Expo timeout" in (deliveries[0].message or "")
+
+
+@pytest.mark.asyncio
+async def test_send_notification_via_push_reports_missing_webpush_library(monkeypatch) -> None:
+    notification = make_notification()
+    subscription = make_subscription(
+        "",
+        provider="webpush",
+        device_type="pwa",
+        device_name="Chrome PWA",
+        web_endpoint="https://push.example.test/subscription/123",
+        web_p256dh_key="p256dh-key",
+        web_auth_key="auth-key",
+    )
+
+    monkeypatch.setattr(push_notification_service, "webpush", None)
+
+    deliveries = await send_notification_via_push(notification, [subscription])
+
+    assert len(deliveries) == 1
+    assert deliveries[0].provider == "webpush"
+    assert deliveries[0].status == "error"
+    assert deliveries[0].error == "WebPushLibraryMissing"
 
 
 @pytest.mark.asyncio

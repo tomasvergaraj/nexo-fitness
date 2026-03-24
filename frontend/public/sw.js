@@ -1,4 +1,9 @@
-const CACHE_NAME = 'nexo-fitness-member-pwa-v1';
+const CACHE_VERSION = 'v2';
+const APP_SHELL_CACHE = `nexo-fitness-member-shell-${CACHE_VERSION}`;
+const STATIC_CACHE = `nexo-fitness-member-static-${CACHE_VERSION}`;
+const PUBLIC_CACHE = `nexo-fitness-member-public-${CACHE_VERSION}`;
+const KNOWN_CACHES = [APP_SHELL_CACHE, STATIC_CACHE, PUBLIC_CACHE];
+
 const APP_SHELL = [
   '/',
   '/member',
@@ -10,14 +15,14 @@ const APP_SHELL = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()),
+    caches.open(APP_SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()),
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
+      Promise.all(keys.filter((key) => !KNOWN_CACHES.includes(key)).map((key) => caches.delete(key))),
     ).then(() => self.clients.claim()),
   );
 });
@@ -29,13 +34,9 @@ self.addEventListener('fetch', (event) => {
   }
 
   const url = new URL(request.url);
+
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request).catch(async () => {
-        const cache = await caches.open(CACHE_NAME);
-        return (await cache.match('/member')) || cache.match('/');
-      }),
-    );
+    event.respondWith(networkFirst(request, APP_SHELL_CACHE, '/member'));
     return;
   }
 
@@ -43,19 +44,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      const networkResponse = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const responseClone = response.clone();
-            void caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
-          }
-          return response;
-        })
-        .catch(() => cachedResponse);
+  if (isPublicApiRequest(url)) {
+    event.respondWith(networkFirst(request, PUBLIC_CACHE));
+    return;
+  }
 
-      return cachedResponse || networkResponse;
+  if (isStaticAssetRequest(request, url)) {
+    event.respondWith(staleWhileRevalidate(request, STATIC_CACHE));
+  }
+});
+
+self.addEventListener('push', (event) => {
+  const payload = readPushPayload(event);
+  const title = payload.title || 'Nexo Fitness';
+  const targetUrl = payload.url || payload.action_url || '/member?tab=notifications';
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: payload.body || payload.message || 'Tienes una nueva novedad en tu cuenta.',
+      icon: payload.icon || '/icons/icon-192.svg',
+      badge: payload.badge || '/icons/icon-192.svg',
+      tag: payload.tag || 'nexo-member-web-push',
+      data: { url: targetUrl },
     }),
   );
 });
@@ -80,3 +90,70 @@ self.addEventListener('notificationclick', (event) => {
     }),
   );
 });
+
+function isPublicApiRequest(url) {
+  return url.pathname.startsWith('/api/v1/public/');
+}
+
+function isStaticAssetRequest(request, url) {
+  if (['style', 'script', 'worker', 'font', 'image'].includes(request.destination)) {
+    return true;
+  }
+  return [
+    '/manifest.webmanifest',
+    '/favicon.svg',
+    '/icons/icon-192.svg',
+    '/icons/icon-512.svg',
+  ].includes(url.pathname);
+}
+
+async function networkFirst(request, cacheName, fallbackPath) {
+  const cache = await caches.open(cacheName);
+  try {
+    const networkResponse = await fetch(request);
+    if (networkResponse.ok) {
+      await cache.put(request, networkResponse.clone());
+    }
+    return networkResponse;
+  } catch {
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+    if (fallbackPath) {
+      const fallbackResponse = await cache.match(fallbackPath);
+      if (fallbackResponse) {
+        return fallbackResponse;
+      }
+    }
+    return Response.error();
+  }
+}
+
+async function staleWhileRevalidate(request, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cachedResponse = await cache.match(request);
+
+  const networkPromise = fetch(request)
+    .then(async (response) => {
+      if (response.ok) {
+        await cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => cachedResponse || Response.error());
+
+  return cachedResponse || networkPromise;
+}
+
+function readPushPayload(event) {
+  if (!event.data) {
+    return {};
+  }
+
+  try {
+    return event.data.json();
+  } catch {
+    return { body: event.data.text() };
+  }
+}

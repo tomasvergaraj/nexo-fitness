@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     EXPO_PUSH_RECEIPT_BATCH_SIZE: int = 100
     EXPO_PUSH_RECEIPT_POLL_INTERVAL_SECONDS: int = 60
     EXPO_PUSH_RECEIPT_POLL_LIMIT: int = 200
+    WEB_PUSH_VAPID_PUBLIC_KEY: str = ""
+    WEB_PUSH_VAPID_PRIVATE_KEY: str = ""
+    WEB_PUSH_VAPID_SUBJECT: str = "mailto:soporte@nexofitness.com"
+    WEB_PUSH_REQUEST_TIMEOUT_SECONDS: float = 10.0
 
     # Storage
     AWS_S3_BUCKET: str = ""
