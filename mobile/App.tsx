@@ -125,7 +125,11 @@ export default function App() {
     }
 
     if (notificationId) {
-      void app.markNotificationAsRead(notificationId);
+      void app.trackNotificationEngagement(notificationId, {
+        markOpened: true,
+        markClicked: true,
+        isRead: true,
+      });
     }
   };
 

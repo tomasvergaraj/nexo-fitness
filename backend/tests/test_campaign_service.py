@@ -36,6 +36,7 @@ def make_campaign(**overrides) -> Campaign:
         total_recipients=0,
         total_sent=0,
         total_opened=0,
+        total_clicked=0,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )

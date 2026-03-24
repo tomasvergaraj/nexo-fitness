@@ -800,7 +800,15 @@ export function useMobileApp() {
     }
   };
 
-  const markNotificationAsRead = async (notificationId: string, isRead = true) => {
+  const updateNotificationState = async (
+    notificationId: string,
+    payload: {
+      is_read?: boolean;
+      mark_opened?: boolean;
+      mark_clicked?: boolean;
+    },
+    successMessage: string,
+  ) => {
     if (!accessToken) {
       setNotificationsMessage('Inicia sesion antes de actualizar una notificacion.');
       return null;
@@ -812,18 +820,14 @@ export function useMobileApp() {
         resolveBaseUrl(),
         accessToken,
         notificationId,
-        isRead,
+        payload,
       );
       setNotifications((currentNotifications) =>
         currentNotifications.map((notification) =>
           notification.id === notificationId ? updatedNotification : notification,
         ),
       );
-      setNotificationsMessage(
-        isRead
-          ? 'Notificacion actualizada como leida.'
-          : 'Notificacion actualizada como no leida.',
-      );
+      setNotificationsMessage(successMessage);
       return updatedNotification;
     } catch (error) {
       setNotificationsMessage(`No se pudo actualizar la notificacion: ${String(error)}`);
@@ -832,6 +836,39 @@ export function useMobileApp() {
       setActiveNotificationId(null);
     }
   };
+
+  const markNotificationAsRead = async (notificationId: string, isRead = true) =>
+    updateNotificationState(
+      notificationId,
+      {
+        is_read: isRead,
+      },
+      isRead
+        ? 'Notificacion actualizada como leida.'
+        : 'Notificacion actualizada como no leida.',
+    );
+
+  const trackNotificationEngagement = async (
+    notificationId: string,
+    options?: {
+      markOpened?: boolean;
+      markClicked?: boolean;
+      isRead?: boolean;
+    },
+  ) =>
+    updateNotificationState(
+      notificationId,
+      {
+        is_read: options?.isRead,
+        mark_opened: options?.markOpened,
+        mark_clicked: options?.markClicked,
+      },
+      options?.markClicked
+        ? 'Apertura y click de la notificacion registrados.'
+        : options?.markOpened
+          ? 'Apertura de la notificacion registrada.'
+          : 'Notificacion actualizada.',
+    );
 
   const reserveClass = async (gymClassId: string) => {
     if (!accessToken) {
@@ -944,6 +981,7 @@ export function useMobileApp() {
     loadNotifications,
     loadPushSubscriptions,
     markNotificationAsRead,
+    trackNotificationEngagement,
     reserveClass,
     cancelReservation,
   };

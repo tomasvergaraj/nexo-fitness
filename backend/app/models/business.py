@@ -348,10 +348,15 @@ class Notification(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    campaign_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="SET NULL"), index=True
+    )
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     message: Mapped[Optional[str]] = mapped_column(Text)
     type: Mapped[str] = mapped_column(String(50), default="info")  # info, warning, success, error
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    opened_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    clicked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     action_url: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

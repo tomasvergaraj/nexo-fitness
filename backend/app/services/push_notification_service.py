@@ -9,11 +9,11 @@ from typing import Any, Iterable, Sequence
 from uuid import UUID
 
 import httpx
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.business import Notification
+from app.models.business import Campaign, Notification
 from app.models.platform import PushDelivery, PushSubscription
 
 settings = get_settings()
@@ -63,6 +63,7 @@ def _build_expo_message(notification: Notification, subscription: PushSubscripti
         "data": {
             "source": "backend-notification",
             "notification_id": str(notification.id),
+            "campaign_id": str(notification.campaign_id) if notification.campaign_id else None,
             "action_url": notification.action_url,
             "type": notification.type,
         },
@@ -118,6 +119,7 @@ async def create_notification_record(
     *,
     tenant_id: UUID,
     user_id: UUID,
+    campaign_id: UUID | None = None,
     title: str,
     message: str | None = None,
     type: str = "info",
@@ -126,6 +128,7 @@ async def create_notification_record(
     notification = Notification(
         tenant_id=tenant_id,
         user_id=user_id,
+        campaign_id=campaign_id,
         title=title,
         message=message,
         type=type,
@@ -169,6 +172,70 @@ async def list_push_deliveries_for_notification(
         .order_by(PushDelivery.created_at.asc())
     )
     return list(result.scalars().all())
+
+
+async def refresh_campaign_engagement_totals(
+    db: AsyncSession,
+    *,
+    campaign: Campaign,
+) -> Campaign:
+    campaign.total_opened = (
+        await db.execute(
+            select(func.count(Notification.id)).where(
+                Notification.campaign_id == campaign.id,
+                Notification.opened_at.is_not(None),
+            )
+        )
+    ).scalar_one()
+    campaign.total_clicked = (
+        await db.execute(
+            select(func.count(Notification.id)).where(
+                Notification.campaign_id == campaign.id,
+                Notification.clicked_at.is_not(None),
+            )
+        )
+    ).scalar_one()
+    return campaign
+
+
+async def record_notification_engagement(
+    db: AsyncSession,
+    *,
+    notification: Notification,
+    is_read: bool | None = None,
+    mark_opened: bool = False,
+    mark_clicked: bool = False,
+    occurred_at: datetime | None = None,
+) -> Notification:
+    timestamp = occurred_at or datetime.now(timezone.utc)
+
+    if mark_clicked:
+        mark_opened = True
+        if is_read is None:
+            is_read = True
+    elif mark_opened and is_read is None:
+        is_read = True
+
+    if is_read is not None:
+        notification.is_read = is_read
+        if is_read and notification.opened_at is None:
+            notification.opened_at = timestamp
+
+    if mark_opened and notification.opened_at is None:
+        notification.opened_at = timestamp
+
+    if mark_clicked and notification.clicked_at is None:
+        notification.clicked_at = timestamp
+
+    await db.flush()
+
+    if notification.campaign_id:
+        campaign = await db.get(Campaign, notification.campaign_id)
+        if campaign is not None and campaign.tenant_id == notification.tenant_id:
+            await refresh_campaign_engagement_totals(db, campaign=campaign)
+
+    await db.refresh(notification)
+    return notification
 
 
 def push_delivery_result_from_model(delivery: PushDelivery) -> PushDeliveryResult:
@@ -340,6 +407,7 @@ async def create_and_dispatch_notification(
     *,
     tenant_id: UUID,
     user_id: UUID,
+    campaign_id: UUID | None = None,
     title: str,
     message: str | None = None,
     type: str = "info",
@@ -351,6 +419,7 @@ async def create_and_dispatch_notification(
         db,
         tenant_id=tenant_id,
         user_id=user_id,
+        campaign_id=campaign_id,
         title=title,
         message=message,
         type=type,

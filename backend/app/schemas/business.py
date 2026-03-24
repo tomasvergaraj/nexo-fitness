@@ -209,6 +209,7 @@ class CampaignCreate(BaseModel):
     total_recipients: int = Field(default=0, ge=0)
     total_sent: int = Field(default=0, ge=0)
     total_opened: int = Field(default=0, ge=0)
+    total_clicked: int = Field(default=0, ge=0)
 
 class CampaignResponse(BaseModel):
     id: UUID
@@ -220,6 +221,7 @@ class CampaignResponse(BaseModel):
     total_recipients: int
     total_sent: int
     total_opened: int
+    total_clicked: int
     segment_filter: Optional[dict] = None
     notification_type: str
     action_url: Optional[str] = None

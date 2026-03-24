@@ -259,6 +259,7 @@ async def dispatch_campaign_broadcast(
                 db,
                 tenant_id=tenant_id,
                 user_id=recipient.id,
+                campaign_id=campaign.id if campaign else None,
                 title=title,
                 message=message,
                 type=notification_type,

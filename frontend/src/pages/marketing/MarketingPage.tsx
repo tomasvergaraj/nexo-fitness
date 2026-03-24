@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Bell, Clock3, Eye, Megaphone, MessageCircle, Plus, Search, Send, UsersRound } from 'lucide-react';
+import { AlertTriangle, Bell, Clock3, Eye, Megaphone, MessageCircle, MousePointerClick, Plus, Search, Send, UsersRound } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { campaignsApi, clientsApi, notificationsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
@@ -103,6 +103,10 @@ function formatDispatchTrigger(trigger?: Campaign['last_dispatch_trigger']) {
   if (trigger === 'scheduled') return 'scheduler';
   if (trigger === 'manual') return 'manual';
   return 'sin trigger';
+}
+
+function calculateRate(total: number, base: number) {
+  return base ? Math.round((total / base) * 100) : 0;
 }
 
 function toForm(campaign?: Campaign): CampaignForm {
@@ -280,10 +284,13 @@ export default function MarketingPage() {
   const stats = useMemo(() => {
     const sent = campaigns.reduce((sum, item) => sum + item.total_sent, 0);
     const opened = campaigns.reduce((sum, item) => sum + item.total_opened, 0);
+    const clicked = campaigns.reduce((sum, item) => sum + item.total_clicked, 0);
     return {
       active: campaigns.filter((item) => item.status === 'scheduled' || item.status === 'sending').length,
       sent,
-      openRate: sent ? Math.round((opened / sent) * 100) : 0,
+      clicked,
+      openRate: calculateRate(opened, sent),
+      clickRate: calculateRate(clicked, sent),
     };
   }, [campaigns]);
 
@@ -328,7 +335,7 @@ export default function MarketingPage() {
       <motion.div variants={fadeInUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Marketing</h1>
-          <p className="mt-1 text-sm text-surface-500">Campanas persistentes por tenant, con segmentos reutilizables y composer real para push por lote</p>
+          <p className="mt-1 text-sm text-surface-500">Campanas persistentes por tenant, con segmentos reutilizables, broadcast real y engagement medido por aperturas/clicks desde mobile</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => openBroadcastModal()} className="btn-secondary">
@@ -355,7 +362,7 @@ export default function MarketingPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <div className="flex items-center gap-3"><Megaphone size={18} className="text-brand-500" /><span className="text-sm text-surface-500">Activas</span></div>
           <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.active}</p>
@@ -367,6 +374,11 @@ export default function MarketingPage() {
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <div className="flex items-center gap-3"><Eye size={18} className="text-violet-500" /><span className="text-sm text-surface-500">Apertura</span></div>
           <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.openRate}%</p>
+        </div>
+        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <div className="flex items-center gap-3"><MousePointerClick size={18} className="text-amber-500" /><span className="text-sm text-surface-500">CTR</span></div>
+          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.clickRate}%</p>
+          <p className="mt-1 text-xs text-surface-500">{stats.clicked} click(s) registrados</p>
         </div>
       </div>
 
@@ -396,7 +408,7 @@ export default function MarketingPage() {
               </span>
             </div>
 
-            <div className="mt-5 grid grid-cols-3 gap-3 text-sm">
+            <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
               <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
                 <p className="text-surface-500">Destinatarios</p>
                 <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_recipients}</p>
@@ -408,6 +420,10 @@ export default function MarketingPage() {
               <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
                 <p className="text-surface-500">Abiertos</p>
                 <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_opened}</p>
+              </div>
+              <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
+                <p className="text-surface-500">Clicks</p>
+                <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_clicked}</p>
               </div>
             </div>
 
@@ -430,6 +446,16 @@ export default function MarketingPage() {
                 {campaign.dispatch_attempts ? (
                   <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
                     Intentos: {campaign.dispatch_attempts}
+                  </span>
+                ) : null}
+                {campaign.total_sent ? (
+                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
+                    Open rate: {calculateRate(campaign.total_opened, campaign.total_sent)}%
+                  </span>
+                ) : null}
+                {campaign.total_sent ? (
+                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
+                    CTR: {calculateRate(campaign.total_clicked, campaign.total_sent)}%
                   </span>
                 ) : null}
               </div>
@@ -635,9 +661,9 @@ export default function MarketingPage() {
           {editingCampaign ? (
             <div className="rounded-3xl border border-surface-200/60 bg-surface-50 p-5 dark:border-surface-800/60 dark:bg-surface-950/60">
               <h3 className="text-base font-semibold text-surface-900 dark:text-white">Observabilidad</h3>
-              <p className="mt-1 text-sm text-surface-500">Resumen del ultimo intento de envio asociado a esta campana, ya sea manual o ejecutado por el scheduler.</p>
+              <p className="mt-1 text-sm text-surface-500">Resumen del ultimo intento de envio y del engagement real que devolvio mobile para esta campana.</p>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
                   <p className="text-xs uppercase tracking-wide text-surface-500">Trigger</p>
                   <p className="mt-2 font-semibold text-surface-900 dark:text-white">{formatDispatchTrigger(editingCampaign.last_dispatch_trigger)}</p>
@@ -645,6 +671,14 @@ export default function MarketingPage() {
                 <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
                   <p className="text-xs uppercase tracking-wide text-surface-500">Intentos</p>
                   <p className="mt-2 font-semibold text-surface-900 dark:text-white">{editingCampaign.dispatch_attempts}</p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-500">Abiertos</p>
+                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">{editingCampaign.total_opened}</p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-500">Clicks</p>
+                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">{editingCampaign.total_clicked}</p>
                 </div>
                 <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
                   <p className="text-xs uppercase tracking-wide text-surface-500">Ultimo inicio</p>

@@ -87,6 +87,7 @@ from app.services.campaign_service import (
 )
 from app.services.push_notification_service import NotificationDispatchResult, create_and_dispatch_notification
 from app.services.push_notification_service import get_notification_dispatch_result, refresh_push_receipts
+from app.services.push_notification_service import record_notification_engagement
 
 branches_router = APIRouter(prefix="/branches", tags=["Branches"])
 memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
@@ -179,6 +180,7 @@ def _campaign_payload(campaign: Campaign) -> CampaignResponse:
         total_recipients=campaign.total_recipients,
         total_sent=campaign.total_sent,
         total_opened=campaign.total_opened,
+        total_clicked=campaign.total_clicked,
         segment_filter=parse_segment_filter(campaign.segment_filter),
         notification_type=campaign.notification_type,
         action_url=campaign.action_url,
@@ -494,6 +496,7 @@ async def create_campaign(
         total_recipients=data.total_recipients,
         total_sent=data.total_sent,
         total_opened=data.total_opened,
+        total_clicked=data.total_clicked,
         created_by=current_user.id,
     )
     db.add(campaign)
@@ -533,6 +536,8 @@ async def update_campaign(
             campaign.total_sent = 0
         if "total_opened" not in payload and previous_status == CampaignStatus.SENT:
             campaign.total_opened = 0
+        if "total_clicked" not in payload and previous_status == CampaignStatus.SENT:
+            campaign.total_clicked = 0
 
     for field, value in payload.items():
         setattr(campaign, field, value)
@@ -1015,9 +1020,14 @@ async def update_notification(
     notification = await db.get(Notification, notification_id)
     if not notification or notification.tenant_id != ctx.tenant_id or notification.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Notification not found")
-    notification.is_read = data.is_read
-    await db.flush()
-    await db.refresh(notification)
+
+    notification = await record_notification_engagement(
+        db,
+        notification=notification,
+        is_read=data.is_read,
+        mark_opened=data.mark_opened,
+        mark_clicked=data.mark_clicked,
+    )
     return _notification_payload(notification)
 
 

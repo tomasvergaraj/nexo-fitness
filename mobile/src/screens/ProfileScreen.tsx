@@ -36,6 +36,8 @@ export function ProfileScreen({ app, accentColor, navigateToTab, openActionUrl }
   }
 
   const unreadCount = notifications.filter((notification) => !notification.is_read).length;
+  const openedCount = notifications.filter((notification) => Boolean(notification.opened_at)).length;
+  const clickedCount = notifications.filter((notification) => Boolean(notification.clicked_at)).length;
 
   return (
     <>
@@ -134,6 +136,10 @@ export function ProfileScreen({ app, accentColor, navigateToTab, openActionUrl }
           <Metric label="Total" value={String(notifications.length)} />
           <Metric label="Sin leer" value={String(unreadCount)} />
         </View>
+        <View style={styles.metricRow}>
+          <Metric label="Abiertas" value={String(openedCount)} />
+          <Metric label="Clicks" value={String(clickedCount)} />
+        </View>
 
         <ActionButton
           label={isLoadingNotifications ? 'Cargando notificaciones...' : 'Cargar notificaciones'}
@@ -167,6 +173,12 @@ export function ProfileScreen({ app, accentColor, navigateToTab, openActionUrl }
                   <Text style={styles.listRowMeta}>
                     {formatStatus(notification.type)} - {formatDateTime(notification.created_at)}
                   </Text>
+                  {notification.opened_at || notification.clicked_at ? (
+                    <Text style={styles.listRowMeta}>
+                      {notification.opened_at ? `Apertura: ${formatDateTime(notification.opened_at)}` : 'Sin apertura'}
+                      {notification.clicked_at ? ` - Click: ${formatDateTime(notification.clicked_at)}` : ''}
+                    </Text>
+                  ) : null}
                   <Text style={styles.description}>
                     {notification.message ?? 'Notificacion sin mensaje adicional.'}
                   </Text>

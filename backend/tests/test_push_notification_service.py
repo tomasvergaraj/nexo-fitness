@@ -4,9 +4,9 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from app.models.business import Notification
+from app.models.business import Campaign, CampaignChannel, CampaignStatus, Notification
 from app.models.platform import PushSubscription
-from app.services.push_notification_service import send_notification_via_expo
+from app.services.push_notification_service import record_notification_engagement, send_notification_via_expo
 
 
 def make_notification(**overrides) -> Notification:
@@ -24,6 +24,60 @@ def make_notification(**overrides) -> Notification:
     for key, value in overrides.items():
         setattr(notification, key, value)
     return notification
+
+
+def make_campaign(**overrides) -> Campaign:
+    campaign = Campaign(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        name="Push campaign",
+        subject="Entrena hoy",
+        content="Toca para volver a la app.",
+        channel=CampaignChannel.EMAIL,
+        status=CampaignStatus.SENT,
+        notification_type="info",
+        action_url="nexofitness://account/profile",
+        send_push=True,
+        total_recipients=1,
+        total_sent=1,
+        total_opened=0,
+        total_clicked=0,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    for key, value in overrides.items():
+        setattr(campaign, key, value)
+    return campaign
+
+
+class DummyScalarResult:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def scalar_one(self) -> int:
+        return self.value
+
+
+class DummyEngagementSession:
+    def __init__(self, campaign: Campaign | None, totals: list[int]) -> None:
+        self.campaign = campaign
+        self.totals = totals
+        self.flush_calls = 0
+        self.refreshed_objects: list[object] = []
+
+    async def get(self, model, identifier):
+        if model is Campaign and self.campaign and identifier == self.campaign.id:
+            return self.campaign
+        return None
+
+    async def execute(self, _statement):
+        return DummyScalarResult(self.totals.pop(0))
+
+    async def flush(self) -> None:
+        self.flush_calls += 1
+
+    async def refresh(self, obj) -> None:
+        self.refreshed_objects.append(obj)
 
 
 def make_subscription(token: str, **overrides) -> PushSubscription:
@@ -136,3 +190,24 @@ async def test_send_notification_via_expo_surfaces_transport_errors_per_subscrip
     assert deliveries[0].status == "error"
     assert deliveries[0].error == "ExpoRequestError"
     assert "Expo timeout" in (deliveries[0].message or "")
+
+
+@pytest.mark.asyncio
+async def test_record_notification_engagement_marks_open_and_click_and_refreshes_campaign_totals() -> None:
+    campaign = make_campaign()
+    notification = make_notification(campaign_id=campaign.id, tenant_id=campaign.tenant_id)
+    db = DummyEngagementSession(campaign, totals=[1, 1])
+
+    updated = await record_notification_engagement(
+        db,
+        notification=notification,
+        mark_clicked=True,
+    )
+
+    assert updated.is_read is True
+    assert updated.opened_at is not None
+    assert updated.clicked_at is not None
+    assert campaign.total_opened == 1
+    assert campaign.total_clicked == 1
+    assert db.flush_calls == 1
+    assert db.refreshed_objects == [notification]

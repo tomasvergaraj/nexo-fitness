@@ -275,6 +275,7 @@ export interface Campaign {
   total_recipients: number;
   total_sent: number;
   total_opened: number;
+  total_clicked: number;
   segment_filter?: {
     status?: 'all' | 'active' | 'inactive';
     search?: string;
@@ -402,10 +403,13 @@ export interface PaymentProviderAccount {
 
 export interface AppNotification {
   id: string;
+  campaign_id?: string;
   title: string;
   message?: string;
   type: 'info' | 'warning' | 'success' | 'error';
   is_read: boolean;
+  opened_at?: string;
+  clicked_at?: string;
   action_url?: string;
   created_at: string;
 }

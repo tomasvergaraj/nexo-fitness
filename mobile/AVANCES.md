@@ -58,6 +58,10 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 - Se implemento polling de receipts contra Expo con Celery beat para cerrar el tracking asincronico de deliveries aceptadas por ticket.
 - Se agrego `GET /api/v1/notifications/{id}/dispatch` con opcion de refrescar receipts al vuelo, de modo que staff pueda inspeccionar una notificacion puntual sin depender solo del resultado inmediato del POST.
 - Se actualizo `frontend/src/pages/clients/ClientsPage.tsx` para distinguir tickets aceptados vs receipts entregados/pendientes/error y permitir refresco manual del tracking Expo.
+- Se agrego tracking backend de engagement por notificacion con `campaign_id`, `opened_at` y `clicked_at`, de modo que cada notificacion creada desde una campana pueda devolver aperturas/clicks reales en vez de depender solo de contadores editados a mano.
+- Se extendio `PATCH /api/v1/notifications/{id}` para registrar lectura, apertura y click en una sola llamada idempotente, recalculando `total_opened` y `total_clicked` de la campana asociada dentro de la misma transaccion.
+- Se conecto mobile para que al abrir el destino de una notificacion desde la bandeja o desde una push se registre automaticamente engagement real en backend, y Perfil ahora muestra aperturas/clicks por item.
+- Se actualizo Marketing web para exponer `CTR`, clicks agregados por campana y tasas derivadas sobre `sent`, tomando los nuevos contadores reales del backend.
 
 ## Experiencia que ya queda disponible
 1. El usuario puede apuntar la app a una `API base URL`.
@@ -87,6 +91,8 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 25. El staff puede dejar una campana realmente programada para una fecha futura y permitir que backend la ejecute solo, usando el payload guardado sin reabrir el composer.
 26. El staff puede ver cuando fue el ultimo intento de envio de una campana, si lo disparo el scheduler o un envio manual, cuantas veces se intento y cual fue el ultimo error registrado.
 27. El staff puede revisar el tracking de una notificacion push individual, ver si Expo solo acepto el ticket o si ya devolvio receipt final, y refrescar ese estado desde la pantalla de Clientes.
+28. El miembro puede abrir una notificacion desde mobile y dejar registrada la apertura/click sobre la notificacion original, incluyendo las que nacieron desde un broadcast de campana.
+29. Marketing puede ver `open rate` y `CTR` reales por campana desde el panel, sin depender solo de valores cargados manualmente.
 
 ## Endpoints utilizados por esta base
 - `POST /api/v1/auth/login`
@@ -104,7 +110,7 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 - `POST /api/v1/notifications`
 - `GET /api/v1/notifications/{id}/dispatch`
 - `POST /api/v1/notifications/broadcast`
-- `PATCH /api/v1/notifications/{id}`
+- `PATCH /api/v1/notifications/{id}` para `is_read`, `mark_opened` y `mark_clicked`
 - `GET /api/v1/campaigns`
 - `POST /api/v1/campaigns`
 - `PATCH /api/v1/campaigns/{id}`
@@ -132,6 +138,16 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 - `mobile/src/lib/formatters.ts`
 - `mobile/src/types.ts`
 - `mobile/AVANCES.md`
+- `backend/app/api/v1/endpoints/operations.py`
+- `backend/app/models/business.py`
+- `backend/app/schemas/business.py`
+- `backend/app/schemas/platform.py`
+- `backend/app/services/push_notification_service.py`
+- `backend/app/services/campaign_service.py`
+- `backend/migrations/versions/20260324_1500_add_notification_engagement_tracking.py`
+- `backend/tests/test_push_notification_service.py`
+- `frontend/src/pages/marketing/MarketingPage.tsx`
+- `frontend/src/types/index.ts`
 - `backend/tests/test_campaign_service.py`
 - `backend/tests/test_push_notification_service.py`
 - `backend/app/schemas/platform.py`
@@ -185,11 +201,11 @@ Dejar una base Expo mas real para la Fase 3 del roadmap: una app central multite
 - El push remoto no funciona en Expo Go Android desde SDK 53; para obtener el token real en Android hace falta un development build y un `projectId` de EAS configurado.
 - La app ya tiene stack interno y rutas dedicadas, pero todavia no hay navegacion nativa con gestos/headers del sistema ni persistencia explicita del estado de ruta.
 - El contrato push/listado hoy reutiliza `action_url`; todavia no hay payload push homologado con una taxonomia mas rica de eventos.
-- La app y staff ya tienen tracking basico de Expo con receipts, pero todavia no hay tracking de apertura/engagement dentro de mobile despues de la entrega.
+- La app y staff ya tienen tracking basico de Expo con receipts y engagement de apertura/click, pero todavia no hay embudo completo `delivery -> open -> click -> conversion` por dispositivo o por variante creativa.
 - El broadcast por lote ya existe y actualiza metricas base de campana, pero todavia no hay segmentacion persistente mas rica ni exclusion dinamica por comportamiento reciente.
 - La programacion de campanas ya tiene trazas basicas por campana, pero por ahora usa un poller simple con `celery beat`; todavia no hay retries avanzados, dead-letter queue ni metricas agregadas de scheduler.
 - La renovacion hoy reutiliza el plan actual via checkout publico; todavia no hay cambio de plan, prorrateo ni reglas de upgrade/downgrade.
 - Los comprobantes solo se pueden abrir cuando `receipt_url` viene informado desde backend; todavia no hay descarga offline ni reintento de pagos fallidos.
 
 ## Siguiente iteracion sugerida
-- Avanzar en tracking de apertura/engagement de notificaciones y metricas agregadas del scheduler, o decidir si conviene migrar este stack interno a `expo-router`/`react-navigation` antes de crecer mas la navegacion.
+- Avanzar en metricas agregadas del scheduler y en un embudo mas rico de conversion por campana (`delivery -> open -> click -> checkout`), o decidir si conviene migrar este stack interno a `expo-router`/`react-navigation` antes de crecer mas la navegacion.

@@ -56,6 +56,7 @@ class CampaignUpdateRequest(BaseModel):
     total_recipients: Optional[int] = Field(default=None, ge=0)
     total_sent: Optional[int] = Field(default=None, ge=0)
     total_opened: Optional[int] = Field(default=None, ge=0)
+    total_clicked: Optional[int] = Field(default=None, ge=0)
 
 
 class SupportInteractionCreateRequest(BaseModel):
@@ -127,10 +128,13 @@ class TrainingProgramResponse(BaseModel):
 
 class NotificationResponse(BaseModel):
     id: UUID
+    campaign_id: Optional[UUID] = None
     title: str
     message: Optional[str] = None
     type: str
     is_read: bool
+    opened_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None
     action_url: Optional[str] = None
     created_at: datetime
 
@@ -138,7 +142,9 @@ class NotificationResponse(BaseModel):
 
 
 class NotificationUpdateRequest(BaseModel):
-    is_read: bool
+    is_read: Optional[bool] = None
+    mark_opened: bool = False
+    mark_clicked: bool = False
 
 
 class NotificationCreateRequest(BaseModel):

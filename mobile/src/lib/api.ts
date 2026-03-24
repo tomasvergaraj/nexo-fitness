@@ -143,13 +143,20 @@ export const notificationsApi = {
     request<AppNotification[]>(baseUrl, '/notifications', {
       accessToken,
     }),
-  update: (baseUrl: string, accessToken: string, notificationId: string, isRead: boolean) =>
+  update: (
+    baseUrl: string,
+    accessToken: string,
+    notificationId: string,
+    payload: {
+      is_read?: boolean;
+      mark_opened?: boolean;
+      mark_clicked?: boolean;
+    },
+  ) =>
     request<AppNotification>(baseUrl, `/notifications/${notificationId}`, {
       method: 'PATCH',
       accessToken,
-      body: {
-        is_read: isRead,
-      },
+      body: payload,
     }),
 };
 
