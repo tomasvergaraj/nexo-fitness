@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Nexo Fitness",
+    "slug": "nexo-fitness-mobile",
+    "scheme": "nexofitness",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.nexofitness.mobile"
+    },
+    "android": {
+      "package": "com.nexofitness.mobile"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "defaultApiBaseUrl": "http://localhost:8000/api/v1",
+      "publicTenantHost": "nexofitness.cl"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "default",
+          "enableBackgroundRemoteNotifications": false
+        }
+      ]
+    ]
+  }
+}

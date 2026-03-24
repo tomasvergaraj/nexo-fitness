@@ -268,13 +268,27 @@ export interface Payment {
 export interface Campaign {
   id: string;
   name: string;
+  subject?: string;
+  content?: string;
   channel: 'email' | 'whatsapp' | 'sms';
   status: 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled';
   total_recipients: number;
   total_sent: number;
   total_opened: number;
+  segment_filter?: {
+    status?: 'all' | 'active' | 'inactive';
+    search?: string;
+  };
+  notification_type: 'info' | 'warning' | 'success' | 'error';
+  action_url?: string;
+  send_push: boolean;
   scheduled_at?: string;
   sent_at?: string;
+  last_dispatch_trigger?: 'manual' | 'scheduled';
+  last_dispatch_attempted_at?: string;
+  last_dispatch_finished_at?: string;
+  last_dispatch_error?: string;
+  dispatch_attempts: number;
   created_at: string;
 }
 
@@ -296,6 +310,225 @@ export interface DashboardMetrics {
   recent_checkins: CheckIn[];
   revenue_chart: { label: string; value: number }[];
   class_occupancy_chart: { name: string; occupancy: number }[];
+}
+
+export interface Membership {
+  id: string;
+  user_id: string;
+  plan_id: string;
+  status: 'active' | 'expired' | 'cancelled' | 'frozen' | 'pending';
+  starts_at: string;
+  expires_at?: string;
+  auto_renew: boolean;
+  frozen_until?: string;
+  stripe_subscription_id?: string;
+  created_at: string;
+  user_name?: string;
+  plan_name?: string;
+}
+
+export interface SupportInteraction {
+  id: string;
+  user_id?: string;
+  channel: 'whatsapp' | 'email' | 'phone' | 'in_person';
+  subject?: string;
+  notes?: string;
+  resolved: boolean;
+  handled_by?: string;
+  created_at: string;
+  client_name?: string;
+  handler_name?: string;
+}
+
+export interface TrainingProgram {
+  id: string;
+  name: string;
+  description?: string;
+  trainer_id?: string;
+  trainer_name?: string;
+  program_type?: string;
+  duration_weeks?: number;
+  schedule: Array<Record<string, unknown>>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantBranding {
+  logo_url?: string;
+  primary_color?: string;
+  custom_domain?: string;
+  support_email?: string;
+  support_phone?: string;
+  marketplace_headline?: string;
+  marketplace_description?: string;
+}
+
+export interface TenantSettings {
+  gym_name: string;
+  email: string;
+  phone?: string;
+  city?: string;
+  address?: string;
+  primary_color?: string;
+  logo_url?: string;
+  custom_domain?: string;
+  billing_email?: string;
+  support_email?: string;
+  support_phone?: string;
+  public_api_key?: string;
+  marketplace_headline?: string;
+  marketplace_description?: string;
+  reminder_emails: boolean;
+  reminder_whatsapp: boolean;
+  staff_can_edit_plans: boolean;
+  two_factor_required: boolean;
+  public_checkout_enabled: boolean;
+  branding: TenantBranding;
+}
+
+export interface PaymentProviderAccount {
+  id: string;
+  provider: 'stripe' | 'mercadopago' | 'webpay' | 'manual';
+  status: 'pending' | 'connected' | 'disabled';
+  account_label?: string;
+  public_identifier?: string;
+  checkout_base_url?: string;
+  metadata: Record<string, unknown>;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message?: string;
+  type: 'info' | 'warning' | 'success' | 'error';
+  is_read: boolean;
+  action_url?: string;
+  created_at: string;
+}
+
+export interface PushDelivery {
+  subscription_id: string;
+  expo_push_token: string;
+  status: string;
+  is_active: boolean;
+  ticket_id?: string;
+  message?: string;
+  error?: string;
+  receipt_status?: string;
+  receipt_message?: string;
+  receipt_error?: string;
+  receipt_checked_at?: string;
+}
+
+export interface NotificationDispatchResponse {
+  notification: AppNotification;
+  push_deliveries: PushDelivery[];
+}
+
+export interface NotificationBroadcastRecipient {
+  user_id: string;
+  user_name?: string;
+  notification: AppNotification;
+  push_deliveries: PushDelivery[];
+}
+
+export interface NotificationBroadcastResponse {
+  total_recipients: number;
+  total_notifications: number;
+  total_push_deliveries: number;
+  accepted_push_deliveries: number;
+  errored_push_deliveries: number;
+  campaign_id?: string;
+  recipients: NotificationBroadcastRecipient[];
+}
+
+export interface ReportsOverview {
+  revenue_total: number;
+  active_members: number;
+  renewal_rate: number;
+  churn_rate: number;
+  revenue_series: { label: string; value: number }[];
+  members_series: { label: string; value: number }[];
+  revenue_by_plan: { name: string; value: number; color: string }[];
+  attendance_by_day: { label: string; value: number }[];
+  occupancy_by_class: { name: string; occupancy: number }[];
+}
+
+export interface TenantPublicProfile {
+  tenant_id: string;
+  tenant_slug: string;
+  tenant_name: string;
+  city?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  branding: TenantBranding;
+  branches: Array<{ id: string; name: string; city?: string; address?: string; phone?: string }>;
+  featured_plans: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    price: number;
+    currency: string;
+    duration_type: string;
+    duration_days?: number;
+    is_featured: boolean;
+  }>;
+  upcoming_classes: Array<{
+    id: string;
+    name: string;
+    class_type?: string;
+    start_time: string;
+    modality: string;
+    capacity: number;
+    bookings: number;
+  }>;
+  checkout_enabled: boolean;
+}
+
+export interface PublicCheckoutSession {
+  provider: string;
+  status: string;
+  checkout_url: string;
+  payment_link_url: string;
+  qr_payload: string;
+  session_reference: string;
+}
+
+export interface PlatformLead {
+  id: string;
+  tenant_id?: string;
+  owner_name: string;
+  gym_name: string;
+  email: string;
+  phone?: string;
+  request_type: 'lead' | 'demo' | 'import';
+  source: string;
+  status: 'new' | 'contacted' | 'qualified' | 'won' | 'lost';
+  desired_plan_key?: string;
+  notes?: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MobileWallet {
+  tenant_slug: string;
+  tenant_name: string;
+  plan_name?: string;
+  membership_status?: string;
+  expires_at?: string;
+  next_class?: {
+    id: string;
+    name: string;
+    start_time: string;
+    modality: string;
+  };
+  qr_payload?: string;
 }
 
 /* ─── Paginated ──────────────────────────────────────────────── */

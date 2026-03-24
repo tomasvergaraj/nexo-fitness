@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+    CAMPAIGN_SCHEDULER_INTERVAL_SECONDS: int = 60
+    CAMPAIGN_SCHEDULER_BATCH_SIZE: int = 10
 
     # JWT
     JWT_SECRET_KEY: str = "change-me-jwt-secret"
@@ -47,6 +49,15 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     MERCADOPAGO_ACCESS_TOKEN: str = ""
+
+    # Push Notifications
+    EXPO_PUSH_API_URL: str = "https://exp.host/--/api/v2/push/send"
+    EXPO_PUSH_RECEIPTS_API_URL: str = "https://exp.host/--/api/v2/push/getReceipts"
+    EXPO_PUSH_ACCESS_TOKEN: str = ""
+    EXPO_PUSH_REQUEST_TIMEOUT_SECONDS: float = 10.0
+    EXPO_PUSH_RECEIPT_BATCH_SIZE: int = 100
+    EXPO_PUSH_RECEIPT_POLL_INTERVAL_SECONDS: int = 60
+    EXPO_PUSH_RECEIPT_POLL_LIMIT: int = 200
 
     # Storage
     AWS_S3_BUCKET: str = ""

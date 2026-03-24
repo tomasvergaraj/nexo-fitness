@@ -35,7 +35,7 @@ async def list_clients(
     tag: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
 ):
     base = select(User).where(User.tenant_id == ctx.tenant_id, User.role == UserRole.CLIENT)
     count_base = select(func.count()).select_from(User).where(User.tenant_id == ctx.tenant_id, User.role == UserRole.CLIENT)
@@ -108,7 +108,7 @@ async def get_client(
     client_id: UUID,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
 ):
     result = await db.execute(
         select(User).where(User.id == client_id, User.tenant_id == ctx.tenant_id)

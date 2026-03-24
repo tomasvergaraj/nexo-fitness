@@ -74,10 +74,18 @@ async def get_dashboard_metrics(
 
     # Checkins today
     ci_q = select(func.count()).where(
-        CheckIn.tenant_id == tid,
-        CheckIn.checked_in_at >= today_start,
-    )
+    CheckIn.tenant_id == tid,
+    CheckIn.checked_in_at >= today_start,
+)
     checkins_today = (await db.execute(ci_q)).scalar() or 0
+
+    recent_ci_result = await db.execute(
+        select(CheckIn)
+        .where(CheckIn.tenant_id == tid)
+        .order_by(CheckIn.checked_in_at.desc())
+        .limit(5)
+    )
+    recent_checkins = recent_ci_result.scalars().all()
 
     # Pending payments
     pp_q = select(func.count()).where(
@@ -95,6 +103,58 @@ async def get_dashboard_metrics(
     )
     expiring = (await db.execute(exp_q)).scalar() or 0
 
+    completed_or_attended = await db.execute(
+        select(func.count()).where(
+            Reservation.tenant_id == tid,
+            Reservation.status == "attended",
+            Reservation.created_at >= month_start,
+        )
+    )
+    total_reservations = await db.execute(
+        select(func.count()).where(
+            Reservation.tenant_id == tid,
+            Reservation.created_at >= month_start,
+        )
+    )
+    occupancy_rate = 0.0
+    total_reservation_count = total_reservations.scalar() or 0
+    if total_reservation_count:
+        occupancy_rate = round(((completed_or_attended.scalar() or 0) / total_reservation_count) * 100, 1)
+
+    cancelled_memberships = await db.execute(
+        select(func.count()).where(
+            Membership.tenant_id == tid,
+            Membership.status == MembershipStatus.CANCELLED,
+            Membership.created_at >= month_start,
+        )
+    )
+    churn_rate = 0.0
+    if total_members:
+        churn_rate = round(((cancelled_memberships.scalar() or 0) / total_members) * 100, 1)
+
+    revenue_chart = [
+        {"label": "Hoy", "value": rev_today},
+        {"label": "Semana", "value": rev_week},
+        {"label": "Mes", "value": rev_month},
+    ]
+
+    classes_today_result = await db.execute(
+        select(GymClass).where(
+            GymClass.tenant_id == tid,
+            GymClass.start_time >= today_start,
+            GymClass.start_time < today_start + timedelta(days=1),
+            GymClass.status != ClassStatus.CANCELLED,
+        )
+    )
+    class_items = classes_today_result.scalars().all()
+    class_occupancy_chart = [
+        {
+            "name": item.name,
+            "occupancy": round((item.current_bookings / item.max_capacity) * 100, 1) if item.max_capacity else 0.0,
+        }
+        for item in class_items[:5]
+    ]
+
     return DashboardMetrics(
         revenue_today=rev_today,
         revenue_week=rev_week,
@@ -106,4 +166,9 @@ async def get_dashboard_metrics(
         checkins_today=checkins_today,
         pending_payments=pending_payments,
         expiring_memberships=expiring,
+        occupancy_rate=occupancy_rate,
+        churn_rate=churn_rate,
+        recent_checkins=recent_checkins,
+        revenue_chart=revenue_chart,
+        class_occupancy_chart=class_occupancy_chart,
     )

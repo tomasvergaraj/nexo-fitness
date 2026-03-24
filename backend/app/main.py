@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.api.v1.endpoints import auth, billing, dashboard, classes, clients
+from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, operations, public
+from app.middleware.tenant import TenantMiddleware
 
 settings = get_settings()
 
@@ -31,6 +32,7 @@ app = FastAPI(
 )
 
 # CORS
+app.add_middleware(TenantMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -68,3 +70,15 @@ app.include_router(classes.router, prefix=prefix)
 app.include_router(clients.clients_router, prefix=prefix)
 app.include_router(clients.plans_router, prefix=prefix)
 app.include_router(clients.payments_router, prefix=prefix)
+app.include_router(operations.branches_router, prefix=prefix)
+app.include_router(operations.memberships_router, prefix=prefix)
+app.include_router(operations.campaigns_router, prefix=prefix)
+app.include_router(operations.support_router, prefix=prefix)
+app.include_router(operations.programs_router, prefix=prefix)
+app.include_router(operations.settings_router, prefix=prefix)
+app.include_router(operations.reports_router, prefix=prefix)
+app.include_router(operations.notifications_router, prefix=prefix)
+app.include_router(operations.payment_accounts_router, prefix=prefix)
+app.include_router(operations.mobile_router, prefix=prefix)
+app.include_router(public.public_router, prefix=prefix)
+app.include_router(public.platform_router, prefix=prefix)

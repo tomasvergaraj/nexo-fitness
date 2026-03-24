@@ -200,21 +200,38 @@ class CampaignCreate(BaseModel):
     subject: Optional[str] = None
     content: Optional[str] = None
     channel: str
+    status: Optional[str] = Field(default=None, pattern=r"^(draft|scheduled|sending|sent|cancelled)$")
     segment_filter: Optional[dict] = None
+    notification_type: str = Field(default="info", pattern=r"^(info|warning|success|error)$")
+    action_url: Optional[str] = Field(default=None, max_length=500)
+    send_push: bool = True
     scheduled_at: Optional[datetime] = None
+    total_recipients: int = Field(default=0, ge=0)
+    total_sent: int = Field(default=0, ge=0)
+    total_opened: int = Field(default=0, ge=0)
 
 class CampaignResponse(BaseModel):
     id: UUID
     name: str
+    subject: Optional[str] = None
+    content: Optional[str] = None
     channel: str
     status: str
     total_recipients: int
     total_sent: int
     total_opened: int
+    segment_filter: Optional[dict] = None
+    notification_type: str
+    action_url: Optional[str] = None
+    send_push: bool
     scheduled_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
+    last_dispatch_trigger: Optional[str] = None
+    last_dispatch_attempted_at: Optional[datetime] = None
+    last_dispatch_finished_at: Optional[datetime] = None
+    last_dispatch_error: Optional[str] = None
+    dispatch_attempts: int
     created_at: datetime
-    model_config = {"from_attributes": True}
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────

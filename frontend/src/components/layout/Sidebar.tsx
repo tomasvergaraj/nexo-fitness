@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, CalendarDays, Users, CreditCard,
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
-  ChevronLeft, ShieldCheck, WalletCards, Zap,
+  ChevronLeft, ShieldCheck, WalletCards, Zap, CalendarCheck2,
 } from 'lucide-react';
 import { cn } from '@/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -37,6 +37,7 @@ const tenantNavItems: NavItemDef[] = [
 const superadminNavItems: NavItemDef[] = [
   { label: 'Tenants SaaS', path: '/platform/tenants', icon: <ShieldCheck size={20} />, roles: ['superadmin'] },
   { label: 'Planes SaaS', path: '/platform/plans', icon: <WalletCards size={20} />, roles: ['superadmin'] },
+  { label: 'Leads', path: '/platform/leads', icon: <CalendarCheck2 size={20} />, roles: ['superadmin'] },
 ];
 
 export default function Sidebar({ isOpen, onToggle }: SidebarProps) {

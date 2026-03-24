@@ -113,3 +113,75 @@ export const paymentsApi = {
 export const checkinsApi = {
   create: (data: Record<string, unknown>) => api.post('/checkins', data),
 };
+
+export const branchesApi = {
+  list: () => api.get('/branches'),
+  create: (data: Record<string, unknown>) => api.post('/branches', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/branches/${id}`, data),
+};
+
+export const membershipsApi = {
+  list: (params?: Record<string, unknown>) => api.get('/memberships', { params }),
+  create: (data: Record<string, unknown>) => api.post('/memberships', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/memberships/${id}`, data),
+};
+
+export const campaignsApi = {
+  list: (params?: Record<string, unknown>) => api.get('/campaigns', { params }),
+  create: (data: Record<string, unknown>) => api.post('/campaigns', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/campaigns/${id}`, data),
+};
+
+export const supportApi = {
+  list: (params?: Record<string, unknown>) => api.get('/support/interactions', { params }),
+  create: (data: Record<string, unknown>) => api.post('/support/interactions', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/support/interactions/${id}`, data),
+};
+
+export const programsApi = {
+  list: (params?: Record<string, unknown>) => api.get('/programs', { params }),
+  create: (data: Record<string, unknown>) => api.post('/programs', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/programs/${id}`, data),
+};
+
+export const settingsApi = {
+  get: () => api.get('/settings'),
+  update: (data: Record<string, unknown>) => api.patch('/settings', data),
+};
+
+export const reportsApi = {
+  overview: (params?: Record<string, unknown>) => api.get('/reports/overview', { params }),
+};
+
+export const notificationsApi = {
+  list: () => api.get('/notifications'),
+  create: (data: Record<string, unknown>) => api.post('/notifications', data),
+  getDispatch: (id: string, params?: Record<string, unknown>) => api.get(`/notifications/${id}/dispatch`, { params }),
+  broadcast: (data: Record<string, unknown>) => api.post('/notifications/broadcast', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/notifications/${id}`, data),
+};
+
+export const paymentProviderApi = {
+  list: () => api.get('/payment-provider/accounts'),
+  create: (data: Record<string, unknown>) => api.post('/payment-provider/accounts', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/payment-provider/accounts/${id}`, data),
+};
+
+export const platformApi = {
+  listLeads: (params?: Record<string, unknown>) => api.get('/platform/leads', { params }),
+  updateLead: (id: string, data: Record<string, unknown>) => api.patch(`/platform/leads/${id}`, data),
+};
+
+export const publicApi = {
+  getTenantProfile: (slug: string) => api.get(`/public/tenants/${slug}/profile`),
+  getTenantPlans: (slug: string) => api.get(`/public/tenants/${slug}/plans`),
+  getTenantClasses: (slug: string, params?: Record<string, unknown>) => api.get(`/public/tenants/${slug}/classes`, { params }),
+  createCheckoutSession: (slug: string, data: Record<string, unknown>) => api.post(`/public/tenants/${slug}/checkout-session`, data),
+  createLead: (data: Record<string, unknown>) => api.post('/public/leads', data),
+};
+
+export const mobileApi = {
+  wallet: () => api.get('/mobile/wallet'),
+  listPushSubscriptions: () => api.get('/mobile/push-subscriptions'),
+  registerPushSubscription: (data: Record<string, unknown>) => api.post('/mobile/push-subscriptions', data),
+};

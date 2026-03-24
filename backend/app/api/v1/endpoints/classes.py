@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func, and_
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -22,6 +22,10 @@ from app.schemas.business import (
 )
 
 router = APIRouter(tags=["Classes & Reservations"])
+
+
+def _role_value(user: User) -> str:
+    return user.role.value if hasattr(user.role, "value") else str(user.role)
 
 
 # ─── Classes ──────────────────────────────────────────────────────────────────
@@ -173,7 +177,19 @@ async def create_reservation(
     if gym_class.status == ClassStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="Class is cancelled")
 
-    user_id = data.user_id or current_user.id
+    requested_user_id = data.user_id or current_user.id
+    current_role = _role_value(current_user)
+    is_staff = current_role in {"owner", "admin", "reception"}
+
+    if requested_user_id != current_user.id and not is_staff:
+        raise HTTPException(status_code=403, detail="Clients can only reserve for themselves")
+
+    if requested_user_id != current_user.id:
+        requested_user = await db.get(User, requested_user_id)
+        if not requested_user or requested_user.tenant_id != ctx.tenant_id:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+    user_id = requested_user_id
 
     # Check existing reservation
     existing = await db.execute(
@@ -217,6 +233,58 @@ async def create_reservation(
     return ReservationResponse.model_validate(reservation)
 
 
+@router.get("/reservations", response_model=PaginatedResponse)
+async def list_reservations(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    status: Optional[str] = None,
+    user_id: Optional[UUID] = None,
+    upcoming_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user: User = Depends(get_current_user),
+):
+    current_role = _role_value(current_user)
+    is_staff = current_role in {"owner", "admin", "reception", "trainer"}
+    effective_user_id = user_id
+
+    if not is_staff:
+        effective_user_id = current_user.id
+    elif user_id:
+        requested_user = await db.get(User, user_id)
+        if not requested_user or requested_user.tenant_id != ctx.tenant_id:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+    query = select(Reservation).where(Reservation.tenant_id == ctx.tenant_id)
+    count_query = select(func.count()).select_from(Reservation).where(Reservation.tenant_id == ctx.tenant_id)
+
+    if effective_user_id:
+        query = query.where(Reservation.user_id == effective_user_id)
+        count_query = count_query.where(Reservation.user_id == effective_user_id)
+    if status:
+        query = query.where(Reservation.status == status)
+        count_query = count_query.where(Reservation.status == status)
+    if upcoming_only:
+        upcoming_filter = GymClass.start_time >= datetime.now(timezone.utc)
+        query = query.join(GymClass, Reservation.gym_class_id == GymClass.id).where(upcoming_filter)
+        count_query = count_query.join(GymClass, Reservation.gym_class_id == GymClass.id).where(upcoming_filter)
+
+    total = (await db.execute(count_query)).scalar() or 0
+    reservations = (
+        await db.execute(
+            query.order_by(Reservation.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
+        )
+    ).scalars().all()
+
+    return PaginatedResponse(
+        items=[ReservationResponse.model_validate(reservation) for reservation in reservations],
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=(total + per_page - 1) // per_page,
+    )
+
+
 @router.delete("/reservations/{reservation_id}", status_code=204)
 async def cancel_reservation(
     reservation_id: UUID,
@@ -235,7 +303,7 @@ async def cancel_reservation(
         raise HTTPException(status_code=404, detail="Reservation not found")
 
     # Only owner of reservation or staff can cancel
-    if reservation.user_id != current_user.id and current_user.role.value not in ("owner", "admin", "reception"):
+    if reservation.user_id != current_user.id and _role_value(current_user) not in ("owner", "admin", "reception"):
         raise HTTPException(status_code=403, detail="Not authorized")
 
     was_confirmed = reservation.status == ReservationStatus.CONFIRMED
