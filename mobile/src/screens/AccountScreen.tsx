@@ -157,7 +157,7 @@ export function AccountScreen({ app, accentColor, openProfile }: MobileScreenPro
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Push notifications</Text>
         <Text style={styles.sectionHint}>
-          Permisos, prueba local, envio remoto via backend y estado de subscriptions quedan agrupados para facilitar pruebas reales en dispositivo.
+          Permisos, prueba local, envio remoto via backend y estado de subscriptions quedan agrupados para facilitar pruebas reales en dispositivo. En Expo Go puedes seguir probando la notificacion local; para obtener el token remoto real en Android hace falta un development build.
         </Text>
         <TextInput
           style={styles.input}

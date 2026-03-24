@@ -15,6 +15,14 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const resolvePostLoginPath = (role: string) => {
+    if (role === 'client') {
+      return '/member';
+    }
+
+    return role === 'superadmin' ? '/platform/tenants' : '/dashboard';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -22,7 +30,7 @@ export default function LoginPage() {
     try {
       const { data } = await authApi.login(email, password);
       setAuth(data.user, data.access_token, data.refresh_token);
-      navigate(data.user.role === 'superadmin' ? '/platform/tenants' : '/dashboard');
+      navigate(resolvePostLoginPath(data.user.role));
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Error al iniciar sesión');
     } finally {

@@ -18,10 +18,15 @@ import PlatformPlansPage from '@/pages/platform/PlatformPlansPage';
 import PlatformLeadsPage from '@/pages/platform/PlatformLeadsPage';
 import PublicLandingPage from '@/pages/public/PublicLandingPage';
 import TenantStorefrontPage from '@/pages/public/TenantStorefrontPage';
+import MemberAppPage from '@/pages/member/MemberAppPage';
 import { useAuthStore } from '@/stores/authStore';
 
 function HomeRedirect() {
   const user = useAuthStore((state) => state.user);
+  if (user?.role === 'client') {
+    return <Navigate to="/member" replace />;
+  }
+
   return <Navigate to={user?.role === 'superadmin' ? '/platform/tenants' : '/dashboard'} replace />;
 }
 
@@ -45,7 +50,7 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: (
-      <AuthGuard>
+      <AuthGuard roles={['owner', 'admin', 'reception', 'trainer', 'marketing']}>
         <AppLayout />
       </AuthGuard>
     ),
@@ -86,6 +91,14 @@ export const router = createBrowserRouter([
         ),
       },
     ],
+  },
+  {
+    path: '/member',
+    element: (
+      <AuthGuard roles={['client']}>
+        <MemberAppPage />
+      </AuthGuard>
+    ),
   },
   {
     path: '*',

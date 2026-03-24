@@ -17,7 +17,13 @@ export default function AuthGuard({ children, roles }: AuthGuardProps) {
   if (roles && roles.length > 0) {
     const hasRole = roles.includes(user.role) || user.role === 'superadmin';
     if (!hasRole) {
-      return <Navigate to="/dashboard" replace />;
+      const fallbackPath =
+        user.role === 'client'
+          ? '/member'
+          : user.role === 'superadmin'
+            ? '/platform/tenants'
+            : '/dashboard';
+      return <Navigate to={fallbackPath} replace />;
     }
   }
 

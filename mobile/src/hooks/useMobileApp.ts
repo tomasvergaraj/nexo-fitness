@@ -81,7 +81,7 @@ export function useMobileApp() {
     'Inicia sesion para consultar el historial de pagos del miembro.',
   );
   const [pushMessage, setPushMessage] = useState(
-    'Solicita permisos para probar una notificacion local y registra el Expo push token real del dispositivo cuando el entorno lo permite.',
+    'Solicita permisos para probar una notificacion local. El Expo push token real solo se puede registrar cuando el entorno lo permite; en Expo Go Android necesitas un development build.',
   );
   const [notificationsMessage, setNotificationsMessage] = useState(
     'Inicia sesion para cargar las notificaciones del miembro y abrir sus acciones dentro de la app.',

@@ -539,9 +539,12 @@ export interface PlatformLead {
 export interface MobileWallet {
   tenant_slug: string;
   tenant_name: string;
+  membership_id?: string;
+  plan_id?: string;
   plan_name?: string;
   membership_status?: string;
   expires_at?: string;
+  auto_renew?: boolean;
   next_class?: {
     id: string;
     name: string;
@@ -549,6 +552,22 @@ export interface MobileWallet {
     modality: string;
   };
   qr_payload?: string;
+}
+
+export interface MobilePaymentHistoryItem {
+  id: string;
+  user_id: string;
+  membership_id?: string;
+  amount: number;
+  currency: string;
+  status: 'pending' | 'completed' | 'failed' | 'refunded' | 'cancelled';
+  method: string;
+  description?: string;
+  paid_at?: string;
+  created_at: string;
+  receipt_url?: string;
+  external_id?: string;
+  plan_name?: string;
 }
 
 /* ─── Paginated ──────────────────────────────────────────────── */

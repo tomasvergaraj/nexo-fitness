@@ -4,6 +4,7 @@
     "slug": "nexo-fitness-mobile",
     "scheme": "nexofitness",
     "version": "0.1.0",
+    "newArchEnabled": false,
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": {
@@ -17,7 +18,10 @@
     ],
     "extra": {
       "defaultApiBaseUrl": "http://localhost:8000/api/v1",
-      "publicTenantHost": "nexofitness.cl"
+      "publicTenantHost": "nexofitness.cl",
+      "eas": {
+        "projectId": "c4c38ad2-2a94-4d84-bb30-cd92f83e16ea"
+      }
     },
     "plugins": [
       "expo-secure-store",
@@ -28,6 +32,7 @@
           "enableBackgroundRemoteNotifications": false
         }
       ]
-    ]
+    ],
+    "owner": "tomasvergaraj"
   }
 }

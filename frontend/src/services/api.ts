@@ -88,6 +88,7 @@ export const classesApi = {
 };
 
 export const reservationsApi = {
+  list: (params?: Record<string, unknown>) => api.get('/reservations', { params }),
   create: (data: { gym_class_id: string; user_id?: string }) => api.post('/reservations', data),
   cancel: (id: string) => api.delete(`/reservations/${id}`),
 };
@@ -183,6 +184,7 @@ export const publicApi = {
 
 export const mobileApi = {
   wallet: () => api.get('/mobile/wallet'),
+  listPayments: (params?: Record<string, unknown>) => api.get('/mobile/payments', { params }),
   listPushSubscriptions: () => api.get('/mobile/push-subscriptions'),
   registerPushSubscription: (data: Record<string, unknown>) => api.post('/mobile/push-subscriptions', data),
 };

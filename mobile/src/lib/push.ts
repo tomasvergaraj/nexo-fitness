@@ -1,4 +1,4 @@
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -89,6 +89,14 @@ function resolveExpoProjectId() {
   return typeof projectId === 'string' && projectId.trim() ? projectId.trim() : null;
 }
 
+function isExpoGo() {
+  return Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+}
+
+function isRemotePushUnsupportedInCurrentRuntime() {
+  return Platform.OS === 'android' && isExpoGo();
+}
+
 function getUnsupportedPushMessage() {
   if (Platform.OS === 'web') {
     return 'En web no podemos obtener un Expo push token real. Usa Android o iPhone para registrar el dispositivo.';
@@ -102,6 +110,14 @@ export async function getExpoPushTokenForCurrentDevice(): Promise<PushActionResu
     return {
       status: 'unsupported',
       message: getUnsupportedPushMessage(),
+    };
+  }
+
+  if (isRemotePushUnsupportedInCurrentRuntime()) {
+    return {
+      status: 'unsupported',
+      message:
+        'Expo Go ya no soporta push remoto en Android desde Expo SDK 53. Usa un development build para obtener el Expo push token real; en Expo Go solo puedes probar notificaciones locales.',
     };
   }
 
