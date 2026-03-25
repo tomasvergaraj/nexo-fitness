@@ -31,6 +31,7 @@ La primera version util de la app de miembros ya corre dentro del frontend web. 
 - El backend ya acepta subscriptions `expo` y `webpush` en la misma API de push subscriptions.
 - La PWA ya puede registrar la subscription del navegador cuando existe VAPID publico y el usuario concede permiso.
 - El backend ya expone config publica de Web Push para la app de miembros.
+- La PWA ya incluye una vista liviana de perfil y ajustes de cuenta con estado del dispositivo, soporte del tenant y accesos rapidos.
 
 ## En curso
 
@@ -45,7 +46,7 @@ La primera version util de la app de miembros ya corre dentro del frontend web. 
 2. Conectar el envio remoto de notificaciones y campanas hacia la PWA.
 3. Mejorar la credencial con QR renderizado o un fallback realmente compatible con el scanner.
 4. Agregar reglas de cache offline para home e inbox del miembro.
-5. Sumar una vista liviana de perfil y ajustes de cuenta.
+5. Profundizar la cuenta del miembro si luego hace falta edicion real de perfil o preferencias persistentes.
 
 ## Notas
 

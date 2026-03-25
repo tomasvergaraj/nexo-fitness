@@ -186,6 +186,7 @@ export const mobileApi = {
   wallet: () => api.get('/mobile/wallet'),
   listPayments: (params?: Record<string, unknown>) => api.get('/mobile/payments', { params }),
   getPushConfig: () => api.get('/mobile/push-config'),
+  pushPreview: (data: Record<string, unknown>) => api.post('/mobile/push-preview', data),
   listPushSubscriptions: () => api.get('/mobile/push-subscriptions'),
   registerPushSubscription: (data: Record<string, unknown>) => api.post('/mobile/push-subscriptions', data),
 };

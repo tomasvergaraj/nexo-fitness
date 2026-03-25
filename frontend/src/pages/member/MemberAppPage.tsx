@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Smartphone,
   Ticket,
+  UserRound,
   Wallet,
   Wifi,
   WifiOff,
@@ -31,6 +32,7 @@ import type {
   GymClass,
   MobilePaymentHistoryItem,
   MobileWallet,
+  NotificationDispatchResponse,
   PaginatedResponse,
   Plan,
   PushSubscriptionRecord,
@@ -51,7 +53,7 @@ import {
   paymentStatusColor,
 } from '@/utils';
 
-type MemberTabId = 'home' | 'agenda' | 'plans' | 'payments' | 'notifications';
+type MemberTabId = 'home' | 'agenda' | 'plans' | 'payments' | 'notifications' | 'profile';
 type NotificationPermissionState = NotificationPermission | 'unsupported';
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -74,6 +76,7 @@ const TABS: Array<{ id: MemberTabId; label: string; icon: typeof Home }> = [
   { id: 'plans', label: 'Planes', icon: Ticket },
   { id: 'payments', label: 'Pagos', icon: CreditCard },
   { id: 'notifications', label: 'Bandeja', icon: Bell },
+  { id: 'profile', label: 'Perfil', icon: UserRound },
 ];
 
 export default function MemberAppPage() {
@@ -223,6 +226,31 @@ export default function MemberAppPage() {
     },
   });
 
+  const remotePushPreviewMutation = useMutation<NotificationDispatchResponse>({
+    mutationFn: async () =>
+      (
+        await mobileApi.pushPreview({
+          title: profileQuery.data?.tenant_name || walletQuery.data?.tenant_name || 'Nexo Fitness',
+          message: 'Esta es una prueba de push remota desde la PWA de miembros.',
+          type: 'info',
+          action_url: `${window.location.origin}/member?tab=notifications`,
+        })
+      ).data,
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ['member-notifications'] });
+      const okDeliveries = result.push_deliveries.filter((delivery) => delivery.status === 'ok').length;
+      if (okDeliveries) {
+        toast.success(`Push remota enviada a ${okDeliveries} subscription(es).`);
+        return;
+      }
+      const firstError = result.push_deliveries.find((delivery) => delivery.message || delivery.error);
+      toast.error(firstError?.message || firstError?.error || 'No hubo deliveries exitosos.');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'No se pudo enviar la push remota.');
+    },
+  });
+
   const classes = useMemo(
     () =>
       [...(classesQuery.data?.items ?? [])].sort(
@@ -235,8 +263,10 @@ export default function MemberAppPage() {
   const notifications = notificationsQuery.data ?? [];
   const plans = plansQuery.data ?? [];
   const pushSubscriptions = pushSubscriptionsQuery.data ?? [];
+  const activePushSubscriptions = pushSubscriptions.filter((item) => item.is_active);
   const accentColor = profileQuery.data?.branding.primary_color || '#0f766e';
   const unreadNotifications = notifications.filter((item) => !item.is_read).length;
+  const memberFullName = user ? `${user.first_name} ${user.last_name}`.trim() : 'Miembro';
   const installHint = getInstallHint({ isStandalone, canPromptInstall: Boolean(deferredPrompt) });
   const notificationPermissionMeta = getNotificationPermissionMeta(notificationPermission);
   const hasCheckinCode = Boolean(walletQuery.data?.qr_payload);
@@ -251,6 +281,8 @@ export default function MemberAppPage() {
         ? 'Lista para activar'
         : 'Pendiente de backend'
       : 'No soportada';
+  const lastRemotePreview = remotePushPreviewMutation.data;
+  const lastRemotePreviewAccepted = lastRemotePreview?.push_deliveries.filter((delivery) => delivery.status === 'ok').length ?? 0;
   const lastSyncedAt = useMemo(() => {
     const timestamps = [
       walletQuery.dataUpdatedAt,
@@ -552,11 +584,11 @@ export default function MemberAppPage() {
               <h1 className="mt-4 text-3xl font-bold font-display sm:text-4xl">
                 {profileQuery.data?.tenant_name || walletQuery.data?.tenant_name || 'Nexo Fitness'}
               </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-300">
-                Wallet, agenda, pagos y bandeja del miembro sobre una app web instalable, sin depender del runtime nativo de Android.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <span className="badge badge-neutral">{user.first_name} {user.last_name}</span>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-300">
+                  Wallet, agenda, pagos y bandeja del miembro sobre una app web instalable, sin depender del runtime nativo de Android.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className="badge badge-neutral">{memberFullName}</span>
                 {walletQuery.data?.membership_status ? (
                   <span className={cn('badge', membershipStatusColor(walletQuery.data.membership_status))}>
                     {walletQuery.data.membership_status}
@@ -580,6 +612,15 @@ export default function MemberAppPage() {
               <button type="button" onClick={showLocalNotification} className="btn-secondary">
                 <Bell size={16} />
                 Probar aviso
+              </button>
+              <button
+                type="button"
+                onClick={() => remotePushPreviewMutation.mutate()}
+                className="btn-secondary"
+                disabled={remotePushPreviewMutation.isPending || !activePushSubscriptions.length}
+              >
+                <Bell size={16} />
+                {remotePushPreviewMutation.isPending ? 'Enviando push' : 'Probar push remota'}
               </button>
               <button type="button" onClick={() => void syncMemberData()} className="btn-secondary" disabled={isSyncing}>
                 <RefreshCcw size={16} className={cn(isSyncing && 'animate-spin')} />
@@ -609,7 +650,7 @@ export default function MemberAppPage() {
                 <MemberPassCard
                   accentColor={accentColor}
                   expiresAt={walletQuery.data?.expires_at}
-                  memberName={`${user.first_name} ${user.last_name}`.trim()}
+                  memberName={memberFullName}
                   membershipStatus={walletQuery.data?.membership_status}
                   planName={walletQuery.data?.plan_name || 'Sin plan activo'}
                   qrPayload={walletQuery.data?.qr_payload}
@@ -643,6 +684,13 @@ export default function MemberAppPage() {
                     description={unreadNotifications ? `${unreadNotifications} notificaciones nuevas` : 'Sin pendientes por leer'}
                     accentColor={accentColor}
                     onClick={() => setTab(searchParams, setSearchParams, 'notifications')}
+                  />
+                  <QuickActionCard
+                    icon={UserRound}
+                    title="Perfil"
+                    description="Datos de cuenta, estado del dispositivo y ajustes rapidos"
+                    accentColor={accentColor}
+                    onClick={() => setTab(searchParams, setSearchParams, 'profile')}
                   />
                 </div>
               </Panel>
@@ -792,6 +840,195 @@ export default function MemberAppPage() {
             </div>
           ) : null}
 
+          {activeTab === 'profile' ? (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+              <div className="space-y-4">
+                <Panel title="Perfil del miembro">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[1.25rem] text-white"
+                        style={{ background: `linear-gradient(135deg, ${accentColor}, #0f766e)` }}
+                      >
+                        <UserRound size={24} />
+                      </div>
+                      <div>
+                        <p className="text-xl font-semibold text-white">{memberFullName}</p>
+                        <p className="mt-1 text-sm text-surface-300">{user.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="badge badge-neutral">Rol {user.role}</span>
+                      <span className={cn('badge', user.is_verified ? 'badge-success' : 'badge-warning')}>
+                        {user.is_verified ? 'Cuenta verificada' : 'Verificacion pendiente'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <ProfileDetailItem label="Telefono" value={user.phone || 'No informado'} />
+                    <ProfileDetailItem label="Alta" value={formatDate(user.created_at)} />
+                    <ProfileDetailItem
+                      label="Ultimo acceso"
+                      value={user.last_login_at ? formatRelative(user.last_login_at) : 'Sin registro aun'}
+                    />
+                    <ProfileDetailItem label="Tenant" value={walletQuery.data?.tenant_name || 'Sin tenant cargado'} />
+                  </div>
+                </Panel>
+
+                <Panel title="Membresia y actividad">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <ProfileDetailItem label="Plan activo" value={walletQuery.data?.plan_name || 'Sin plan'} />
+                    <ProfileDetailItem
+                      label="Estado"
+                      value={walletQuery.data?.membership_status || 'Pendiente'}
+                    />
+                    <ProfileDetailItem
+                      label="Vencimiento"
+                      value={walletQuery.data?.expires_at ? formatDate(walletQuery.data.expires_at) : 'No informado'}
+                    />
+                    <ProfileDetailItem
+                      label="Renovacion"
+                      value={walletQuery.data?.auto_renew ? 'Automatica' : 'Manual'}
+                    />
+                  </div>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    <DeviceStatusItem
+                      label="Reservas activas"
+                      value={String(reservations.length)}
+                      tone={reservations.length ? 'success' : 'neutral'}
+                    />
+                    <DeviceStatusItem
+                      label="Pagos visibles"
+                      value={String(payments.length)}
+                      tone={payments.length ? 'info' : 'neutral'}
+                    />
+                    <DeviceStatusItem
+                      label="Sin leer"
+                      value={String(unreadNotifications)}
+                      tone={unreadNotifications ? 'warning' : 'success'}
+                    />
+                  </div>
+
+                  <div className="mt-5 rounded-[1.35rem] border border-white/10 bg-surface-950/35 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Proxima actividad</p>
+                    <p className="mt-2 text-sm leading-6 text-surface-300">
+                      {walletQuery.data?.next_class
+                        ? `${walletQuery.data.next_class.name} · ${formatDateTime(walletQuery.data.next_class.start_time)}`
+                        : 'Todavia no hay una proxima clase vinculada a esta cuenta.'}
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setTab(searchParams, setSearchParams, 'agenda')}
+                      >
+                        <CalendarDays size={16} />
+                        Abrir agenda
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setTab(searchParams, setSearchParams, 'plans')}
+                      >
+                        <Ticket size={16} />
+                        Ver planes
+                      </button>
+                    </div>
+                  </div>
+                </Panel>
+              </div>
+
+              <div className="space-y-4">
+                <Panel title="Ajustes rapidos">
+                  <p className="text-sm leading-6 text-surface-300">
+                    Desde aqui el miembro puede instalar la app, activar avisos, refrescar el snapshot local y cerrar sesion sin salir de la experiencia movil.
+                  </p>
+                  <div className="mt-4 grid gap-3">
+                    <button
+                      type="button"
+                      onClick={installApp}
+                      className="btn-primary"
+                      style={{ backgroundImage: `linear-gradient(135deg, ${accentColor}, #0f766e)` }}
+                    >
+                      <Download size={16} />
+                      {isStandalone ? 'App instalada' : 'Instalar app'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void enableWebPush()}
+                      className="btn-secondary"
+                      disabled={registerPushSubscriptionMutation.isPending || !webPushSupported}
+                    >
+                      <Bell size={16} />
+                      {activeWebPushSubscription
+                        ? 'Push web activa'
+                        : registerPushSubscriptionMutation.isPending
+                          ? 'Activando push'
+                          : 'Activar push web'}
+                    </button>
+                    <button type="button" onClick={showLocalNotification} className="btn-secondary">
+                      <Bell size={16} />
+                      Probar aviso local
+                    </button>
+                    <button type="button" onClick={() => void syncMemberData()} className="btn-secondary" disabled={isSyncing}>
+                      <RefreshCcw size={16} className={cn(isSyncing && 'animate-spin')} />
+                      {isSyncing ? 'Sincronizando datos' : 'Sincronizar ahora'}
+                    </button>
+                    <button type="button" onClick={logoutMember} className="btn-secondary">
+                      <LogOut size={16} />
+                      Cerrar sesion
+                    </button>
+                  </div>
+                </Panel>
+
+                <Panel title="Dispositivo y notificaciones">
+                  <div className="space-y-3">
+                    <DeviceStatusItem label="Instalacion" value={isStandalone ? 'PWA instalada' : 'Modo navegador'} tone={isStandalone ? 'success' : 'neutral'} />
+                    <DeviceStatusItem label="Conexion" value={isOnline ? 'En linea' : 'Offline'} tone={isOnline ? 'success' : 'warning'} />
+                    <DeviceStatusItem label="Permiso de avisos" value={notificationPermissionMeta.label} tone={notificationPermissionMeta.tone} />
+                    <DeviceStatusItem label="Push web" value={webPushStateLabel} tone={activeWebPushSubscription ? 'success' : webPushConfigured ? 'info' : 'warning'} />
+                    <DeviceStatusItem label="Subscriptions activas" value={String(activePushSubscriptions.length)} tone={activePushSubscriptions.length ? 'success' : 'neutral'} />
+                    <DeviceStatusItem label="Ultima sync" value={lastSyncedAt ? formatRelative(lastSyncedAt) : 'Sin snapshot aun'} tone={lastSyncedAt ? 'info' : 'neutral'} />
+                  </div>
+
+                  <div className="mt-4 rounded-[1.35rem] border border-white/10 bg-surface-950/35 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Ultima prueba remota</p>
+                    <p className="mt-2 text-sm leading-6 text-surface-300">
+                      {lastRemotePreview
+                        ? `Expo/backend acepto ${lastRemotePreviewAccepted} de ${lastRemotePreview.push_deliveries.length} delivery(s) en la ultima prueba.`
+                        : 'Todavia no ejecutaste una prueba de push remota desde esta sesion.'}
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => remotePushPreviewMutation.mutate()}
+                        className="btn-secondary"
+                        disabled={remotePushPreviewMutation.isPending || !activePushSubscriptions.length}
+                      >
+                        <Bell size={16} />
+                        {remotePushPreviewMutation.isPending ? 'Enviando push' : 'Probar push remota'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-[1.35rem] border border-white/10 bg-surface-950/35 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Soporte del gimnasio</p>
+                    <p className="mt-2 text-sm leading-6 text-surface-300">
+                      {profileQuery.data?.email || profileQuery.data?.phone
+                        ? [profileQuery.data?.email, profileQuery.data?.phone].filter(Boolean).join(' · ')
+                        : 'El tenant aun no publico un canal directo de soporte.'}
+                    </p>
+                    {gymLocation ? (
+                      <p className="mt-2 text-sm leading-6 text-surface-400">{gymLocation}</p>
+                    ) : null}
+                  </div>
+                </Panel>
+              </div>
+            </div>
+          ) : null}
+
           {activeTab === 'notifications' ? (
             <div className="space-y-4">
               <div className="rounded-[1.5rem] border border-amber-400/20 bg-amber-500/10 p-4 text-sm leading-6 text-amber-50/90">
@@ -826,7 +1063,7 @@ export default function MemberAppPage() {
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/10 bg-surface-950/90 px-3 pt-3 backdrop-blur-2xl" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-        <div className="mx-auto grid max-w-5xl grid-cols-5 gap-2">
+        <div className="mx-auto grid max-w-5xl grid-cols-6 gap-2">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = tab.id === activeTab;
@@ -846,6 +1083,15 @@ export default function MemberAppPage() {
           })}
         </div>
       </nav>
+    </div>
+  );
+}
+
+function ProfileDetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-surface-950/35 px-4 py-3">
+      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">{label}</p>
+      <p className="mt-2 text-sm font-semibold text-white">{value}</p>
     </div>
   );
 }
@@ -1036,7 +1282,7 @@ function getTabFromAction(actionUrl?: string | null): MemberTabId | null {
   if (actionUrl.includes('agenda/class/')) return 'agenda';
   if (actionUrl.includes('payments')) return 'payments';
   if (actionUrl.includes('checkout') || actionUrl.includes('store')) return 'plans';
-  if (actionUrl.includes('account/profile')) return 'home';
+  if (actionUrl.includes('account/profile')) return 'profile';
   return actionUrl.startsWith('nexofitness://') ? 'notifications' : null;
 }
 
