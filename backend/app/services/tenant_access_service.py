@@ -37,7 +37,7 @@ def evaluate_tenant_access(tenant: Tenant, *, now: Optional[datetime] = None) ->
     if tenant.status == TenantStatus.TRIAL and tenant.trial_ends_at and tenant.trial_ends_at <= current_time:
         return TenantAccessState(
             allow_access=False,
-            detail="Your trial has expired. Complete your subscription to continue using NexoFitness.",
+            detail="Tu período de prueba venció. Completa tu suscripción para seguir usando NexoFitness.",
             status_to_apply=TenantStatus.EXPIRED,
             deactivate=True,
         )
@@ -45,21 +45,21 @@ def evaluate_tenant_access(tenant: Tenant, *, now: Optional[datetime] = None) ->
     if tenant.status == TenantStatus.ACTIVE and tenant.license_expires_at and tenant.license_expires_at <= current_time:
         return TenantAccessState(
             allow_access=False,
-            detail="Your subscription has expired. Renew your plan to regain access.",
+            detail="Tu suscripción venció. Renueva tu plan para recuperar el acceso.",
             status_to_apply=TenantStatus.EXPIRED,
             deactivate=True,
         )
 
     if tenant.status == TenantStatus.EXPIRED:
-        detail = "Your subscription has expired. Renew your plan to regain access."
+        detail = "Tu suscripción venció. Renueva tu plan para recuperar el acceso."
         if tenant.trial_ends_at and tenant.license_expires_at is None:
-            detail = "Your trial has expired. Complete your subscription to continue using NexoFitness."
+            detail = "Tu período de prueba venció. Completa tu suscripción para seguir usando NexoFitness."
         return TenantAccessState(allow_access=False, detail=detail)
 
     if tenant.status in {TenantStatus.SUSPENDED, TenantStatus.CANCELLED} or not tenant.is_active:
         return TenantAccessState(
             allow_access=False,
-            detail="This tenant is not active. Check your billing status or contact support.",
+            detail="Esta cuenta no está activa. Revisa tu estado de facturación o contacta a soporte.",
         )
 
     return TenantAccessState(allow_access=True)

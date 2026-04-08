@@ -36,7 +36,7 @@ class AuthService:
 
         tenant = await db.get(Tenant, user.tenant_id)
         if not tenant:
-            raise ValueError("Tenant not found or suspended")
+            raise ValueError("La cuenta no existe o está suspendida")
 
         from app.services.tenant_access_service import enforce_tenant_access  # local to avoid circular
         await enforce_tenant_access(db, tenant, user, now=datetime.now(timezone.utc))
@@ -45,11 +45,11 @@ class AuthService:
     async def _ensure_registration_is_unique(db: AsyncSession, data: TenantOnboardingRequest) -> None:
         existing = await db.execute(select(Tenant).where(Tenant.slug == data.slug))
         if existing.scalar_one_or_none():
-            raise ValueError(f"Slug '{data.slug}' is already taken")
+            raise ValueError(f"El slug '{data.slug}' ya está en uso")
 
         existing_user = await db.execute(select(User).where(User.email == data.owner_email))
         if existing_user.scalar_one_or_none():
-            raise ValueError("Email already registered")
+            raise ValueError("El correo ya está registrado")
 
     @staticmethod
     def _resolve_license_type(raw_value: str) -> LicenseType:
@@ -144,7 +144,7 @@ class AuthService:
         user = result.scalar_one_or_none()
 
         if not user or not verify_password(data.password, user.hashed_password):
-            raise ValueError("Invalid email or password")
+            raise ValueError("Correo o contraseña incorrectos")
 
         # Build tokens unconditionally — credentials are valid
         tokens = AuthService._build_auth_payload(user)
@@ -161,7 +161,7 @@ class AuthService:
         if not user.is_superadmin and user.tenant_id:
             tenant = await db.get(Tenant, user.tenant_id)
             if not tenant:
-                raise ValueError("Tenant not found or suspended")
+                raise ValueError("La cuenta no existe o está suspendida")
 
             access_state = evaluate_tenant_access(tenant, now=datetime.now(timezone.utc))
 
@@ -206,17 +206,17 @@ class AuthService:
         try:
             payload = decode_token(refresh_token)
         except ValueError:
-            raise ValueError("Invalid refresh token")
+            raise ValueError("Token de actualización inválido")
 
         if payload.get("type") != "refresh":
-            raise ValueError("Invalid token type")
+            raise ValueError("Tipo de token inválido")
 
         user_id = payload.get("sub")
         result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
         user = result.scalar_one_or_none()
 
         if not user or user.refresh_token != refresh_token:
-            raise ValueError("Invalid refresh token")
+            raise ValueError("Token de actualización inválido")
 
         await AuthService._ensure_user_tenant_access(db, user)
         tenant_id = str(user.tenant_id) if user.tenant_id else None

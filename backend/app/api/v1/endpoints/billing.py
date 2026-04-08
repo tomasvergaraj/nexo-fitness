@@ -117,7 +117,7 @@ async def get_billing_status(
             "trial_ends_at": None,
             "license_expires_at": None,
             "checkout_url": None,
-            "plan_name": "Platform Admin",
+            "plan_name": "Administración de plataforma",
         }
 
     result = await db.execute(
@@ -127,7 +127,7 @@ async def get_billing_status(
     )
     tenant = result.scalar_one_or_none()
     if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
 
     now = datetime.now(timezone.utc)
     access = evaluate_tenant_access(tenant, now=now)
@@ -186,7 +186,7 @@ async def reactivate_subscription(
     Only available to owners/admins.
     """
     if current_user.is_superadmin or not current_user.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not applicable")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No aplica")
 
     result = await db.execute(
         select(Tenant)
@@ -195,7 +195,7 @@ async def reactivate_subscription(
     )
     tenant = result.scalar_one_or_none()
     if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
 
     checkout_url = await create_reactivation_checkout(db, tenant, current_user, plan_key=body.plan_key)
 

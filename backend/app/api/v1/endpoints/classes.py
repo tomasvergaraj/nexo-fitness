@@ -100,7 +100,7 @@ async def get_class(
     )
     gym_class = result.scalar_one_or_none()
     if not gym_class:
-        raise HTTPException(status_code=404, detail="Class not found")
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
     return GymClassResponse.model_validate(gym_class)
 
 
@@ -175,19 +175,19 @@ async def create_reservation(
         raise HTTPException(status_code=404, detail="Class not found")
 
     if gym_class.status == ClassStatus.CANCELLED:
-        raise HTTPException(status_code=400, detail="Class is cancelled")
+        raise HTTPException(status_code=400, detail="La clase está cancelada")
 
     requested_user_id = data.user_id or current_user.id
     current_role = _role_value(current_user)
     is_staff = current_role in {"owner", "admin", "reception"}
 
     if requested_user_id != current_user.id and not is_staff:
-        raise HTTPException(status_code=403, detail="Clients can only reserve for themselves")
+        raise HTTPException(status_code=403, detail="Los clientes solo pueden reservar para sí mismos")
 
     if requested_user_id != current_user.id:
         requested_user = await db.get(User, requested_user_id)
         if not requested_user or requested_user.tenant_id != ctx.tenant_id:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     user_id = requested_user_id
 
@@ -200,12 +200,12 @@ async def create_reservation(
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Already reserved for this class")
+        raise HTTPException(status_code=400, detail="Ya existe una reserva para esta clase")
 
     # Determine status
     if gym_class.current_bookings >= gym_class.max_capacity:
         if not gym_class.waitlist_enabled:
-            raise HTTPException(status_code=400, detail="Class is full")
+            raise HTTPException(status_code=400, detail="La clase está llena")
         reservation_status = ReservationStatus.WAITLISTED
         # Get waitlist position
         wl_count = await db.execute(
@@ -253,7 +253,7 @@ async def list_reservations(
     elif user_id:
         requested_user = await db.get(User, user_id)
         if not requested_user or requested_user.tenant_id != ctx.tenant_id:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     query = select(Reservation).where(Reservation.tenant_id == ctx.tenant_id)
     count_query = select(func.count()).select_from(Reservation).where(Reservation.tenant_id == ctx.tenant_id)
@@ -300,11 +300,11 @@ async def cancel_reservation(
     )
     reservation = result.scalar_one_or_none()
     if not reservation:
-        raise HTTPException(status_code=404, detail="Reservation not found")
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
 
     # Only owner of reservation or staff can cancel
     if reservation.user_id != current_user.id and _role_value(current_user) not in ("owner", "admin", "reception"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+        raise HTTPException(status_code=403, detail="No autorizado")
 
     was_confirmed = reservation.status == ReservationStatus.CONFIRMED
     reservation.status = ReservationStatus.CANCELLED

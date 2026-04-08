@@ -81,4 +81,4 @@ def decode_token(token: str) -> dict[str, Any]:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         return payload
     except JWTError:
-        raise ValueError("Invalid or expired token")
+        raise ValueError("Token inválido o vencido")

@@ -432,14 +432,14 @@ class PushSubscriptionCreateRequest(BaseModel):
     def validate_provider_payload(self) -> "PushSubscriptionCreateRequest":
         if self.provider == "expo":
             if not self.expo_push_token:
-                raise ValueError("expo_push_token is required for Expo subscriptions")
+                raise ValueError("expo_push_token es obligatorio para las suscripciones de Expo")
             self.web_endpoint = None
             self.web_p256dh_key = None
             self.web_auth_key = None
             return self
 
         if not self.web_endpoint or not self.web_p256dh_key or not self.web_auth_key:
-            raise ValueError("web_endpoint, web_p256dh_key and web_auth_key are required for Web Push subscriptions")
+            raise ValueError("web_endpoint, web_p256dh_key y web_auth_key son obligatorios para las suscripciones Web Push")
         self.expo_push_token = None
         return self
 

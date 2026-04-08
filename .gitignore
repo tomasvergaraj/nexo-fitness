@@ -52,3 +52,9 @@ yarn-error.log*
 
 # Docker
 docker-compose.override.yml
+
+# Production server local-only files
+/.codex
+/backend/uploads/
+/backend/scripts/bootstrap_platform.py
+/nginx/nexofitness.host.conf

@@ -80,7 +80,7 @@ async def create_client(
 ):
     existing = await db.execute(select(User).where(User.email == data.email))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=400, detail="El correo ya está registrado")
 
     user = User(
         tenant_id=ctx.tenant_id,
@@ -115,7 +115,7 @@ async def get_client(
     )
     client = result.scalar_one_or_none()
     if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return UserDetailResponse.model_validate(client)
 
 
@@ -132,7 +132,7 @@ async def update_client(
     )
     client = result.scalar_one_or_none()
     if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     update_data = data.model_dump(exclude_unset=True)
 
@@ -171,7 +171,7 @@ async def reset_client_password(
     )
     client = result.scalar_one_or_none()
     if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     client.hashed_password = hash_password(new_password)
     client.refresh_token = None  # invalidar sesiones activas
@@ -246,7 +246,7 @@ async def update_plan(
     )
     plan = result.scalar_one_or_none()
     if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(plan, field, value)

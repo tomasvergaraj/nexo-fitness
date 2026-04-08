@@ -43,11 +43,11 @@ class RegisterRequest(BaseModel):
     @classmethod
     def validate_password(cls, v):
         if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
+            raise ValueError("La contraseña debe tener al menos 8 caracteres")
         if not any(c.isupper() for c in v):
-            raise ValueError("Password must contain at least one uppercase letter")
+            raise ValueError("La contraseña debe incluir al menos una mayúscula")
         if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one digit")
+            raise ValueError("La contraseña debe incluir al menos un número")
         return v
 
 

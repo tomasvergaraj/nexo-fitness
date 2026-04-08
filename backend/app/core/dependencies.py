@@ -25,20 +25,20 @@ async def get_current_user(
     try:
         payload = decode_token(credentials.credentials)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o vencido")
 
     if payload.get("type") != "access":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tipo de token inválido")
 
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contenido del token inválido")
 
     result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
     user = result.scalar_one_or_none()
 
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado o inactivo")
 
     return user
 
@@ -53,7 +53,7 @@ async def get_current_tenant(
         return None
 
     if not current_user.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no tenant assigned")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="El usuario no tiene una cuenta asignada")
 
     result = await db.execute(
         select(Tenant).options(selectinload(Tenant.users)).where(Tenant.id == current_user.tenant_id)
@@ -61,7 +61,7 @@ async def get_current_tenant(
     tenant = result.scalar_one_or_none()
 
     if not tenant:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant not found or suspended")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="La cuenta no existe o está suspendida")
 
     await enforce_tenant_access(db, tenant, current_user, now=datetime.now(timezone.utc))
 
@@ -77,7 +77,7 @@ def require_roles(*allowed_roles: str):
             role_name = getattr(current_user.role, "value", str(current_user.role))
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Role '{role_name}' not authorized for this action",
+                detail=f"El rol '{role_name}' no está autorizado para esta acción",
             )
         return current_user
     return _check_role
@@ -87,7 +87,7 @@ def require_superadmin():
     """Only allow platform superadmins."""
     async def _check(current_user: User = Depends(get_current_user)):
         if not current_user.is_superadmin:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access required")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Se requiere acceso de superadministrador")
         return current_user
     return _check
 

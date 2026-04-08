@@ -122,7 +122,7 @@ async def generic_error_handler(request: Request, exc: Exception):
     logger.error("unhandled_exception", path=request.url.path, exc_info=exc)
     if settings.DEBUG:
         return JSONResponse(status_code=500, content={"detail": str(exc)})
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return JSONResponse(status_code=500, content={"detail": "Error interno del servidor"})
 
 
 # ---------------------------------------------------------------------------

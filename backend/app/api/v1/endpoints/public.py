@@ -92,7 +92,7 @@ async def _get_public_tenant_or_404(db: AsyncSession, slug: str) -> Tenant:
         await db.execute(select(Tenant).where(Tenant.slug == slug, Tenant.is_active == True))
     ).scalars().first()
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant storefront not found")
+        raise HTTPException(status_code=404, detail="Vitrina pública no encontrada")
     return tenant
 
 
@@ -110,7 +110,7 @@ def _request_hostname(request: Request) -> str | None:
 async def _get_public_tenant_by_custom_domain_or_404(db: AsyncSession, request: Request) -> Tenant:
     hostname = _request_hostname(request)
     if not hostname:
-        raise HTTPException(status_code=404, detail="Tenant storefront not found")
+        raise HTTPException(status_code=404, detail="Vitrina pública no encontrada")
 
     reserved_hosts = {
         host
@@ -123,7 +123,7 @@ async def _get_public_tenant_by_custom_domain_or_404(db: AsyncSession, request: 
         if host
     }
     if hostname in reserved_hosts:
-        raise HTTPException(status_code=404, detail="Tenant storefront not found")
+        raise HTTPException(status_code=404, detail="Vitrina pública no encontrada")
 
     tenant = (
         await db.execute(
@@ -134,7 +134,7 @@ async def _get_public_tenant_by_custom_domain_or_404(db: AsyncSession, request: 
         )
     ).scalars().first()
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant storefront not found")
+        raise HTTPException(status_code=404, detail="Vitrina pública no encontrada")
     return tenant
 
 
@@ -326,7 +326,7 @@ async def _find_or_create_checkout_user(
     user = result.scalar_one_or_none()
     if user:
         if user.tenant_id and user.tenant_id != tenant.id:
-            raise RuntimeError(f"Customer email {customer_email} is already assigned to another tenant")
+            raise RuntimeError(f"El correo del cliente {customer_email} ya está asociado a otra cuenta")
 
         first_name, last_name = _split_customer_name(customer_name)
         if user.tenant_id is None:
@@ -574,11 +574,11 @@ async def _create_public_checkout_session_for_tenant(
 ) -> PublicCheckoutSessionResponse:
     plan = await db.get(Plan, data.plan_id)
     if not plan or plan.tenant_id != tenant.id or not plan.is_active or plan.deleted_at is not None:
-        raise HTTPException(status_code=404, detail="Plan not available")
+        raise HTTPException(status_code=404, detail="Plan no disponible")
 
     account = await _get_default_payment_account(db, tenant.id)
     if not account:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tenant has no connected payment account")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La cuenta no tiene un medio de pago conectado")
 
     await _ensure_checkout_email_can_purchase(db, tenant, data.customer_email)
 
@@ -621,7 +621,7 @@ async def _create_public_checkout_session_for_tenant(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Fintoc error: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"Error de Fintoc: {exc}") from exc
 
     # ── Otros providers (Stripe, MercadoPago) ────────────────────────────────
     checkout_base = account.checkout_base_url or f"https://checkout.nexofitness.cl/{tenant.slug}"
@@ -702,7 +702,7 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         event = fintoc_service.verify_webhook(payload, sig)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+        raise HTTPException(status_code=400, detail="Firma de webhook inválida")
 
     event_type = event.get("type")
     event_data = _event_data_object(event)
@@ -864,11 +864,11 @@ async def update_platform_lead(
         if _is_missing_table(error, "platform_leads"):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Platform leads storage is not initialized. Run migrations.",
+                detail="El almacenamiento de oportunidades de plataforma no está inicializado. Ejecuta las migraciones.",
             ) from error
         raise
     if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
+        raise HTTPException(status_code=404, detail="Oportunidad no encontrada")
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(lead, field, value)

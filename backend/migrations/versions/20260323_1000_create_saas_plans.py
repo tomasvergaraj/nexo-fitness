@@ -19,11 +19,12 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-saas_plan_license_type_enum = sa.Enum(
+saas_plan_license_type_enum = postgresql.ENUM(
     "MONTHLY",
     "ANNUAL",
     "PERPETUAL",
     name="saas_plan_license_type_enum",
+    create_type=False,
 )
 
 
