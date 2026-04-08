@@ -8,7 +8,11 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password, decode_token
+from app.core.security import (
+    create_access_token, create_refresh_token, create_password_reset_token,
+    hash_password, verify_password, decode_token,
+)
+from app.core.config import get_settings
 from app.models.tenant import Tenant, TenantStatus, LicenseType
 from app.models.user import User, UserRole
 from app.models.business import Branch
@@ -16,9 +20,27 @@ from app.schemas.auth import (
     LoginRequest, LoginResponse, RegisterRequest, TenantOnboardingRequest,
     UserResponse, TenantResponse,
 )
+from app.core.exceptions import ActionRequiredError
+from app.services.tenant_access_service import (
+    create_reactivation_checkout,
+    evaluate_tenant_access,
+)
 
 
 class AuthService:
+    @staticmethod
+    async def _ensure_user_tenant_access(db: AsyncSession, user: User) -> None:
+        """Used by refresh — raises ActionRequiredError if tenant is not active."""
+        if user.is_superadmin or not user.tenant_id:
+            return
+
+        tenant = await db.get(Tenant, user.tenant_id)
+        if not tenant:
+            raise ValueError("Tenant not found or suspended")
+
+        from app.services.tenant_access_service import enforce_tenant_access  # local to avoid circular
+        await enforce_tenant_access(db, tenant, user, now=datetime.now(timezone.utc))
+
     @staticmethod
     async def _ensure_registration_is_unique(db: AsyncSession, data: TenantOnboardingRequest) -> None:
         existing = await db.execute(select(Tenant).where(Tenant.slug == data.slug))
@@ -124,14 +146,59 @@ class AuthService:
         if not user or not verify_password(data.password, user.hashed_password):
             raise ValueError("Invalid email or password")
 
+        # Build tokens unconditionally — credentials are valid
         tokens = AuthService._build_auth_payload(user)
         user.last_login_at = datetime.now(timezone.utc)
+
+        # Check tenant billing status without blocking the login
+        billing_status: Optional[str] = None
+        next_action: Optional[str] = None
+        checkout_url: Optional[str] = None
+        widget_token: Optional[str] = None
+        checkout_provider: Optional[str] = None
+        billing_detail: Optional[str] = None
+
+        if not user.is_superadmin and user.tenant_id:
+            tenant = await db.get(Tenant, user.tenant_id)
+            if not tenant:
+                raise ValueError("Tenant not found or suspended")
+
+            access_state = evaluate_tenant_access(tenant, now=datetime.now(timezone.utc))
+
+            if not access_state.allow_access:
+                # Apply status change without raising
+                if access_state.status_to_apply:
+                    tenant.status = access_state.status_to_apply
+                if access_state.deactivate:
+                    tenant.is_active = False
+
+                billing_status = tenant.status.value if isinstance(tenant.status, TenantStatus) else str(tenant.status)
+                billing_detail = access_state.detail
+                next_action = "billing_required"
+
+                # Try to get checkout URL (Stripe or Fintoc redirect)
+                renewable = {TenantStatus.TRIAL, TenantStatus.ACTIVE, TenantStatus.EXPIRED}
+                if tenant.status in renewable:
+                    try:
+                        url = await create_reactivation_checkout(db, tenant, user)
+                        if url:
+                            checkout_url = url
+                            next_action = "redirect_to_checkout"
+                    except Exception:
+                        pass
+
         await db.flush()
 
         return LoginResponse(
             access_token=tokens["access_token"],
             refresh_token=tokens["refresh_token"],
             user=UserResponse.model_validate(user),
+            billing_status=billing_status,
+            next_action=next_action,
+            checkout_url=checkout_url,
+            widget_token=widget_token,
+            checkout_provider=checkout_provider,
+            billing_detail=billing_detail,
         )
 
     @staticmethod
@@ -151,6 +218,7 @@ class AuthService:
         if not user or user.refresh_token != refresh_token:
             raise ValueError("Invalid refresh token")
 
+        await AuthService._ensure_user_tenant_access(db, user)
         tenant_id = str(user.tenant_id) if user.tenant_id else None
         new_access = create_access_token(
             subject=str(user.id),
@@ -164,10 +232,57 @@ class AuthService:
         return {"access_token": new_access, "refresh_token": new_refresh, "token_type": "bearer"}
 
     @staticmethod
+    async def request_password_reset(db: AsyncSession, email: str) -> Optional[str]:
+        """Returns a reset URL if the user exists; always returns 200 to the caller."""
+        result = await db.execute(select(User).where(User.email == email, User.is_active == True))
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+        token = create_password_reset_token(str(user.id))
+        cfg = get_settings()
+        return f"{cfg.FRONTEND_URL}/reset-password?token={token}"
+
+    @staticmethod
+    async def confirm_password_reset(db: AsyncSession, token: str, new_password: str) -> None:
+        try:
+            payload = decode_token(token)
+        except ValueError:
+            raise ValueError("El enlace de recuperación es inválido o ha expirado")
+
+        if payload.get("type") != "password_reset":
+            raise ValueError("Token inválido")
+
+        user_id = payload.get("sub")
+        result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise ValueError("Usuario no encontrado")
+
+        user.hashed_password = hash_password(new_password)
+        user.refresh_token = None  # invalidate all sessions
+        user.password_changed_at = datetime.now(timezone.utc)
+        await db.flush()
+
+    @staticmethod
     async def register_tenant(db: AsyncSession, data: TenantOnboardingRequest) -> dict:
         """Full tenant onboarding: creates tenant, owner user, default branch."""
+        import structlog
+        from app.integrations.email.email_service import email_service
+
+        logger = structlog.get_logger()
+
         tenant, owner = await AuthService.provision_tenant(db, data)
         tokens = AuthService._build_auth_payload(owner)
+
+        # Email de bienvenida — no bloqueante (ignorar fallo silenciosamente)
+        try:
+            await email_service.send_welcome(
+                to_email=owner.email,
+                first_name=owner.first_name or data.owner_first_name,
+                gym_name=tenant.name,
+            )
+        except Exception as exc:
+            logger.warning("welcome_email_failed", tenant=tenant.slug, exc_info=exc)
 
         return {
             "tenant": TenantResponse.model_validate(tenant),

@@ -3,6 +3,9 @@ import AppLayout from '@/components/layout/AppLayout';
 import AuthGuard from '@/components/auth/AuthGuard';
 import LoginPage from '@/pages/auth/LoginPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
+import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
+import BillingWallPage from '@/pages/billing/BillingWallPage';
 import DashboardPage from '@/pages/dashboard/DashboardPage';
 import ClassesPage from '@/pages/classes/ClassesPage';
 import ClientsPage from '@/pages/clients/ClientsPage';
@@ -19,10 +22,20 @@ import PlatformLeadsPage from '@/pages/platform/PlatformLeadsPage';
 import PublicLandingPage from '@/pages/public/PublicLandingPage';
 import TenantStorefrontPage from '@/pages/public/TenantStorefrontPage';
 import MemberAppPage from '@/pages/member/MemberAppPage';
+import TermsPage from '@/pages/legal/TermsPage';
+import PrivacyPage from '@/pages/legal/PrivacyPage';
 import { useAuthStore } from '@/stores/authStore';
+import { isCustomStorefrontHost } from '@/utils';
 
-function HomeRedirect() {
+function RootEntry() {
+  if (isCustomStorefrontHost()) {
+    return <TenantStorefrontPage />;
+  }
+
   const user = useAuthStore((state) => state.user);
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
   if (user?.role === 'client') {
     return <Navigate to="/member" replace />;
   }
@@ -31,6 +44,10 @@ function HomeRedirect() {
 }
 
 export const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <RootEntry />,
+  },
   {
     path: '/site',
     element: <PublicLandingPage />,
@@ -48,6 +65,23 @@ export const router = createBrowserRouter([
     element: <RegisterPage />,
   },
   {
+    path: '/forgot-password',
+    element: <ForgotPasswordPage />,
+  },
+  {
+    path: '/reset-password',
+    element: <ResetPasswordPage />,
+  },
+  {
+    // Accesible para usuarios autenticados cuya suscripción venció
+    path: '/billing/expired',
+    element: (
+      <AuthGuard>
+        <BillingWallPage />
+      </AuthGuard>
+    ),
+  },
+  {
     path: '/',
     element: (
       <AuthGuard roles={['owner', 'admin', 'reception', 'trainer', 'marketing']}>
@@ -55,7 +89,6 @@ export const router = createBrowserRouter([
       </AuthGuard>
     ),
     children: [
-      { index: true, element: <HomeRedirect /> },
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'classes', element: <ClassesPage /> },
       { path: 'clients', element: <ClientsPage /> },
@@ -100,6 +133,9 @@ export const router = createBrowserRouter([
       </AuthGuard>
     ),
   },
+  // Páginas legales — públicas, sin auth
+  { path: '/terms', element: <TermsPage /> },
+  { path: '/privacy', element: <PrivacyPage /> },
   {
     path: '*',
     element: <Navigate to="/login" replace />,

@@ -1,25 +1,77 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, Zap, ArrowRight, Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-import { authApi } from '@/services/api';
+import { authApi, billingApi } from '@/services/api';
 import { cn } from '@/utils';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((s) => s.setAuth);
-  const [email, setEmail] = useState('owner@nexogym.cl');
-  const [password, setPassword] = useState('Owner123!');
+  const [searchParams] = useSearchParams();
+  const { setAuth, user, accessToken } = useAuthStore((s) => ({ setAuth: s.setAuth, user: s.user, accessToken: s.accessToken }));
+  const billingState = searchParams.get('billing');
+  const purchaseState = searchParams.get('purchase');
+  const initialEmail = searchParams.get('email') ?? '';
+  const [email, setEmail] = useState(initialEmail);
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const resolvePostLoginPath = (role: string) => {
-    if (role === 'client') {
-      return '/member';
+  // Si el usuario ya tiene sesión activa y vuelve de un pago exitoso,
+  // verificar acceso y redirigir al dashboard sin pedir credenciales.
+  useEffect(() => {
+    if (billingState === 'success' && user && accessToken) {
+      setLoading(true);
+      billingApi.getStatus()
+        .then(({ data }) => {
+          if (data.allow_access) {
+            const path = user.role === 'client' ? '/member'
+              : user.role === 'superadmin' ? '/platform/tenants'
+              : '/dashboard';
+            navigate(path, { replace: true });
+          }
+        })
+        .catch(() => {/* quedar en login para que vuelva a entrar */})
+        .finally(() => setLoading(false));
     }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const billingMessage = useMemo(() => {
+    if (billingState === 'success') {
+      return {
+        tone: 'emerald',
+        text: 'Pago confirmado. Redirigiendo a tu cuenta...',
+      };
+    }
+    if (billingState === 'cancelled') {
+      return {
+        tone: 'amber',
+        text: 'El checkout fue cancelado. Puedes intentarlo otra vez cuando quieras.',
+      };
+    }
+    return null;
+  }, [billingState]);
+
+  const purchaseMessage = useMemo(() => {
+    if (purchaseState === 'success') {
+      return {
+        tone: 'emerald',
+        text: 'Compra recibida correctamente. Inicia sesion con tu correo para continuar.',
+      };
+    }
+    if (purchaseState === 'cancelled') {
+      return {
+        tone: 'amber',
+        text: 'La compra no se completo o fue rechazada. Puedes iniciar sesion e intentarlo otra vez.',
+      };
+    }
+    return null;
+  }, [purchaseState]);
+
+  const resolvePostLoginPath = (role: string) => {
+    if (role === 'client') return '/member';
     return role === 'superadmin' ? '/platform/tenants' : '/dashboard';
   };
 
@@ -29,7 +81,17 @@ export default function LoginPage() {
     setError('');
     try {
       const { data } = await authApi.login(email, password);
+
+      // Siempre guardar auth — el login siempre retorna tokens válidos
       setAuth(data.user, data.access_token, data.refresh_token);
+
+      // Si hay acción de billing requerida → siempre ir a BillingWallPage primero
+      if (data.next_action) {
+        const params = new URLSearchParams({ status: data.billing_status ?? 'expired' });
+        navigate(`/billing/expired?${params.toString()}`, { replace: true });
+        return;
+      }
+
       navigate(resolvePostLoginPath(data.user.role));
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Error al iniciar sesión');
@@ -38,10 +100,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleForgotPassword = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault();
-    setError('La recuperacion de contrasena aun no esta habilitada en esta demo. Usa las credenciales de prueba o registra un gimnasio nuevo.');
-  };
 
   return (
     <div className="min-h-screen flex relative overflow-hidden bg-surface-950">
@@ -190,6 +248,32 @@ export default function LoginPage() {
               <p className="text-surface-400 text-sm mb-8">Ingresa a tu cuenta para continuar</p>
             </motion.div>
 
+            {purchaseMessage && (
+              <div
+                className={cn(
+                  'mb-5 rounded-xl border px-4 py-3 text-sm',
+                  purchaseMessage.tone === 'emerald'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                )}
+              >
+                {purchaseMessage.text}
+              </div>
+            )}
+
+            {billingMessage && (
+              <div
+                className={cn(
+                  'mb-5 rounded-xl border px-4 py-3 text-sm',
+                  billingMessage.tone === 'emerald'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                )}
+              >
+                {billingMessage.text}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-5">
               <motion.div
                 initial={{ opacity: 0, x: -20 }}
@@ -254,13 +338,12 @@ export default function LoginPage() {
                                                     focus:ring-brand-500/50 focus:ring-offset-0" />
                   <span className="text-sm text-surface-400">Recordarme</span>
                 </label>
-                <a
-                  href="#"
-                  onClick={handleForgotPassword}
+                <Link
+                  to="/forgot-password"
                   className="text-sm text-brand-400 hover:text-brand-300 transition-colors"
                 >
                   ¿Olvidaste tu contraseña?
-                </a>
+                </Link>
               </div>
 
               <motion.button

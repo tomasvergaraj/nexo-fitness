@@ -6,7 +6,7 @@ import { AlertTriangle, Bell, Clock3, Eye, Megaphone, MessageCircle, MousePointe
 import Modal from '@/components/ui/Modal';
 import { campaignsApi, clientsApi, notificationsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
-import { cn, formatDateTime, toDateInputValue } from '@/utils';
+import { cn, formatDateTime, toDateInputValue , getApiError } from '@/utils';
 import type { AppNotification, Campaign, CampaignOverview, NotificationBroadcastResponse, PaginatedResponse, User } from '@/types';
 
 type CampaignSegmentFilter = NonNullable<Campaign['segment_filter']>;
@@ -235,7 +235,7 @@ export default function MarketingPage() {
       queryClient.invalidateQueries({ queryKey: ['campaigns-overview'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo guardar la campana');
+      toast.error(getApiError(error, 'No se pudo guardar la campana'));
     },
   });
 
@@ -269,7 +269,7 @@ export default function MarketingPage() {
       toast.success(`Broadcast enviado. ${result.accepted_push_deliveries}/${result.total_push_deliveries} delivery(s) aceptadas por Expo.`);
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo enviar el broadcast');
+      toast.error(getApiError(error, 'No se pudo enviar el broadcast'));
     },
   });
 

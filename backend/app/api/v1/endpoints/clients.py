@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles, get_current_user
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User, UserRole
 from app.models.business import Plan, Membership, Payment, PaymentStatus
 from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserDetailResponse, ClientListResponse
@@ -135,6 +135,15 @@ async def update_client(
         raise HTTPException(status_code=404, detail="Client not found")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # Validar unicidad de email si se está cambiando
+    if "email" in update_data and update_data["email"] and update_data["email"] != client.email:
+        existing = await db.execute(
+            select(User).where(User.email == update_data["email"], User.id != client_id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="El correo ya está registrado por otro usuario")
+
     if "tags" in update_data and update_data["tags"] is not None:
         update_data["tags"] = json.dumps(update_data["tags"])
     for field, value in update_data.items():
@@ -143,6 +152,30 @@ async def update_client(
     await db.flush()
     await db.refresh(client)
     return UserResponse.model_validate(client)
+
+
+@clients_router.post("/{client_id}/reset-password", status_code=204)
+async def reset_client_password(
+    client_id: UUID,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    new_password = data.get("new_password", "")
+    if not new_password or len(new_password) < 6:
+        raise HTTPException(status_code=422, detail="La contraseña debe tener al menos 6 caracteres")
+
+    result = await db.execute(
+        select(User).where(User.id == client_id, User.tenant_id == ctx.tenant_id)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    client.hashed_password = hash_password(new_password)
+    client.refresh_token = None  # invalidar sesiones activas
+    await db.flush()
 
 
 # ─── Plans Router ─────────────────────────────────────────────────────────────

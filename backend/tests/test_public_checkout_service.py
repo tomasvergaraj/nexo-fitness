@@ -10,6 +10,17 @@ def test_build_storefront_return_urls_point_back_to_tenant_storefront() -> None:
     assert cancel_url == "http://localhost:3000/store/nexo-gym-santiago?checkout=cancelled"
 
 
+def test_build_storefront_return_urls_use_custom_domain_when_available() -> None:
+    success_url, cancel_url = build_storefront_return_urls(
+        "https://app.nexofitness.cl/",
+        "nexo-gym-santiago",
+        "ventas.nexogym.cl",
+    )
+
+    assert success_url == "https://ventas.nexogym.cl?checkout=success"
+    assert cancel_url == "https://ventas.nexogym.cl?checkout=cancelled"
+
+
 def test_build_public_checkout_urls_preserve_existing_query_and_add_return_urls() -> None:
     checkout_url, payment_link_url = build_public_checkout_urls(
         checkout_base_url="https://checkout.nexofitness.cl/start?tenant=nexo&channel=storefront",

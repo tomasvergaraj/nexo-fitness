@@ -23,6 +23,25 @@ api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const is403Billing = error.response?.status === 403
+      && typeof error.response.data === 'object'
+      && error.response.data !== null
+      && (error.response.data as Record<string, unknown>).next_action === 'redirect_to_checkout';
+
+    if (is403Billing && !window.location.pathname.startsWith('/billing/')) {
+      const data = error.response!.data as Record<string, string>;
+      if (data.checkout_url) {
+        // Plan con Stripe activo → redirigir directo al checkout
+        window.location.href = data.checkout_url;
+      } else {
+        // Sin checkout configurado → mostrar billing wall interno
+        const params = new URLSearchParams();
+        if (data.billing_status) params.set('status', data.billing_status);
+        if (data.tenant_slug) params.set('tenant', data.tenant_slug);
+        window.location.href = `/billing/expired?${params.toString()}`;
+      }
+      return Promise.reject(error);
+    }
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
@@ -60,15 +79,25 @@ export const authApi = {
   registerGym: (data: Record<string, unknown>) =>
     api.post('/auth/register-gym', data),
   me: () => api.get('/auth/me'),
+  updateMe: (data: { first_name?: string; last_name?: string; phone?: string }) =>
+    api.patch('/auth/me', data),
   logout: () => api.post('/auth/logout'),
   refresh: (refreshToken: string) =>
     api.post('/auth/refresh', { refresh_token: refreshToken }),
+  forgotPassword: (email: string) =>
+    api.post('/auth/forgot-password', { email }),
+  resetPassword: (token: string, new_password: string) =>
+    api.post('/auth/reset-password', { token, new_password }),
 };
 
 export const billingApi = {
   listPublicPlans: () => api.get('/billing/public/plans'),
   signup: (data: unknown) => api.post('/billing/signup', data),
   currentSubscription: () => api.get('/billing/subscription'),
+  /** Consulta estado sin forzar acceso — seguro para billing wall y banner */
+  getStatus: () => api.get('/billing/status'),
+  /** Genera URL de checkout para renovación. plan_key opcional para cambiar de plan. */
+  reactivate: (planKey?: string) => api.post('/billing/reactivate', planKey ? { plan_key: planKey } : {}),
   listAdminTenants: (params?: Record<string, unknown>) => api.get('/billing/admin/tenants', { params }),
   listAdminPlans: () => api.get('/billing/admin/plans'),
   createAdminPlan: (data: unknown) => api.post('/billing/admin/plans', data),
@@ -98,6 +127,7 @@ export const clientsApi = {
   get: (id: string) => api.get(`/clients/${id}`),
   create: (data: Record<string, unknown>) => api.post('/clients', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/clients/${id}`, data),
+  resetPassword: (id: string, newPassword: string) => api.post(`/clients/${id}/reset-password`, { new_password: newPassword }),
 };
 
 export const plansApi = {
@@ -113,6 +143,20 @@ export const paymentsApi = {
 
 export const checkinsApi = {
   create: (data: Record<string, unknown>) => api.post('/checkins', data),
+};
+
+export const staffApi = {
+  list: () => api.get<Array<{ id: string; full_name: string; role: string; email: string }>>('/staff'),
+};
+
+export const uploadApi = {
+  logo: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ url: string }>('/upload/logo', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 };
 
 export const branchesApi = {
@@ -176,9 +220,11 @@ export const platformApi = {
 
 export const publicApi = {
   getTenantProfile: (slug: string) => api.get(`/public/tenants/${slug}/profile`),
+  getStorefrontProfile: () => api.get('/public/storefront/profile'),
   getTenantPlans: (slug: string) => api.get(`/public/tenants/${slug}/plans`),
   getTenantClasses: (slug: string, params?: Record<string, unknown>) => api.get(`/public/tenants/${slug}/classes`, { params }),
   createCheckoutSession: (slug: string, data: Record<string, unknown>) => api.post(`/public/tenants/${slug}/checkout-session`, data),
+  createStorefrontCheckoutSession: (data: Record<string, unknown>) => api.post('/public/storefront/checkout-session', data),
   createLead: (data: Record<string, unknown>) => api.post('/public/leads', data),
 };
 
@@ -189,4 +235,5 @@ export const mobileApi = {
   pushPreview: (data: Record<string, unknown>) => api.post('/mobile/push-preview', data),
   listPushSubscriptions: () => api.get('/mobile/push-subscriptions'),
   registerPushSubscription: (data: Record<string, unknown>) => api.post('/mobile/push-subscriptions', data),
+  updateMembership: (data: { auto_renew?: boolean }) => api.patch('/mobile/membership', data),
 };

@@ -32,6 +32,7 @@ class SaaSPlan(Base):
     max_branches: Mapped[int] = mapped_column(Integer, default=3)
     features: Mapped[Optional[str]] = mapped_column(Text)  # JSON array
     stripe_price_id: Mapped[Optional[str]] = mapped_column(String(255))
+    fintoc_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     highlighted: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=True)

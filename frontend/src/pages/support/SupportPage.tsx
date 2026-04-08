@@ -7,6 +7,7 @@ import Modal from '@/components/ui/Modal';
 import { supportApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import type { PaginatedResponse, SupportInteraction } from '@/types';
+import { getApiError } from '@/utils';
 
 type InteractionForm = {
   id?: string;
@@ -79,7 +80,7 @@ export default function SupportPage() {
       queryClient.invalidateQueries({ queryKey: ['support-interactions'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo guardar la interaccion');
+      toast.error(getApiError(error, 'No se pudo guardar la interaccion'));
     },
   });
 

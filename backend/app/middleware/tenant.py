@@ -10,12 +10,22 @@ from app.core.security import decode_token
 class TenantMiddleware(BaseHTTPMiddleware):
     """Extracts tenant_id from JWT and attaches to request state."""
 
-    EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/login",
-                    "/api/v1/auth/register-gym", "/api/v1/auth/refresh"}
+    EXEMPT_PATHS = {
+        "/health", "/docs", "/redoc", "/openapi.json",
+        "/api/v1/auth/login", "/api/v1/auth/register-gym",
+        "/api/v1/auth/refresh", "/api/v1/auth/forgot-password",
+        "/api/v1/auth/reset-password",
+        "/api/v1/public/webhooks/fintoc",
+    }
+
+    EXEMPT_PREFIXES = ("/api/v1/public/", "/api/v1/billing/public/", "/uploads/")
 
     async def dispatch(self, request: Request, call_next):
-        # Skip auth for exempt paths
-        if request.url.path in self.EXEMPT_PATHS or request.method == "OPTIONS":
+        # Skip auth for exempt paths and public prefixes
+        path = request.url.path
+        if path in self.EXEMPT_PATHS or request.method == "OPTIONS":
+            return await call_next(request)
+        if any(path.startswith(prefix) for prefix in self.EXEMPT_PREFIXES):
             return await call_next(request)
 
         # Extract token

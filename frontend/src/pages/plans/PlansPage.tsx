@@ -6,7 +6,7 @@ import { Plus, Check, Star, Edit2, ToggleLeft, ToggleRight } from 'lucide-react'
 import Modal from '@/components/ui/Modal';
 import { plansApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
-import { cn, formatCurrency, formatDurationLabel, parseApiNumber } from '@/utils';
+import { cn, formatCurrency, formatDurationLabel, parseApiNumber , getApiError } from '@/utils';
 import type { PaginatedResponse, Plan } from '@/types';
 
 type PlanFormState = {
@@ -87,7 +87,7 @@ export default function PlansPage() {
       queryClient.invalidateQueries({ queryKey: ['plans'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo crear el plan');
+      toast.error(getApiError(error, 'No se pudo crear el plan'));
     },
   });
 
@@ -115,7 +115,7 @@ export default function PlansPage() {
       queryClient.invalidateQueries({ queryKey: ['plans'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo actualizar el plan');
+      toast.error(getApiError(error, 'No se pudo actualizar el plan'));
     },
   });
 
@@ -129,7 +129,7 @@ export default function PlansPage() {
       queryClient.invalidateQueries({ queryKey: ['plans'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo cambiar el estado del plan');
+      toast.error(getApiError(error, 'No se pudo cambiar el estado del plan'));
     },
   });
 

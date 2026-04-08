@@ -6,7 +6,7 @@ import { Check, Eye, EyeOff, Plus, Settings2, Sparkles, Star, ToggleLeft, Toggle
 import Modal from '@/components/ui/Modal';
 import { billingApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
-import { cn, formatCurrency, formatDateTime, parseApiNumber } from '@/utils';
+import { cn, formatCurrency, formatDateTime, parseApiNumber , getApiError } from '@/utils';
 import type { AdminSaaSPlan, AdminSaaSPlanCreateRequest, AdminSaaSPlanUpdateRequest } from '@/types';
 
 type PlatformPlanFormState = {
@@ -22,6 +22,7 @@ type PlatformPlanFormState = {
   max_members: string;
   max_branches: string;
   stripe_price_id: string;
+  fintoc_enabled: boolean;
   features: string;
   highlighted: boolean;
   is_active: boolean;
@@ -41,6 +42,7 @@ const emptyForm: PlatformPlanFormState = {
   max_members: '500',
   max_branches: '3',
   stripe_price_id: '',
+  fintoc_enabled: false,
   features: 'Dashboard operativo multitenant\nClientes, clases y check-in',
   highlighted: false,
   is_active: true,
@@ -66,6 +68,7 @@ function toFormState(plan?: AdminSaaSPlan): PlatformPlanFormState {
     max_members: String(plan.max_members),
     max_branches: String(plan.max_branches),
     stripe_price_id: plan.stripe_price_id ?? '',
+    fintoc_enabled: plan.fintoc_enabled ?? false,
     features: plan.features.join('\n'),
     highlighted: plan.highlighted,
     is_active: plan.is_active,
@@ -94,6 +97,7 @@ function toCreatePayload(form: PlatformPlanFormState): AdminSaaSPlanCreateReques
     max_members: Number(form.max_members),
     max_branches: Number(form.max_branches),
     stripe_price_id: form.stripe_price_id.trim() || null,
+    fintoc_enabled: form.fintoc_enabled,
     features: parseFeatures(form.features),
     highlighted: form.highlighted,
     is_active: form.is_active,
@@ -114,6 +118,7 @@ function toUpdatePayload(form: PlatformPlanFormState): AdminSaaSPlanUpdateReques
     max_members: Number(form.max_members),
     max_branches: Number(form.max_branches),
     stripe_price_id: form.stripe_price_id.trim() || null,
+    fintoc_enabled: form.fintoc_enabled,
     features: parseFeatures(form.features),
     highlighted: form.highlighted,
     is_active: form.is_active,
@@ -149,7 +154,7 @@ export default function PlatformPlansPage() {
       queryClient.invalidateQueries({ queryKey: ['platform-public-plans'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo crear el plan SaaS');
+      toast.error(getApiError(error, 'No se pudo crear el plan SaaS'));
     },
   });
 
@@ -166,7 +171,7 @@ export default function PlatformPlansPage() {
       queryClient.invalidateQueries({ queryKey: ['platform-tenants'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo actualizar el plan SaaS');
+      toast.error(getApiError(error, 'No se pudo actualizar el plan SaaS'));
     },
   });
 
@@ -180,7 +185,7 @@ export default function PlatformPlansPage() {
       queryClient.invalidateQueries({ queryKey: ['platform-tenants'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo guardar el cambio');
+      toast.error(getApiError(error, 'No se pudo guardar el cambio'));
     },
   });
 
@@ -319,17 +324,27 @@ export default function PlatformPlansPage() {
                 {plan.is_public ? 'Publico' : 'Interno'}
               </span>
               <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', plan.highlighted ? 'bg-white/15 text-white' : 'bg-surface-100 text-surface-700 dark:bg-surface-800 dark:text-surface-300')}>
-                {plan.checkout_enabled ? 'Checkout listo' : 'Checkout pendiente'}
+                {plan.checkout_enabled
+                  ? `Checkout: ${plan.checkout_provider === 'fintoc' ? 'Fintoc' : 'Stripe'}`
+                  : 'Checkout pendiente'}
               </span>
             </div>
 
             <div className={cn('mt-5 space-y-2 rounded-2xl border p-4', plan.highlighted ? 'border-white/15 bg-white/8' : 'border-surface-200/60 bg-surface-50 dark:border-surface-800 dark:bg-surface-950/60')}>
               <div className="flex items-center justify-between text-sm">
-                <span className={plan.highlighted ? 'text-white/80' : 'text-surface-500'}>Stripe price ID</span>
-                <span className={cn('max-w-[180px] truncate font-mono text-xs', !plan.highlighted && 'text-surface-700 dark:text-surface-300')}>
-                  {plan.stripe_price_id || 'Sin configurar'}
+                <span className={plan.highlighted ? 'text-white/80' : 'text-surface-500'}>Pasarela</span>
+                <span className={cn('text-xs font-medium', !plan.highlighted && 'text-surface-700 dark:text-surface-300')}>
+                  {plan.fintoc_enabled ? 'Fintoc' : plan.stripe_price_id ? 'Stripe' : 'Sin checkout'}
                 </span>
               </div>
+              {!plan.fintoc_enabled && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className={plan.highlighted ? 'text-white/80' : 'text-surface-500'}>Stripe price ID</span>
+                  <span className={cn('max-w-[180px] truncate font-mono text-xs', !plan.highlighted && 'text-surface-700 dark:text-surface-300')}>
+                    {plan.stripe_price_id || 'Sin configurar'}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between text-sm">
                 <span className={plan.highlighted ? 'text-white/80' : 'text-surface-500'}>Orden</span>
                 <span className={cn('font-semibold', !plan.highlighted && 'text-surface-900 dark:text-white')}>{plan.sort_order}</span>
@@ -484,14 +499,56 @@ export default function PlatformPlansPage() {
             </div>
           </div>
 
-          <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Stripe price ID</label>
-            <input
-              className="input"
-              value={form.stripe_price_id}
-              onChange={(event) => setForm((current) => ({ ...current, stripe_price_id: event.target.value }))}
-              placeholder="price_123..."
-            />
+          {/* Pasarela de pago */}
+          <div className="rounded-2xl border border-surface-200 dark:border-surface-800 p-4 space-y-4">
+            <p className="text-sm font-semibold text-surface-700 dark:text-surface-300">Pasarela de pago</p>
+
+            {/* Fintoc toggle */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.fintoc_enabled}
+                onChange={(event) => setForm((current) => ({ ...current, fintoc_enabled: event.target.checked }))}
+              />
+              <div>
+                <span className="block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  Fintoc (transferencia bancaria CLP)
+                </span>
+                <span className="block text-xs text-surface-500 mt-0.5">
+                  Al activar, el checkout usara Fintoc en lugar de Stripe. Requiere FINTOC_SECRET_KEY en el servidor.
+                </span>
+              </div>
+            </label>
+
+            {/* Stripe price ID — solo si Fintoc no está activo */}
+            {!form.fintoc_enabled && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Stripe price ID</label>
+                <input
+                  className="input"
+                  value={form.stripe_price_id}
+                  onChange={(event) => setForm((current) => ({ ...current, stripe_price_id: event.target.value }))}
+                  placeholder="price_123..."
+                />
+              </div>
+            )}
+
+            {/* Indicador del proveedor activo */}
+            <div className={`rounded-xl px-3 py-2.5 text-xs font-medium flex items-center gap-2 ${
+              form.fintoc_enabled
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-300'
+                : form.stripe_price_id.trim()
+                  ? 'bg-violet-50 text-violet-700 dark:bg-violet-950/20 dark:text-violet-300'
+                  : 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400'
+            }`}>
+              <WalletCards size={14} />
+              {form.fintoc_enabled
+                ? 'Checkout activo via Fintoc'
+                : form.stripe_price_id.trim()
+                  ? 'Checkout activo via Stripe'
+                  : 'Sin checkout configurado — solo trial'}
+            </div>
           </div>
 
           <div>

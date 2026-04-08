@@ -5,7 +5,9 @@ export function registerPwaServiceWorker() {
   }
 
   window.addEventListener('load', () => {
-    void navigator.serviceWorker.register('/sw.js').catch((error) => {
+    // Scope limitado a /member para que el SW no intercepte rutas del dashboard
+    // de admin ni de la landing pública.
+    void navigator.serviceWorker.register('/sw.js', { scope: '/member' }).catch((error) => {
       console.error('No se pudo registrar el service worker de la PWA.', error);
     });
   });

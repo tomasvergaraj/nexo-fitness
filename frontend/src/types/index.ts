@@ -43,6 +43,7 @@ export interface SaaSPlan {
   features: string[];
   highlighted: boolean;
   checkout_enabled: boolean;
+  checkout_provider?: 'stripe' | 'fintoc' | null;
 }
 
 export interface SaaSSignupRequest extends RegisterGymRequest {
@@ -54,6 +55,7 @@ export interface SaaSSignupRequest extends RegisterGymRequest {
 export interface AdminSaaSPlan extends SaaSPlan {
   id: string;
   stripe_price_id?: string;
+  fintoc_enabled: boolean;
   is_active: boolean;
   is_public: boolean;
   sort_order: number;
@@ -74,6 +76,7 @@ export interface AdminSaaSPlanCreateRequest {
   max_branches: number;
   features: string[];
   stripe_price_id?: string | null;
+  fintoc_enabled: boolean;
   highlighted: boolean;
   is_active: boolean;
   is_public: boolean;
@@ -92,6 +95,7 @@ export interface AdminSaaSPlanUpdateRequest {
   max_branches?: number;
   features?: string[];
   stripe_price_id?: string | null;
+  fintoc_enabled?: boolean;
   highlighted?: boolean;
   is_active?: boolean;
   is_public?: boolean;
@@ -109,6 +113,8 @@ export interface SaaSSignupResponse {
   checkout_required: boolean;
   checkout_url?: string;
   checkout_session_id?: string;
+  checkout_provider?: 'stripe' | 'fintoc' | null;
+  widget_token?: string;
   next_action: string;
   message: string;
 }
@@ -374,6 +380,7 @@ export interface TrainingProgram {
 export interface TenantBranding {
   logo_url?: string;
   primary_color?: string;
+  secondary_color?: string;
   custom_domain?: string;
   support_email?: string;
   support_phone?: string;
@@ -382,12 +389,14 @@ export interface TenantBranding {
 }
 
 export interface TenantSettings {
+  slug: string;
   gym_name: string;
   email: string;
   phone?: string;
   city?: string;
   address?: string;
   primary_color?: string;
+  secondary_color?: string;
   logo_url?: string;
   custom_domain?: string;
   billing_email?: string;
@@ -406,7 +415,7 @@ export interface TenantSettings {
 
 export interface PaymentProviderAccount {
   id: string;
-  provider: 'stripe' | 'mercadopago' | 'webpay' | 'manual';
+  provider: 'stripe' | 'mercadopago' | 'webpay' | 'fintoc' | 'manual';
   status: 'pending' | 'connected' | 'disabled';
   account_label?: string;
   public_identifier?: string;

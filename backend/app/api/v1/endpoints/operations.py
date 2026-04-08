@@ -1,11 +1,14 @@
 """Additional tenant operations endpoints for the complete gym platform."""
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,15 +92,24 @@ from app.services.campaign_service import (
     parse_segment_filter,
     serialize_segment_filter,
 )
+from app.services.branding_service import (
+    DEFAULT_PRIMARY_COLOR,
+    DEFAULT_SECONDARY_COLOR,
+    coerce_brand_color,
+    normalize_brand_color,
+)
 from app.services.push_notification_service import NotificationDispatchResult, create_and_dispatch_notification
 from app.services.push_notification_service import get_notification_dispatch_result, refresh_push_receipts
 from app.services.push_notification_service import record_notification_engagement
+from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
 
 branches_router = APIRouter(prefix="/branches", tags=["Branches"])
 memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
 campaigns_router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 support_router = APIRouter(prefix="/support/interactions", tags=["Support"])
 programs_router = APIRouter(prefix="/programs", tags=["Programs"])
+staff_router = APIRouter(prefix="/staff", tags=["Staff"])
+upload_router = APIRouter(prefix="/upload", tags=["Upload"])
 settings_router = APIRouter(prefix="/settings", tags=["Settings"])
 reports_router = APIRouter(prefix="/reports", tags=["Reports"])
 notifications_router = APIRouter(prefix="/notifications", tags=["Notifications"])
@@ -134,6 +146,63 @@ def _save_feature_map(tenant: Tenant, values: dict[str, Any]) -> None:
     current = _feature_map(tenant)
     current.update(values)
     tenant.features = json.dumps(current)
+
+
+async def _ensure_custom_domain_is_available(
+    db: AsyncSession,
+    *,
+    candidate_domain: str,
+    tenant_id: UUID,
+) -> None:
+    reserved_hosts = {
+        host
+        for host in {
+            extract_hostname(settings.FRONTEND_URL),
+            extract_hostname(settings.public_app_url),
+        }
+        if host
+    }
+
+    for host in reserved_hosts:
+        if candidate_domain == host:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"El dominio {candidate_domain} ya esta reservado por la plataforma principal. "
+                    "Usa otro dominio o subdominio."
+                ),
+            )
+
+    existing_tenants = (
+        await db.execute(
+            select(Tenant.id, Tenant.name, Tenant.custom_domain).where(
+                Tenant.id != tenant_id,
+                Tenant.custom_domain.is_not(None),
+            )
+        )
+    ).all()
+
+    for _existing_tenant_id, existing_name, existing_domain in existing_tenants:
+        if not existing_domain:
+            continue
+        try:
+            normalized_existing = normalize_custom_domain(existing_domain)
+        except ValueError:
+            continue
+        if not normalized_existing:
+            continue
+        if domains_conflict(candidate_domain, normalized_existing):
+            if candidate_domain == normalized_existing:
+                detail = (
+                    f"El dominio {candidate_domain} ya esta siendo usado por el tenant {existing_name}. "
+                    "Debe ser unico."
+                )
+            else:
+                detail = (
+                    f"El dominio {candidate_domain} entra en conflicto con {normalized_existing} del tenant "
+                    f"{existing_name}. Usa un dominio que no sea padre ni subdominio de otro tenant."
+                )
+            raise HTTPException(status_code=409, detail=detail)
 
 
 def _notification_payload(notification: Notification) -> NotificationResponse:
@@ -706,6 +775,66 @@ async def update_support_interaction(
     return _support_payload(interaction, client, handler)
 
 
+# ─── Staff Router ─────────────────────────────────────────────────────────────
+
+@staff_router.get("", response_model=list)
+async def list_staff(
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    """Return staff members (non-client users) of the tenant for dropdowns."""
+    staff_roles = [
+        UserRole.OWNER, UserRole.ADMIN, UserRole.RECEPTION,
+        UserRole.TRAINER, UserRole.MARKETING,
+    ]
+    result = await db.execute(
+        select(User)
+        .where(User.tenant_id == ctx.tenant_id, User.role.in_(staff_roles), User.is_active == True)
+        .order_by(User.first_name)
+    )
+    users = result.scalars().all()
+    return [
+        {"id": str(u.id), "full_name": u.full_name, "role": u.role.value, "email": u.email}
+        for u in users
+    ]
+
+
+# ─── Upload Router ────────────────────────────────────────────────────────────
+
+_UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "uploads"))
+_MAX_LOGO_BYTES = 4 * 1024 * 1024  # 4 MB raw limit (client resizes before upload)
+_PNG_MAGIC = b"\x89PNG"
+
+
+@upload_router.post("/logo")
+async def upload_logo(
+    file: UploadFile = File(...),
+    tenant: Tenant = Depends(get_current_tenant),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Upload a PNG logo for the tenant. Returns the public URL."""
+    content = await file.read()
+
+    if len(content) > _MAX_LOGO_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el tamaño maximo de 4 MB.")
+
+    if not content.startswith(_PNG_MAGIC):
+        raise HTTPException(status_code=400, detail="Solo se aceptan imagenes en formato PNG.")
+
+    tenant_dir = _UPLOADS_ROOT / "logos" / str(tenant.id)
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{uuid4().hex}.png"
+    dest = tenant_dir / filename
+    dest.write_bytes(content)
+
+    url = f"/uploads/logos/{tenant.id}/{filename}"
+    return {"url": url}
+
+
+# ─── Programs Router ──────────────────────────────────────────────────────────
+
 @programs_router.get("", response_model=PaginatedResponse)
 async def list_programs(
     page: int = Query(1, ge=1),
@@ -804,15 +933,24 @@ async def get_tenant_settings(
     features = _feature_map(tenant)
     support_email = str(features.get("support_email", tenant.email))
     support_phone = str(features.get("support_phone", tenant.phone or "")) or None
+    primary_color = coerce_brand_color(tenant.primary_color, DEFAULT_PRIMARY_COLOR)
+    secondary_color = coerce_brand_color(tenant.secondary_color, DEFAULT_SECONDARY_COLOR)
+    try:
+        custom_domain = normalize_custom_domain(tenant.custom_domain)
+    except ValueError:
+        custom_domain = tenant.custom_domain
+
     return TenantSettingsResponse(
+        slug=tenant.slug,
         gym_name=tenant.name,
         email=tenant.email,
         phone=tenant.phone,
         city=tenant.city,
         address=tenant.address,
-        primary_color=tenant.primary_color,
+        primary_color=primary_color,
+        secondary_color=secondary_color,
         logo_url=tenant.logo_url,
-        custom_domain=tenant.custom_domain,
+        custom_domain=custom_domain,
         billing_email=str(features.get("billing_email", tenant.email)),
         support_email=support_email,
         support_phone=support_phone,
@@ -826,8 +964,9 @@ async def get_tenant_settings(
         public_checkout_enabled=bool(features.get("public_checkout_enabled", True)),
         branding={
             "logo_url": tenant.logo_url,
-            "primary_color": tenant.primary_color,
-            "custom_domain": tenant.custom_domain,
+            "primary_color": primary_color,
+            "secondary_color": secondary_color,
+            "custom_domain": custom_domain,
             "support_email": support_email,
             "support_phone": support_phone,
             "marketplace_headline": str(features.get("marketplace_headline", "")) or None,
@@ -847,6 +986,35 @@ async def update_tenant_settings(
         raise HTTPException(status_code=400, detail="Tenant context is required")
 
     payload = data.model_dump(exclude_unset=True)
+    color_labels = {
+        "primary_color": "color principal",
+        "secondary_color": "color secundario",
+    }
+    for field, label in color_labels.items():
+        if field not in payload:
+            continue
+        try:
+            payload[field] = normalize_brand_color(
+                payload[field],
+                field_label=label,
+                default=DEFAULT_PRIMARY_COLOR if field == "primary_color" else DEFAULT_SECONDARY_COLOR,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if "custom_domain" in payload:
+        try:
+            payload["custom_domain"] = normalize_custom_domain(payload["custom_domain"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        if payload["custom_domain"]:
+            await _ensure_custom_domain_is_available(
+                db,
+                candidate_domain=payload["custom_domain"],
+                tenant_id=tenant.id,
+            )
+
     tenant_field_map = {
         "gym_name": "name",
         "email": "email",
@@ -854,6 +1022,7 @@ async def update_tenant_settings(
         "city": "city",
         "address": "address",
         "primary_color": "primary_color",
+        "secondary_color": "secondary_color",
         "logo_url": "logo_url",
         "custom_domain": "custom_domain",
     }
@@ -1393,3 +1562,73 @@ async def create_push_subscription(
     await db.flush()
     await db.refresh(subscription)
     return PushSubscriptionResponse.model_validate(subscription)
+
+
+class MobileMembershipUpdateRequest(BaseModel):
+    auto_renew: Optional[bool] = None
+
+
+@mobile_router.patch("/membership", response_model=MobileMembershipWalletResponse)
+async def update_mobile_membership(
+    data: MobileMembershipUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """Allow a member to update their own membership settings (currently: auto_renew)."""
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Tenant context is required")
+
+    membership = (
+        await db.execute(
+            select(Membership)
+            .where(Membership.user_id == current_user.id, Membership.tenant_id == tenant.id)
+            .order_by(Membership.created_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+    if not membership:
+        raise HTTPException(status_code=404, detail="No membership found for this member")
+
+    if data.auto_renew is not None:
+        membership.auto_renew = data.auto_renew
+
+    await db.flush()
+
+    # Return the updated wallet so the frontend can refresh in one call
+    plan = await db.get(Plan, membership.plan_id) if membership else None
+    next_class = (
+        await db.execute(
+            select(GymClass)
+            .where(
+                GymClass.tenant_id == tenant.id,
+                GymClass.start_time >= datetime.now(timezone.utc),
+                GymClass.status == ClassStatus.SCHEDULED,
+            )
+            .order_by(GymClass.start_time.asc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+    return MobileMembershipWalletResponse(
+        tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
+        membership_id=membership.id,
+        plan_id=plan.id if plan else None,
+        plan_name=plan.name if plan else None,
+        membership_status=membership.status.value if isinstance(membership.status, MembershipStatus) else str(membership.status),
+        expires_at=membership.expires_at,
+        auto_renew=membership.auto_renew,
+        next_class=(
+            {
+                "id": str(next_class.id),
+                "name": next_class.name,
+                "start_time": next_class.start_time.isoformat(),
+                "modality": next_class.modality.value if hasattr(next_class.modality, "value") else str(next_class.modality),
+            }
+            if next_class
+            else None
+        ),
+        qr_payload=f"nexo:{tenant.slug}:{current_user.id}:{membership.id}",
+    )

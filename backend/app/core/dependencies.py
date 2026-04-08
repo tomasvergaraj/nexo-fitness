@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.services.billing_service import evaluate_tenant_access
+from app.services.tenant_access_service import enforce_tenant_access
 
 security_scheme = HTTPBearer()
 
@@ -56,21 +56,14 @@ async def get_current_tenant(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no tenant assigned")
 
     result = await db.execute(
-        select(Tenant).options(selectinload(Tenant.users)).where(Tenant.id == current_user.tenant_id, Tenant.is_active == True)
+        select(Tenant).options(selectinload(Tenant.users)).where(Tenant.id == current_user.tenant_id)
     )
     tenant = result.scalar_one_or_none()
 
     if not tenant:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant not found or suspended")
 
-    access_state = evaluate_tenant_access(tenant, now=datetime.now(timezone.utc))
-    if not access_state.allow_access:
-        if access_state.status_to_apply:
-            tenant.status = access_state.status_to_apply
-        if access_state.deactivate:
-            tenant.is_active = False
-        await db.flush()
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_state.detail)
+    await enforce_tenant_access(db, tenant, current_user, now=datetime.now(timezone.utc))
 
     return tenant
 
@@ -81,9 +74,10 @@ def require_roles(*allowed_roles: str):
         if current_user.is_superadmin:
             return current_user
         if current_user.role not in allowed_roles:
+            role_name = getattr(current_user.role, "value", str(current_user.role))
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Role '{current_user.role}' not authorized for this action",
+                detail=f"Role '{role_name}' not authorized for this action",
             )
         return current_user
     return _check_role

@@ -1,12 +1,18 @@
 """Public SaaS billing endpoints and platform billing admin tools."""
 
+from datetime import datetime, timezone
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_tenant, require_roles, require_superadmin
+from app.core.dependencies import get_current_tenant, get_current_user, require_roles, require_superadmin
+from app.models.tenant import Tenant, TenantStatus
 from app.schemas.billing import (
     AdminSaaSPlanCreateRequest,
     AdminSaaSPlanResponse,
@@ -18,7 +24,11 @@ from app.schemas.billing import (
     TenantBillingResponse,
 )
 from app.schemas.business import PaginatedResponse
-from app.services.billing_service import BillingService
+from app.services.billing_service import BillingService, get_effective_plan_for_tenant
+from app.services.tenant_access_service import (
+    create_reactivation_checkout,
+    evaluate_tenant_access,
+)
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
 
@@ -85,3 +95,115 @@ async def update_platform_plan(
     _user=Depends(require_superadmin()),
 ):
     return await BillingService.update_admin_plan(db, plan_id, data)
+
+
+@router.get("/status")
+async def get_billing_status(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns the billing status for the current tenant WITHOUT enforcing access.
+    Safe to call even when the subscription is expired — used for the billing wall
+    and the trial countdown banner.
+    """
+    if current_user.is_superadmin or not current_user.tenant_id:
+        return {
+            "status": "active",
+            "is_active": True,
+            "allow_access": True,
+            "detail": None,
+            "days_remaining": None,
+            "trial_ends_at": None,
+            "license_expires_at": None,
+            "checkout_url": None,
+            "plan_name": "Platform Admin",
+        }
+
+    result = await db.execute(
+        select(Tenant)
+        .options(selectinload(Tenant.users))
+        .where(Tenant.id == current_user.tenant_id)
+    )
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    now = datetime.now(timezone.utc)
+    access = evaluate_tenant_access(tenant, now=now)
+
+    days_remaining: int | None = None
+    if tenant.status == TenantStatus.TRIAL and tenant.trial_ends_at:
+        delta = tenant.trial_ends_at - now
+        days_remaining = max(0, delta.days)
+    elif tenant.status == TenantStatus.ACTIVE and tenant.license_expires_at:
+        delta = tenant.license_expires_at - now
+        days_remaining = max(0, delta.days)
+
+    checkout_url: str | None = None
+    widget_token: str | None = None
+    checkout_provider: str | None = None
+
+    if not access.allow_access:
+        try:
+            url = await create_reactivation_checkout(db, tenant, current_user)
+            if url:
+                checkout_url = url
+                await db.flush()
+        except Exception:
+            pass
+
+    plan = get_effective_plan_for_tenant(tenant)
+
+    return {
+        "status": tenant.status.value,
+        "is_active": tenant.is_active,
+        "allow_access": access.allow_access,
+        "detail": access.detail if not access.allow_access else None,
+        "days_remaining": days_remaining,
+        "trial_ends_at": tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None,
+        "license_expires_at": tenant.license_expires_at.isoformat() if tenant.license_expires_at else None,
+        "checkout_url": checkout_url,
+        "widget_token": widget_token,
+        "checkout_provider": checkout_provider,
+        "plan_name": plan.name,
+    }
+
+
+class ReactivateRequest(BaseModel):
+    plan_key: Optional[str] = None
+
+
+@router.post("/reactivate")
+async def reactivate_subscription(
+    body: ReactivateRequest = ReactivateRequest(),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generates a checkout URL for subscription renewal.
+    Accepts an optional plan_key to switch plans.
+    Only available to owners/admins.
+    """
+    if current_user.is_superadmin or not current_user.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not applicable")
+
+    result = await db.execute(
+        select(Tenant)
+        .options(selectinload(Tenant.users))
+        .where(Tenant.id == current_user.tenant_id)
+    )
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    checkout_url = await create_reactivation_checkout(db, tenant, current_user, plan_key=body.plan_key)
+
+    if checkout_url:
+        await db.flush()
+        return {"checkout_url": checkout_url}
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="No hay checkout disponible para este plan. Contacta a soporte.",
+    )

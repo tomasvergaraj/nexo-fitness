@@ -7,7 +7,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Eye,
+  EyeOff,
+  KeyRound,
   Mail,
+  Pencil,
   Phone,
   Plus,
   Power,
@@ -18,9 +22,10 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { clientsApi, notificationsApi } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
-import { cn, formatDate, formatDateTime, getInitials } from '@/utils';
-import type { AppNotification, NotificationDispatchResponse, PaginatedResponse, User } from '@/types';
+import { cn, formatDate, formatDateTime, getInitials , getApiError } from '@/utils';
+import type { AppNotification, NotificationDispatchResponse, PaginatedResponse, User, UserRole } from '@/types';
 
 const filters = [
   { label: 'Todos', value: '' },
@@ -42,6 +47,9 @@ const emptyForm = {
   phone: '',
   password: 'Client123!',
 };
+
+const clientCreateRoles: UserRole[] = ['owner', 'admin', 'reception'];
+const clientResetPasswordRoles: UserRole[] = ['owner', 'admin'];
 
 type NotificationForm = {
   user_id: string;
@@ -87,16 +95,25 @@ function downloadCsv(filename: string, rows: string[][]) {
 
 export default function ClientsPage() {
   const queryClient = useQueryClient();
+  const userRole = useAuthStore((state) => state.user?.role);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [editContactClient, setEditContactClient] = useState<User | null>(null);
+  const [editContactForm, setEditContactForm] = useState({ email: '', phone: '' });
+  const [resetPasswordClient, setResetPasswordClient] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [notificationForm, setNotificationForm] = useState<NotificationForm>(createNotificationForm());
   const [lastDispatchResult, setLastDispatchResult] = useState<NotificationDispatchResponse | null>(null);
   const [lastDispatchUsedPush, setLastDispatchUsedPush] = useState<boolean | null>(null);
   const deferredSearch = useDeferredValue(search);
+  const canCreateClients = Boolean(userRole && clientCreateRoles.includes(userRole));
+  const canResetClientPasswords = Boolean(userRole && clientResetPasswordRoles.includes(userRole));
+  const readOnlyClientAccess = Boolean(userRole && !canCreateClients);
 
   useEffect(() => {
     setPage(1);
@@ -117,17 +134,27 @@ export default function ClientsPage() {
 
   const createClient = useMutation({
     mutationFn: async () => {
-      const response = await clientsApi.create(form);
+      const payload = {
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        email: form.email.trim().toLowerCase(),
+        password: form.password.trim(),
+        ...(form.phone.trim() ? { phone: form.phone.trim() } : {}),
+      };
+      const response = await clientsApi.create(payload);
       return response.data;
     },
     onSuccess: () => {
       toast.success('Cliente creado correctamente');
       setShowCreateModal(false);
       setForm(emptyForm);
+      setSearch('');
+      setStatusFilter('');
+      setPage(1);
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo crear el cliente');
+      toast.error(getApiError(error, 'No se pudo crear el cliente'));
     },
   });
 
@@ -141,7 +168,36 @@ export default function ClientsPage() {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo actualizar el cliente');
+      toast.error(getApiError(error, 'No se pudo actualizar el cliente'));
+    },
+  });
+
+  const updateContactInfo = useMutation({
+    mutationFn: async ({ clientId, data }: { clientId: string; data: { email?: string; phone?: string } }) => {
+      const response = await clientsApi.update(clientId, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      toast.success('Datos de contacto actualizados');
+      setEditContactClient(null);
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo actualizar el contacto'));
+    },
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: async ({ clientId, password }: { clientId: string; password: string }) => {
+      await clientsApi.resetPassword(clientId, password);
+    },
+    onSuccess: () => {
+      toast.success('Contraseña restablecida correctamente');
+      setResetPasswordClient(null);
+      setNewPassword('');
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo restablecer la contraseña'));
     },
   });
 
@@ -180,7 +236,7 @@ export default function ClientsPage() {
       toast.success(`Notificacion creada con ${accepted}/${dispatch.push_deliveries.length} delivery(s) aceptadas.`);
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo crear la notificacion');
+      toast.error(getApiError(error, 'No se pudo crear la notificacion'));
     },
   });
 
@@ -259,6 +315,11 @@ export default function ClientsPage() {
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Clientes</h1>
           <p className="mt-1 text-sm text-surface-500">{title}</p>
+          {readOnlyClientAccess ? (
+            <p className="mt-2 text-sm text-amber-600 dark:text-amber-300">
+              Tu rol puede revisar clientes y enviar notificaciones, pero solo owner, admin o recepción pueden registrar o editar fichas.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <motion.button
@@ -277,14 +338,16 @@ export default function ClientsPage() {
           >
             <Download size={16} /> Exportar
           </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setShowCreateModal(true)}
-            className="btn-primary text-sm"
-          >
-            <Plus size={16} /> Nuevo Cliente
-          </motion.button>
+          {canCreateClients ? (
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowCreateModal(true)}
+              className="btn-primary text-sm"
+            >
+              <Plus size={16} /> Nuevo Cliente
+            </motion.button>
+          ) : null}
         </div>
       </motion.div>
 
@@ -410,6 +473,33 @@ export default function ClientsPage() {
                   </div>
 
                   <div className="col-span-2 flex items-center justify-end gap-1">
+                    {canCreateClients ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditContactClient(client);
+                        setEditContactForm({ email: client.email, phone: client.phone ?? '' });
+                      }}
+                      className="rounded-lg p-2 transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
+                      aria-label={`Editar contacto de ${client.first_name}`}
+                    >
+                      <Pencil size={15} className="text-surface-400" />
+                    </button>
+                    ) : null}
+                    {canResetClientPasswords ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetPasswordClient(client);
+                        setNewPassword('');
+                        setShowNewPassword(false);
+                      }}
+                      className="rounded-lg p-2 transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
+                      aria-label={`Restablecer contraseña de ${client.first_name}`}
+                    >
+                      <KeyRound size={15} className="text-surface-400" />
+                    </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => {
@@ -440,6 +530,7 @@ export default function ClientsPage() {
                     >
                       <Phone size={15} className="text-surface-400" />
                     </a>
+                    {canCreateClients ? (
                     <button
                       type="button"
                       onClick={() => updateClient.mutate({ clientId: client.id, isActive: !client.is_active })}
@@ -448,6 +539,7 @@ export default function ClientsPage() {
                     >
                       <Power size={15} className={client.is_active ? 'text-amber-500' : 'text-emerald-500'} />
                     </button>
+                    ) : null}
                   </div>
                 </motion.div>
               ))
@@ -556,6 +648,113 @@ export default function ClientsPage() {
             </button>
             <button type="submit" className="btn-primary" disabled={createClient.isPending}>
               {createClient.isPending ? 'Creando...' : 'Crear cliente'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal editar contacto */}
+      <Modal
+        open={!!editContactClient}
+        title={`Editar contacto — ${editContactClient?.first_name ?? ''} ${editContactClient?.last_name ?? ''}`}
+        onClose={() => !updateContactInfo.isPending && setEditContactClient(null)}
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!editContactClient) return;
+            const payload: Record<string, string> = {};
+            if (editContactForm.email !== editContactClient.email) payload.email = editContactForm.email;
+            if (editContactForm.phone !== (editContactClient.phone ?? '')) payload.phone = editContactForm.phone;
+            if (!Object.keys(payload).length) {
+              setEditContactClient(null);
+              return;
+            }
+            updateContactInfo.mutate({ clientId: editContactClient.id, data: payload });
+          }}
+          className="space-y-4"
+        >
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Correo electrónico
+            </label>
+            <input
+              type="email"
+              className="input"
+              value={editContactForm.email}
+              onChange={(e) => setEditContactForm((f) => ({ ...f, email: e.target.value }))}
+              required
+            />
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Teléfono
+            </label>
+            <input
+              type="tel"
+              className="input"
+              value={editContactForm.phone}
+              onChange={(e) => setEditContactForm((f) => ({ ...f, phone: e.target.value }))}
+              placeholder="+56 9 1234 5678"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn-secondary" onClick={() => setEditContactClient(null)}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn-primary" disabled={updateContactInfo.isPending}>
+              {updateContactInfo.isPending ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal restablecer contraseña */}
+      <Modal
+        open={!!resetPasswordClient}
+        title={`Restablecer contraseña — ${resetPasswordClient?.first_name ?? ''} ${resetPasswordClient?.last_name ?? ''}`}
+        onClose={() => !resetPassword.isPending && setResetPasswordClient(null)}
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!resetPasswordClient) return;
+            resetPassword.mutate({ clientId: resetPasswordClient.id, password: newPassword });
+          }}
+          className="space-y-4"
+        >
+          <p className="text-sm text-surface-500 dark:text-surface-400">
+            La sesión activa del cliente será cerrada al guardar.
+          </p>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Nueva contraseña
+            </label>
+            <div className="relative">
+              <input
+                type={showNewPassword ? 'text' : 'password'}
+                className="input pr-10"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                minLength={6}
+                required
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600"
+              >
+                {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn-secondary" onClick={() => setResetPasswordClient(null)}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn-primary" disabled={resetPassword.isPending || newPassword.length < 6}>
+              {resetPassword.isPending ? 'Guardando...' : 'Restablecer contraseña'}
             </button>
           </div>
         </form>

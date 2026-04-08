@@ -35,12 +35,11 @@ services:
       context: ./backend
       dockerfile: ../docker/Dockerfile.backend
     restart: unless-stopped
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://nexo:nexo_password@db:5432/nexo_fitness
       REDIS_URL: redis://redis:6379/0
-      APP_ENV: development
-      DEBUG: "true"
-      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost:8081"
     ports:
       - "8000:8000"
     volumes:
@@ -58,8 +57,10 @@ services:
       context: ./frontend
       dockerfile: ../docker/Dockerfile.frontend
     restart: unless-stopped
+    env_file:
+      - ./frontend/.env
     environment:
-      VITE_API_URL: http://localhost:8000/api/v1
+      VITE_DEV_PROXY_TARGET: http://backend:8000
       CHOKIDAR_USEPOLLING: "true"
       CHOKIDAR_INTERVAL: "300"
     ports:
@@ -75,6 +76,8 @@ services:
       context: ./backend
       dockerfile: ../docker/Dockerfile.backend
     restart: unless-stopped
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://nexo:nexo_password@db:5432/nexo_fitness
       REDIS_URL: redis://redis:6379/0
@@ -87,12 +90,14 @@ services:
         condition: service_healthy
     command: celery -A app.tasks worker --loglevel=info
 
-  # â”€â”€â”€ Celery Beat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ─── Celery Beat ─────────────────────────────────────
   beat:
     build:
       context: ./backend
       dockerfile: ../docker/Dockerfile.backend
     restart: unless-stopped
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://nexo:nexo_password@db:5432/nexo_fitness
       REDIS_URL: redis://redis:6379/0

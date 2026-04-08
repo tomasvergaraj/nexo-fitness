@@ -10,7 +10,7 @@ import Modal from '@/components/ui/Modal';
 import { classesApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import {
-  classStatusColor, cn, formatDateTime, formatTime, occupancyColor, toDateInputValue,
+  classStatusColor, cn, formatDateTime, formatTime, getApiError, occupancyColor, toDateInputValue,
 } from '@/utils';
 import type { GymClass, PaginatedResponse } from '@/types';
 
@@ -116,7 +116,7 @@ export default function ClassesPage() {
       queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
     },
     onError: (error: any) => {
-      toast.error(error?.message || error?.response?.data?.detail || 'No se pudo crear la clase');
+      toast.error(error?.message || getApiError(error, 'No se pudo crear la clase'));
     },
   });
 
@@ -130,7 +130,7 @@ export default function ClassesPage() {
       queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo cancelar la clase');
+      toast.error(getApiError(error, 'No se pudo cancelar la clase'));
     },
   });
 

@@ -1,0 +1,9 @@
+# Nunca commitear certificados SSL
+*.pem
+*.crt
+*.key
+*.csr
+*.p12
+*.pfx
+!.gitkeep
+!.gitignore

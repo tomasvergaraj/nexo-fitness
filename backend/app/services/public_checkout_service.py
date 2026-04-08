@@ -2,6 +2,8 @@
 
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from app.services.custom_domain_service import build_storefront_url
+
 
 def _append_path_segment(base_url: str, path_segment: str) -> str:
     parts = urlsplit(base_url)
@@ -21,8 +23,12 @@ def _merge_query_params(base_url: str, params: dict[str, str | None]) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
 
 
-def build_storefront_return_urls(frontend_url: str, tenant_slug: str) -> tuple[str, str]:
-    storefront_url = f"{frontend_url.rstrip('/')}/store/{tenant_slug}"
+def build_storefront_return_urls(
+    frontend_url: str,
+    tenant_slug: str,
+    custom_domain: str | None = None,
+) -> tuple[str, str]:
+    storefront_url = build_storefront_url(frontend_url, tenant_slug, custom_domain)
     return (
         f"{storefront_url}?checkout=success",
         f"{storefront_url}?checkout=cancelled",

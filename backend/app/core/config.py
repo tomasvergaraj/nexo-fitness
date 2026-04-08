@@ -3,7 +3,10 @@
 from functools import lru_cache
 from typing import List
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_INSECURE_DEFAULTS = {"change-me-in-production", "change-me-jwt-secret", "change-me-admin"}
 
 
 class Settings(BaseSettings):
@@ -37,8 +40,18 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
 
     @property
+    def public_app_url(self) -> str:
+        """URL pública HTTPS para return URLs de pagos. Usa PUBLIC_APP_URL si está configurada, sino FRONTEND_URL."""
+        url = self.PUBLIC_APP_URL.strip().rstrip("/")
+        return url if url else self.FRONTEND_URL.strip().rstrip("/")
+
+    @property
     def cors_origins_list(self) -> List[str]:
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
+        origins = [origin.strip().rstrip("/") for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        frontend_url = self.FRONTEND_URL.strip().rstrip("/")
+        if frontend_url:
+            origins.append(frontend_url)
+        return list(dict.fromkeys(origins))
 
     # Email
     SENDGRID_API_KEY: str = ""
@@ -49,6 +62,8 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     MERCADOPAGO_ACCESS_TOKEN: str = ""
+    FINTOC_SECRET_KEY: str = ""
+    FINTOC_WEBHOOK_SECRET: str = ""
 
     # Push Notifications
     EXPO_PUSH_API_URL: str = "https://exp.host/--/api/v2/push/send"
@@ -78,12 +93,36 @@ class Settings(BaseSettings):
 
     # SaaS Billing
     FRONTEND_URL: str = "http://localhost:3000"
+    # URL pública HTTPS usada para webhooks y return URLs de proveedores de pago.
+    # En producción debe ser la URL real. En dev, usar un túnel HTTPS (ej. Cloudflare).
+    PUBLIC_APP_URL: str = ""  # Si vacío, cae en FRONTEND_URL
     SAAS_TRIAL_DAYS: int = 14
     SAAS_CURRENCY: str = "CLP"
     SAAS_MONTHLY_PRICE: int = 34990
     SAAS_ANNUAL_PRICE: int = 349900
     STRIPE_SAAS_MONTHLY_PRICE_ID: str = ""
     STRIPE_SAAS_ANNUAL_PRICE_ID: str = ""
+
+    # Observability
+    SENTRY_DSN: str = ""
+
+    @model_validator(mode="after")
+    def _block_insecure_defaults_in_production(self) -> "Settings":
+        if self.APP_ENV != "production":
+            return self
+        insecure = []
+        if self.SECRET_KEY in _INSECURE_DEFAULTS:
+            insecure.append("SECRET_KEY")
+        if self.JWT_SECRET_KEY in _INSECURE_DEFAULTS:
+            insecure.append("JWT_SECRET_KEY")
+        if self.SUPERADMIN_PASSWORD in _INSECURE_DEFAULTS:
+            insecure.append("SUPERADMIN_PASSWORD")
+        if insecure:
+            raise ValueError(
+                f"Insecure default values detected in production for: {', '.join(insecure)}. "
+                "Set proper values in your .env file."
+            )
+        return self
 
 
 @lru_cache

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@/types';
+import { queryClient } from '@/lib/queryClient';
 
 interface AuthState {
   user: User | null;
@@ -21,16 +22,21 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       isAuthenticated: false,
 
-      setAuth: (user, accessToken, refreshToken) =>
-        set({ user, accessToken, refreshToken, isAuthenticated: true }),
+      setAuth: (user, accessToken, refreshToken) => {
+        // Limpiar caché de datos del usuario anterior antes de guardar el nuevo
+        queryClient.clear();
+        set({ user, accessToken, refreshToken, isAuthenticated: true });
+      },
 
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
 
       setUser: (user) => set({ user }),
 
-      logout: () =>
-        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
+      logout: () => {
+        queryClient.clear();
+        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
+      },
     }),
     {
       name: 'nexo-auth',

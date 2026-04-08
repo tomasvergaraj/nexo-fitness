@@ -10,7 +10,11 @@ celery = Celery(
     "nexo_fitness",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.tasks.campaigns", "app.tasks.push_receipts"],
+    include=[
+        "app.tasks.campaigns",
+        "app.tasks.push_receipts",
+        "app.tasks.trial_warnings",
+    ],
 )
 
 celery.conf.update(
@@ -27,6 +31,11 @@ celery.conf.update(
         "refresh-pending-push-receipts": {
             "task": "app.tasks.push_receipts.refresh_pending_push_receipts",
             "schedule": settings.EXPO_PUSH_RECEIPT_POLL_INTERVAL_SECONDS,
-        }
+        },
+        # Avisos de trial: una vez al día a las 9am UTC (≈ 6am Chile)
+        "send-trial-warning-emails": {
+            "task": "app.tasks.trial_warnings.send_trial_warning_emails",
+            "schedule": 86400,  # cada 24 horas
+        },
     },
 )

@@ -2,11 +2,16 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { CalendarDays, Dumbbell, Plus, Repeat2, Users } from 'lucide-react';
+import { CalendarDays, Dumbbell, Plus, Repeat2, Users, X } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import { programsApi } from '@/services/api';
+import { programsApi, staffApi } from '@/services/api';
+import { getApiError } from '@/utils';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import type { PaginatedResponse, TrainingProgram } from '@/types';
+
+const WEEK_DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+type ScheduleDay = { day: string; focus: string };
 
 type ProgramForm = {
   id?: string;
@@ -15,7 +20,7 @@ type ProgramForm = {
   trainer_id: string;
   program_type: string;
   duration_weeks: string;
-  schedule: string;
+  schedule: ScheduleDay[];
   is_active: boolean;
 };
 
@@ -25,12 +30,17 @@ const emptyForm: ProgramForm = {
   trainer_id: '',
   program_type: 'fuerza',
   duration_weeks: '4',
-  schedule: '[{"day":"Lunes","focus":"Piernas"},{"day":"Miercoles","focus":"Torso"}]',
+  schedule: [
+    { day: 'Lunes', focus: '' },
+    { day: 'Miércoles', focus: '' },
+    { day: 'Viernes', focus: '' },
+  ],
   is_active: true,
 };
 
 function toForm(program?: TrainingProgram): ProgramForm {
   if (!program) return emptyForm;
+  const rawSchedule = Array.isArray(program.schedule) ? program.schedule as ScheduleDay[] : [];
   return {
     id: program.id,
     name: program.name,
@@ -38,9 +48,86 @@ function toForm(program?: TrainingProgram): ProgramForm {
     trainer_id: program.trainer_id ?? '',
     program_type: program.program_type ?? '',
     duration_weeks: program.duration_weeks ? String(program.duration_weeks) : '',
-    schedule: JSON.stringify(program.schedule, null, 2),
+    schedule: rawSchedule.length ? rawSchedule : emptyForm.schedule,
     is_active: program.is_active,
   };
+}
+
+function ScheduleBuilder({
+  value,
+  onChange,
+}: {
+  value: ScheduleDay[];
+  onChange: (schedule: ScheduleDay[]) => void;
+}) {
+  const activeDays = new Set(value.map((item) => item.day));
+
+  function toggleDay(day: string) {
+    if (activeDays.has(day)) {
+      onChange(value.filter((item) => item.day !== day));
+    } else {
+      const newItem = { day, focus: '' };
+      // Insert in week order
+      const ordered = WEEK_DAYS.filter(
+        (d) => d === day || activeDays.has(d)
+      ).map((d) => value.find((item) => item.day === d) ?? newItem);
+      onChange(ordered);
+    }
+  }
+
+  function updateFocus(day: string, focus: string) {
+    onChange(value.map((item) => (item.day === day ? { ...item, focus } : item)));
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {WEEK_DAYS.map((day) => (
+          <button
+            key={day}
+            type="button"
+            onClick={() => toggleDay(day)}
+            className={`rounded-xl border px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeDays.has(day)
+                ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-950/40 dark:text-brand-300'
+                : 'border-surface-200 bg-white text-surface-500 hover:border-surface-300 dark:border-surface-700 dark:bg-surface-900 dark:text-surface-400'
+            }`}
+          >
+            {day.slice(0, 3)}
+          </button>
+        ))}
+      </div>
+
+      {value.length > 0 && (
+        <div className="space-y-2">
+          {value.map((item) => (
+            <div key={item.day} className="flex items-center gap-2">
+              <span className="w-20 shrink-0 text-sm font-medium text-surface-600 dark:text-surface-400">
+                {item.day}
+              </span>
+              <input
+                className="input flex-1"
+                placeholder="Ej: Piernas, Cardio, Descanso activo..."
+                value={item.focus}
+                onChange={(e) => updateFocus(item.day, e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => toggleDay(item.day)}
+                className="shrink-0 rounded-lg p-1.5 text-surface-400 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/30"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {value.length === 0 && (
+        <p className="text-sm text-surface-400">Selecciona los días de entrenamiento arriba.</p>
+      )}
+    </div>
+  );
 }
 
 export default function ProgramsPage() {
@@ -56,6 +143,17 @@ export default function ProgramsPage() {
     },
   });
 
+  const { data: staffList = [] } = useQuery({
+    queryKey: ['staff'],
+    queryFn: async () => {
+      const response = await staffApi.list();
+      return response.data;
+    },
+    enabled: showModal,
+  });
+
+  const trainers = staffList.filter((s) => s.role === 'trainer' || s.role === 'admin' || s.role === 'owner');
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -64,7 +162,7 @@ export default function ProgramsPage() {
         trainer_id: form.trainer_id || null,
         program_type: form.program_type || null,
         duration_weeks: form.duration_weeks ? Number(form.duration_weeks) : null,
-        schedule: form.schedule.trim() ? JSON.parse(form.schedule) : [],
+        schedule: form.schedule,
         is_active: form.is_active,
       };
 
@@ -82,8 +180,8 @@ export default function ProgramsPage() {
       setForm(emptyForm);
       queryClient.invalidateQueries({ queryKey: ['programs'] });
     },
-    onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo guardar el programa');
+    onError: (error: unknown) => {
+      toast.error(getApiError(error, 'No se pudo guardar el programa'));
     },
   });
 
@@ -96,7 +194,7 @@ export default function ProgramsPage() {
       <motion.div variants={fadeInUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Programas</h1>
-          <p className="mt-1 text-sm text-surface-500">Planes de entrenamiento persistentes, conectados al backend</p>
+          <p className="mt-1 text-sm text-surface-500">Planes de entrenamiento persistentes para tus miembros</p>
         </div>
         <button
           type="button"
@@ -127,7 +225,7 @@ export default function ProgramsPage() {
           <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{totalWeeks}</p>
         </div>
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <p className="text-sm text-surface-500">Total catalogo</p>
+          <p className="text-sm text-surface-500">Total catálogo</p>
           <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{programs.length}</p>
         </div>
       </div>
@@ -156,11 +254,11 @@ export default function ProgramsPage() {
             </div>
 
             <h2 className="mt-5 text-xl font-semibold font-display text-surface-900 dark:text-white">{program.name}</h2>
-            <p className="mt-2 text-sm leading-6 text-surface-500">{program.description || 'Sin descripcion todavia.'}</p>
+            <p className="mt-2 text-sm leading-6 text-surface-500">{program.description || 'Sin descripción todavía.'}</p>
 
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-2xl bg-surface-50 px-4 py-3 dark:bg-surface-950/60">
-                <div className="flex items-center gap-2 text-surface-500"><CalendarDays size={15} /> Duracion</div>
+                <div className="flex items-center gap-2 text-surface-500"><CalendarDays size={15} /> Duración</div>
                 <p className="mt-2 font-semibold text-surface-900 dark:text-white">{program.duration_weeks ?? 0} semanas</p>
               </div>
               <div className="rounded-2xl bg-surface-50 px-4 py-3 dark:bg-surface-950/60">
@@ -174,7 +272,7 @@ export default function ProgramsPage() {
                 <Users size={15} />
                 Trainer asignado
               </div>
-              <p className="mt-2 text-sm font-medium text-surface-900 dark:text-white">{program.trainer_name || 'Pendiente'}</p>
+              <p className="mt-2 text-sm font-medium text-surface-900 dark:text-white">{program.trainer_name || 'Sin asignar'}</p>
             </div>
           </motion.button>
         ))}
@@ -183,7 +281,7 @@ export default function ProgramsPage() {
       <Modal
         open={showModal}
         title={form.id ? 'Editar programa' : 'Nuevo programa'}
-        description="La grilla semanal se guarda como JSON para dejar lista la evolucion del modulo."
+        description="Configura los datos del programa y su horario semanal de entrenamiento."
         onClose={() => {
           if (!saveMutation.isPending) {
             setShowModal(false);
@@ -191,7 +289,7 @@ export default function ProgramsPage() {
         }}
       >
         <form
-          className="space-y-4"
+          className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
             saveMutation.mutate();
@@ -203,30 +301,56 @@ export default function ProgramsPage() {
               <input className="input" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
             </div>
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Tipo</label>
-              <input className="input" value={form.program_type} onChange={(event) => setForm((current) => ({ ...current, program_type: event.target.value }))} />
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Tipo de programa</label>
+              <select className="input" value={form.program_type} onChange={(event) => setForm((current) => ({ ...current, program_type: event.target.value }))}>
+                <option value="fuerza">Fuerza</option>
+                <option value="cardio">Cardio</option>
+                <option value="funcional">Funcional</option>
+                <option value="hiit">HIIT</option>
+                <option value="yoga">Yoga / Flexibilidad</option>
+                <option value="perdida_peso">Pérdida de peso</option>
+                <option value="ganancia_muscular">Ganancia muscular</option>
+                <option value="general">General</option>
+              </select>
             </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Trainer ID</label>
-              <input className="input" value={form.trainer_id} onChange={(event) => setForm((current) => ({ ...current, trainer_id: event.target.value }))} placeholder="UUID del trainer" />
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Trainer responsable</label>
+              <select
+                className="input"
+                value={form.trainer_id}
+                onChange={(event) => setForm((current) => ({ ...current, trainer_id: event.target.value }))}
+              >
+                <option value="">Sin asignar</option>
+                {trainers.map((trainer) => (
+                  <option key={trainer.id} value={trainer.id}>
+                    {trainer.full_name} ({trainer.role})
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duracion (semanas)</label>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duración (semanas)</label>
               <input type="number" min="1" className="input" value={form.duration_weeks} onChange={(event) => setForm((current) => ({ ...current, duration_weeks: event.target.value }))} />
             </div>
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Descripcion</label>
-            <textarea className="input min-h-24 resize-y" value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} />
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Descripción</label>
+            <textarea className="input min-h-20 resize-y" value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder="Describe el objetivo y características del programa..." />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Schedule JSON</label>
-            <textarea className="input min-h-40 resize-y font-mono text-xs" value={form.schedule} onChange={(event) => setForm((current) => ({ ...current, schedule: event.target.value }))} />
+            <label className="mb-3 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Horario semanal
+              <span className="ml-2 text-xs font-normal text-surface-400">Selecciona los días y especifica el enfoque de cada sesión</span>
+            </label>
+            <ScheduleBuilder
+              value={form.schedule}
+              onChange={(schedule) => setForm((current) => ({ ...current, schedule }))}
+            />
           </div>
 
           <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">

@@ -58,6 +58,7 @@ class PaymentStatus(str, enum.Enum):
 class PaymentMethod(str, enum.Enum):
     STRIPE = "stripe"
     MERCADOPAGO = "mercadopago"
+    FINTOC = "fintoc"
     CASH = "cash"
     TRANSFER = "transfer"
     OTHER = "other"

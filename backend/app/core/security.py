@@ -70,6 +70,12 @@ def create_refresh_token(subject: str, tenant_id: Optional[str] = None) -> str:
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
+def create_password_reset_token(user_id: str) -> str:
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    payload = {"sub": user_id, "exp": expires, "type": "password_reset"}
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> dict[str, Any]:
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])

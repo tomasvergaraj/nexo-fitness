@@ -1,10 +1,10 @@
 """Service layer for public SaaS signup, billing state, and Stripe activation."""
 
 import json
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
+from urllib.parse import urlencode
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.integrations.payments.stripe_service import stripe_service
+from app.integrations.payments.fintoc_service import fintoc_service
 from app.models.tenant import LicenseType, Tenant, TenantStatus
 from app.models.user import UserRole
 from app.schemas.auth import TenantResponse, UserResponse
@@ -23,6 +24,7 @@ from app.schemas.billing import (
     SaaSPlanResponse,
 )
 from app.services.auth_service import AuthService
+from app.services.tenant_access_service import TenantAccessState, evaluate_tenant_access
 from app.services.saas_plan_service import (
     SaaSPlanDefinition,
     create_admin_saas_plan,
@@ -35,14 +37,6 @@ from app.services.saas_plan_service import (
 )
 
 settings = get_settings()
-
-
-@dataclass(frozen=True)
-class TenantAccessState:
-    allow_access: bool
-    detail: Optional[str] = None
-    status_to_apply: Optional[TenantStatus] = None
-    deactivate: bool = False
 
 
 def get_tenant_feature_flags(tenant: Tenant) -> dict[str, Any]:
@@ -107,8 +101,8 @@ def get_effective_plan_for_tenant(tenant: Tenant) -> SaaSPlanDefinition:
     trial_days_raw = feature_flags.get("trial_days", 0)
     max_members_raw = feature_flags.get("max_members", tenant.max_members or 500)
     max_branches_raw = feature_flags.get("max_branches", tenant.max_branches or 3)
-    checkout_enabled = bool(feature_flags.get("checkout_enabled"))
     fallback_plan = next((plan for plan in get_public_saas_plans() if plan.key == resolved_key), None)
+    checkout_enabled = bool(feature_flags.get("checkout_enabled")) or bool(fallback_plan and fallback_plan.checkout_enabled)
 
     if fallback_plan and "saas_plan_name" not in feature_flags:
         return SaaSPlanDefinition(
@@ -139,7 +133,7 @@ def get_effective_plan_for_tenant(tenant: Tenant) -> SaaSPlanDefinition:
         max_members=_coerce_int(max_members_raw, 500),
         max_branches=_coerce_int(max_branches_raw, 3),
         features=tuple(str(feature) for feature in feature_list),
-        stripe_price_id="snapshot-enabled" if checkout_enabled else "",
+        stripe_price_id=fallback_plan.stripe_price_id if checkout_enabled and fallback_plan else "",
         highlighted=False,
     )
 
@@ -185,34 +179,6 @@ def suspend_tenant_subscription(tenant: Tenant, *, status: TenantStatus = Tenant
     tenant.status = status
     tenant.is_active = False
     set_tenant_feature_flags(tenant, {"billing_status": status.value})
-
-
-def evaluate_tenant_access(tenant: Tenant, *, now: Optional[datetime] = None) -> TenantAccessState:
-    current_time = now or datetime.now(timezone.utc)
-
-    if tenant.status == TenantStatus.TRIAL and tenant.trial_ends_at and tenant.trial_ends_at <= current_time:
-        return TenantAccessState(
-            allow_access=False,
-            detail="Your trial has expired. Complete your subscription to continue using NexoFitness.",
-            status_to_apply=TenantStatus.EXPIRED,
-            deactivate=True,
-        )
-
-    if tenant.status == TenantStatus.ACTIVE and tenant.license_expires_at and tenant.license_expires_at <= current_time:
-        return TenantAccessState(
-            allow_access=False,
-            detail="Your subscription has expired. Renew your plan to regain access.",
-            status_to_apply=TenantStatus.EXPIRED,
-            deactivate=True,
-        )
-
-    if tenant.status in {TenantStatus.SUSPENDED, TenantStatus.EXPIRED, TenantStatus.CANCELLED} or not tenant.is_active:
-        return TenantAccessState(
-            allow_access=False,
-            detail="This tenant is not active. Check your billing status or contact support.",
-        )
-
-    return TenantAccessState(allow_access=True)
 
 
 def _stripe_value(data: Any, key: str, default: Any = None) -> Any:
@@ -304,6 +270,8 @@ class BillingService:
 
         checkout_url: Optional[str] = None
         checkout_session_id: Optional[str] = None
+        checkout_provider: Optional[str] = None
+        widget_token: Optional[str] = None
         next_action = "start_trial" if tenant_status == TenantStatus.TRIAL else "activate_access"
         message = (
             "Tu cuenta quedo creada con trial activo."
@@ -312,35 +280,60 @@ class BillingService:
         )
 
         if plan.checkout_enabled:
-            success_url = data.success_url or f"{settings.FRONTEND_URL.rstrip('/')}/dashboard?billing=success"
-            cancel_url = data.cancel_url or f"{settings.FRONTEND_URL.rstrip('/')}/dashboard?billing=cancelled"
-            customer_id = await stripe_service.create_customer(
-                email=owner.email,
-                name=owner.full_name,
-                metadata={
-                    "tenant_id": str(tenant.id),
-                    "tenant_slug": tenant.slug,
-                    "owner_user_id": str(owner.id),
-                    "saas_plan_key": plan.key,
-                },
-            )
-            checkout = await stripe_service.create_checkout_session(
-                price_id=plan.stripe_price_id,
-                customer_id=customer_id,
-                success_url=success_url,
-                cancel_url=cancel_url,
-                metadata={
-                    "tenant_id": str(tenant.id),
-                    "tenant_slug": tenant.slug,
-                    "owner_user_id": str(owner.id),
-                    "saas_plan_key": plan.key,
-                },
-            )
-            tenant.stripe_customer_id = customer_id
-            checkout_url = checkout["url"]
-            checkout_session_id = checkout["session_id"]
-            next_action = "redirect_to_checkout"
-            message = "Tu trial ya esta listo y te estamos enviando al checkout para activar la suscripcion."
+            # Siempre usar la URL pública HTTPS para los return URLs de pago
+            base_public = settings.public_app_url
+            success_url = data.success_url or f"{base_public}/login?{urlencode({'billing': 'success', 'email': owner.email, 'tenant': tenant.slug})}"
+            cancel_url = data.cancel_url or f"{base_public}/login?{urlencode({'billing': 'cancelled', 'email': owner.email, 'tenant': tenant.slug})}"
+            checkout_provider = plan.checkout_provider
+
+            if checkout_provider == "fintoc":
+                # Fintoc: crear checkout session hosted con redirect
+                session = await fintoc_service.create_checkout_session(
+                    amount=int(plan.price),
+                    currency=plan.currency or "CLP",
+                    customer_name=owner.full_name,
+                    customer_email=owner.email,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    metadata={
+                        "tenant_id": str(tenant.id),
+                        "tenant_slug": tenant.slug,
+                        "owner_user_id": str(owner.id),
+                        "saas_plan_key": plan.key,
+                    },
+                )
+                checkout_url = session.get("redirect_url")
+                next_action = "redirect_to_checkout"
+                message = "Tu cuenta esta lista. Completa el pago para activar tu suscripcion."
+            else:
+                # Stripe: crear checkout session y redirigir
+                customer_id = await stripe_service.create_customer(
+                    email=owner.email,
+                    name=owner.full_name,
+                    metadata={
+                        "tenant_id": str(tenant.id),
+                        "tenant_slug": tenant.slug,
+                        "owner_user_id": str(owner.id),
+                        "saas_plan_key": plan.key,
+                    },
+                )
+                checkout = await stripe_service.create_checkout_session(
+                    price_id=plan.stripe_price_id,
+                    customer_id=customer_id,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    metadata={
+                        "tenant_id": str(tenant.id),
+                        "tenant_slug": tenant.slug,
+                        "owner_user_id": str(owner.id),
+                        "saas_plan_key": plan.key,
+                    },
+                )
+                tenant.stripe_customer_id = customer_id
+                checkout_url = checkout["url"]
+                checkout_session_id = checkout["session_id"]
+                next_action = "redirect_to_checkout"
+                message = "Tu trial ya esta listo y te estamos enviando al checkout para activar la suscripcion."
 
         return {
             "tenant": TenantResponse.model_validate(tenant),
@@ -348,9 +341,11 @@ class BillingService:
             **tokens,
             "plan": plan.to_schema(),
             "billing_status": tenant.status.value,
-            "checkout_required": bool(checkout_url),
+            "checkout_required": bool(checkout_url or widget_token),
             "checkout_url": checkout_url,
             "checkout_session_id": checkout_session_id,
+            "checkout_provider": checkout_provider,
+            "widget_token": widget_token,
             "next_action": next_action,
             "message": message,
         }

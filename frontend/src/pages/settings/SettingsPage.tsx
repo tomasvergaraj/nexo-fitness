@@ -4,9 +4,18 @@ import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { CreditCard, Globe, Palette, Shield, Store } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import LogoUploader from '@/components/ui/LogoUploader';
 import { paymentProviderApi, settingsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import type { PaymentProviderAccount, TenantSettings } from '@/types';
+import {
+  DEFAULT_PRIMARY_COLOR,
+  DEFAULT_SECONDARY_COLOR,
+  buildTenantStorefrontUrl,
+  getApiError,
+  normalizeCustomDomain,
+  normalizeHexColor,
+} from '@/utils';
 
 type SettingsForm = Omit<TenantSettings, 'branding'>;
 type AccountForm = {
@@ -58,7 +67,15 @@ export default function SettingsPage() {
 
   const settingsMutation = useMutation({
     mutationFn: async () => {
-      const response = await settingsApi.update(form ?? {});
+      if (!form) return;
+      const { slug: _slug, ...payload } = form;
+      const nextPrimaryColor = normalizeHexColor(payload.primary_color);
+      const nextSecondaryColor = normalizeHexColor(payload.secondary_color);
+      const response = await settingsApi.update({
+        ...payload,
+        primary_color: payload.primary_color?.trim() ? (nextPrimaryColor ?? payload.primary_color) : DEFAULT_PRIMARY_COLOR,
+        secondary_color: payload.secondary_color?.trim() ? (nextSecondaryColor ?? payload.secondary_color) : DEFAULT_SECONDARY_COLOR,
+      });
       return response.data;
     },
     onSuccess: () => {
@@ -67,7 +84,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['tenant-public-profile'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo guardar la configuracion');
+      toast.error(getApiError(error, 'No se pudo guardar la configuracion'));
     },
   });
 
@@ -88,13 +105,18 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['payment-provider-accounts'] });
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo guardar la cuenta de pago');
+      toast.error(getApiError(error, 'No se pudo guardar la cuenta de pago'));
     },
   });
 
   if (isLoading || !form) {
     return <div className="shimmer h-[420px] rounded-3xl" />;
   }
+
+  const normalizedCustomDomain = normalizeCustomDomain(form.custom_domain);
+  const storefrontUrl = buildTenantStorefrontUrl(form.slug, form.custom_domain);
+  const primaryPreview = normalizeHexColor(form.primary_color, DEFAULT_PRIMARY_COLOR) ?? DEFAULT_PRIMARY_COLOR;
+  const secondaryPreview = normalizeHexColor(form.secondary_color, DEFAULT_SECONDARY_COLOR) ?? DEFAULT_SECONDARY_COLOR;
 
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
@@ -139,17 +161,119 @@ export default function SettingsPage() {
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-50 text-brand-500 dark:bg-brand-950/40"><Palette size={20} /></div>
               <div>
                 <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Branding y storefront</h2>
-                <p className="text-sm text-surface-500">Color, logo y copy comercial para la venta online del gym</p>
+                <p className="text-sm text-surface-500">Color, logo y texto comercial para tu pagina publica</p>
               </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <input className="input" value={form.primary_color ?? ''} onChange={(event) => setForm((current) => current ? { ...current, primary_color: event.target.value } : current)} placeholder="#06b6d4" />
-              <input className="input" value={form.logo_url ?? ''} onChange={(event) => setForm((current) => current ? { ...current, logo_url: event.target.value } : current)} placeholder="https://..." />
-              <input className="input" value={form.custom_domain ?? ''} onChange={(event) => setForm((current) => current ? { ...current, custom_domain: event.target.value } : current)} placeholder="midominio.cl" />
-              <input className="input" value={form.support_phone ?? ''} onChange={(event) => setForm((current) => current ? { ...current, support_phone: event.target.value } : current)} placeholder="Telefono soporte" />
-              <input className="input sm:col-span-2" value={form.marketplace_headline ?? ''} onChange={(event) => setForm((current) => current ? { ...current, marketplace_headline: event.target.value } : current)} placeholder="Titular comercial del storefront" />
-              <textarea className="input sm:col-span-2 min-h-28 resize-y" value={form.marketplace_description ?? ''} onChange={(event) => setForm((current) => current ? { ...current, marketplace_description: event.target.value } : current)} placeholder="Descripcion publica del gimnasio" />
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color principal</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={primaryPreview}
+                    onChange={(event) => setForm((current) => current ? { ...current, primary_color: event.target.value } : current)}
+                    className="h-10 w-12 cursor-pointer rounded-xl border border-surface-200 bg-white p-1 dark:border-surface-700 dark:bg-surface-900"
+                  />
+                  <input
+                    className="input flex-1"
+                    value={form.primary_color ?? ''}
+                    onChange={(event) => setForm((current) => current ? { ...current, primary_color: event.target.value } : current)}
+                    placeholder={DEFAULT_PRIMARY_COLOR}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color secundario</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={secondaryPreview}
+                    onChange={(event) => setForm((current) => current ? { ...current, secondary_color: event.target.value } : current)}
+                    className="h-10 w-12 cursor-pointer rounded-xl border border-surface-200 bg-white p-1 dark:border-surface-700 dark:bg-surface-900"
+                  />
+                  <input
+                    className="input flex-1"
+                    value={form.secondary_color ?? ''}
+                    onChange={(event) => setForm((current) => current ? { ...current, secondary_color: event.target.value } : current)}
+                    placeholder={DEFAULT_SECONDARY_COLOR}
+                  />
+                </div>
+              </div>
+
+              <div className="sm:col-span-2 rounded-2xl border border-surface-200/70 bg-surface-50/80 p-4 dark:border-surface-800/70 dark:bg-surface-950/30">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Preview de marca</p>
+                <div className="mt-3 flex items-center gap-4">
+                  <div
+                    className="h-16 w-16 rounded-2xl shadow-lg shadow-surface-900/10"
+                    style={{ backgroundImage: `linear-gradient(135deg, ${primaryPreview}, ${secondaryPreview})` }}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-base font-semibold text-surface-900 dark:text-white">{form.gym_name}</p>
+                    <p className="mt-1 text-sm text-surface-500">
+                      Estos dos colores se aplican en el storefront y en la PWA de miembros.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Logo del gimnasio</label>
+                <LogoUploader
+                  currentUrl={form.logo_url}
+                  onUploaded={(url) => setForm((current) => current ? { ...current, logo_url: url } : current)}
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Dominio personalizado</label>
+                <input className="input" value={form.custom_domain ?? ''} onChange={(event) => setForm((current) => current ? { ...current, custom_domain: event.target.value } : current)} placeholder="midominio.cl (opcional)" />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Telefono de soporte</label>
+                <input className="input" value={form.support_phone ?? ''} onChange={(event) => setForm((current) => current ? { ...current, support_phone: event.target.value } : current)} placeholder="+56 9 1234 5678" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Titulo del storefront</label>
+                <input className="input" value={form.marketplace_headline ?? ''} onChange={(event) => setForm((current) => current ? { ...current, marketplace_headline: event.target.value } : current)} placeholder="Ej: El mejor gimnasio de Santiago" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Descripcion publica</label>
+                <textarea className="input min-h-28 resize-y" value={form.marketplace_description ?? ''} onChange={(event) => setForm((current) => current ? { ...current, marketplace_description: event.target.value } : current)} placeholder="Describe tu gimnasio: instalaciones, horarios, especialidades..." />
+              </div>
+            </div>
+
+            {/* Storefront URL — uses tenant.slug, not custom_domain */}
+            <div
+              className="mt-5 rounded-2xl border px-4 py-3"
+              style={{
+                borderColor: `${primaryPreview}33`,
+                backgroundImage: `linear-gradient(135deg, ${primaryPreview}12, ${secondaryPreview}14)`,
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <Globe size={16} className="shrink-0" style={{ color: primaryPreview }} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-surface-700 dark:text-surface-300">URL de tu pagina publica</p>
+                  <p className="mt-0.5 truncate font-mono text-sm" style={{ color: primaryPreview }}>
+                    {storefrontUrl}
+                  </p>
+                </div>
+                <a
+                  href={storefrontUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary shrink-0 text-sm"
+                >
+                  Ver
+                </a>
+              </div>
+              <p className="mt-2 text-xs text-surface-500">
+                {normalizedCustomDomain
+                  ? 'Tu dominio personalizado sera la URL principal del storefront en la raiz del dominio y se valida contra conflictos con otros tenants.'
+                  : 'Mientras no configures un dominio personalizado, este enlace publico seguira usando la ruta /store/:slug del tenant.'}
+              </p>
             </div>
           </motion.div>
 
@@ -234,11 +358,16 @@ export default function SettingsPage() {
                 <p className="text-sm text-surface-500">Datos listos para storefront y links compartibles</p>
               </div>
             </div>
-            <div className="space-y-3 text-sm text-surface-500">
-              <p>Headline: {form.marketplace_headline || 'Sin definir'}</p>
-              <p>Support email: {form.support_email || 'Sin definir'}</p>
-              <p>API key publica: <span className="font-mono">{form.public_api_key || 'Sin definir'}</span></p>
-              <p>Checkout publico: {form.public_checkout_enabled ? 'Habilitado' : 'Deshabilitado'}</p>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-xl bg-surface-50 px-3 py-2 dark:bg-surface-950/40">
+                <p className="text-xs text-surface-400">URL del storefront</p>
+                <p className="mt-0.5 break-all font-mono font-medium text-brand-600 dark:text-brand-400">{storefrontUrl}</p>
+              </div>
+              <div className="space-y-2 text-surface-500">
+                <p>Dominio personalizado: {normalizedCustomDomain ?? 'Sin configurar'}</p>
+                <p>Checkout publico: {form.public_checkout_enabled ? 'Habilitado' : 'Deshabilitado'}</p>
+                <p>Soporte: {form.support_email || form.support_phone || 'Sin definir'}</p>
+              </div>
             </div>
           </motion.div>
         </div>
@@ -263,10 +392,11 @@ export default function SettingsPage() {
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <select className="input" value={accountForm.provider} onChange={(event) => setAccountForm((current) => ({ ...current, provider: event.target.value as AccountForm['provider'] }))}>
+              <option value="fintoc">Fintoc (transferencia bancaria)</option>
               <option value="webpay">Webpay</option>
               <option value="mercadopago">MercadoPago</option>
-              <option value="manual">Manual</option>
               <option value="stripe">Stripe</option>
+              <option value="manual">Manual</option>
             </select>
             <select className="input" value={accountForm.status} onChange={(event) => setAccountForm((current) => ({ ...current, status: event.target.value as AccountForm['status'] }))}>
               <option value="pending">pending</option>

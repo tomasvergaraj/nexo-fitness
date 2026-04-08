@@ -24,11 +24,13 @@ class SaaSPlanResponse(BaseModel):
     features: List[str]
     highlighted: bool = False
     checkout_enabled: bool = False
+    checkout_provider: Optional[str] = None
 
 
 class AdminSaaSPlanResponse(SaaSPlanResponse):
     id: UUID
     stripe_price_id: Optional[str] = None
+    fintoc_enabled: bool = False
     is_active: bool = True
     is_public: bool = True
     sort_order: int = 0
@@ -49,6 +51,7 @@ class AdminSaaSPlanCreateRequest(BaseModel):
     max_branches: int = Field(default=3, ge=1)
     features: List[str] = Field(default_factory=list)
     stripe_price_id: Optional[str] = None
+    fintoc_enabled: bool = False
     highlighted: bool = False
     is_active: bool = True
     is_public: bool = True
@@ -67,6 +70,7 @@ class AdminSaaSPlanUpdateRequest(BaseModel):
     max_branches: Optional[int] = Field(default=None, ge=1)
     features: Optional[List[str]] = None
     stripe_price_id: Optional[str] = None
+    fintoc_enabled: Optional[bool] = None
     highlighted: Optional[bool] = None
     is_active: Optional[bool] = None
     is_public: Optional[bool] = None
@@ -90,6 +94,8 @@ class SaaSSignupResponse(BaseModel):
     checkout_required: bool = False
     checkout_url: Optional[str] = None
     checkout_session_id: Optional[str] = None
+    checkout_provider: Optional[str] = None
+    widget_token: Optional[str] = None
     next_action: str
     message: str
 

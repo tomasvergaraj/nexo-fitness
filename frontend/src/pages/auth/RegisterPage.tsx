@@ -94,15 +94,13 @@ export default function RegisterPage() {
         ...form,
         license_type: activePlan.license_type,
         plan_key: activePlan.key,
-        success_url: `${window.location.origin}/dashboard?billing=success`,
-        cancel_url: `${window.location.origin}/dashboard?billing=cancelled`,
       });
       const data = response.data;
 
       setAuth(data.user, data.access_token, data.refresh_token);
 
-      if (data.checkout_url) {
-        toast.success('Cuenta creada. Te llevamos al checkout para activar la suscripcion.');
+      // Fintoc y Stripe usan redirect_to_checkout — llevar al checkout hosted
+      if (data.next_action === 'redirect_to_checkout' && data.checkout_url) {
         window.location.href = data.checkout_url;
         return;
       }
@@ -427,6 +425,18 @@ export default function RegisterPage() {
                     </>
                   )}
                 </motion.button>
+
+                <p className="mt-3 text-center text-xs text-surface-400">
+                  Al registrarte, aceptas nuestros{' '}
+                  <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-surface-600">
+                    Términos y Condiciones
+                  </a>{' '}
+                  y nuestra{' '}
+                  <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-surface-600">
+                    Política de Privacidad
+                  </a>
+                  .
+                </p>
               </div>
             </div>
           </motion.form>

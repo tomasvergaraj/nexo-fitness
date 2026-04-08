@@ -54,6 +54,7 @@ class Tenant(Base):
     # Branding (future)
     logo_url: Mapped[Optional[str]] = mapped_column(String(500))
     primary_color: Mapped[Optional[str]] = mapped_column(String(7), default="#06b6d4")
+    secondary_color: Mapped[Optional[str]] = mapped_column(String(7), default="#0f766e")
     custom_domain: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Feature flags

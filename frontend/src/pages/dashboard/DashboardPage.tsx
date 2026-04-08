@@ -7,10 +7,11 @@ import {
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
+import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
 import { dashboardApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
-import { formatCurrency, parseApiNumber } from '@/utils';
+import { formatCurrency, getApiError, parseApiNumber } from '@/utils';
 import type { DashboardMetrics } from '@/types';
 
 export default function DashboardPage() {
@@ -21,13 +22,18 @@ export default function DashboardPage() {
     return <Navigate to="/platform/tenants" replace />;
   }
 
-  const { data, isLoading, isError } = useQuery<DashboardMetrics>({
+  const { data, error, isLoading, isError } = useQuery<DashboardMetrics>({
     queryKey: ['dashboard-metrics'],
     queryFn: async () => {
       const response = await dashboardApi.getMetrics();
       return response.data;
     },
+    retry: false,
   });
+
+  const dashboardError = isError
+    ? getApiError(error, 'No pudimos cargar el dashboard. Revisa el backend o vuelve a iniciar sesión.')
+    : null;
 
   const revenueData = useMemo(() => ([
     { label: 'Hoy', value: parseApiNumber(data?.revenue_today) },
@@ -79,9 +85,11 @@ export default function DashboardPage() {
 
       {isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-          No pudimos cargar el dashboard. Revisa el backend o vuelve a iniciar sesión.
+          {dashboardError}
         </div>
       ) : null}
+
+      <OnboardingChecklist />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Ingresos del Día" value={parseApiNumber(data?.revenue_today)} icon={DollarSign} format="currency" color="brand" />

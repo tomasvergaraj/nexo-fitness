@@ -258,6 +258,7 @@ class ReportsOverviewResponse(BaseModel):
 class TenantBranding(BaseModel):
     logo_url: Optional[str] = None
     primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
     custom_domain: Optional[str] = None
     support_email: Optional[str] = None
     support_phone: Optional[str] = None
@@ -272,6 +273,7 @@ class TenantSettingsUpdateRequest(BaseModel):
     city: Optional[str] = None
     address: Optional[str] = None
     primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
     logo_url: Optional[str] = None
     custom_domain: Optional[str] = None
     billing_email: Optional[EmailStr] = None
@@ -288,12 +290,14 @@ class TenantSettingsUpdateRequest(BaseModel):
 
 
 class TenantSettingsResponse(BaseModel):
+    slug: str
     gym_name: str
     email: str
     phone: Optional[str] = None
     city: Optional[str] = None
     address: Optional[str] = None
     primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
     logo_url: Optional[str] = None
     custom_domain: Optional[str] = None
     billing_email: Optional[str] = None
@@ -311,7 +315,7 @@ class TenantSettingsResponse(BaseModel):
 
 
 class PaymentProviderAccountCreateRequest(BaseModel):
-    provider: str = Field(pattern=r"^(stripe|mercadopago|webpay|manual)$")
+    provider: str = Field(pattern=r"^(stripe|mercadopago|webpay|fintoc|manual)$")
     status: str = Field(default="pending", pattern=r"^(pending|connected|disabled)$")
     account_label: Optional[str] = None
     public_identifier: Optional[str] = None
@@ -375,6 +379,7 @@ class PublicCheckoutSessionResponse(BaseModel):
     payment_link_url: str
     qr_payload: str
     session_reference: str
+    widget_token: Optional[str] = None  # Fintoc: token para abrir el widget JS
 
 
 class PlatformLeadCreateRequest(BaseModel):

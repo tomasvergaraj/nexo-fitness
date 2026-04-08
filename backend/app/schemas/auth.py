@@ -19,6 +19,13 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: "UserResponse"
+    # Billing wall — populated when the tenant is expired/suspended
+    billing_status: Optional[str] = None
+    next_action: Optional[str] = None
+    checkout_url: Optional[str] = None
+    widget_token: Optional[str] = None
+    checkout_provider: Optional[str] = None
+    billing_detail: Optional[str] = None
 
 
 class RefreshRequest(BaseModel):
@@ -76,6 +83,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
     date_of_birth: Optional[date] = None
     gender: Optional[str] = None
@@ -85,6 +93,13 @@ class UserUpdate(BaseModel):
     tags: Optional[List[str]] = None
     internal_notes: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class UserSelfUpdate(BaseModel):
+    """Fields a member can update on their own profile."""
+    first_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    last_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    phone: Optional[str] = None
 
 
 class UserResponse(BaseModel):

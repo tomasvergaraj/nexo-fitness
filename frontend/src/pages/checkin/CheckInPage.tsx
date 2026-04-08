@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { UserCheck, Search, QrCode, Clock, CheckCircle2, Zap } from 'lucide-react';
 import { checkinsApi, clientsApi, dashboardApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
-import { cn, getInitials, formatRelative } from '@/utils';
+import { cn, getInitials, formatRelative , getApiError } from '@/utils';
 import type { DashboardMetrics, PaginatedResponse, User } from '@/types';
 
 type RecentCheckin = {
@@ -62,7 +62,7 @@ export default function CheckInPage() {
       window.setTimeout(() => setCheckedIn(null), 3000);
     },
     onError: (error: any) => {
-      toast.error(error?.response?.data?.detail || 'No se pudo registrar el check-in');
+      toast.error(getApiError(error, 'No se pudo registrar el check-in'));
     },
   });
 

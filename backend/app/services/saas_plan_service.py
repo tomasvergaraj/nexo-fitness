@@ -1,7 +1,7 @@
 """Catalog service for platform-level SaaS plans."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.integrations.payments.stripe_service import stripe_service
+from app.integrations.payments.fintoc_service import fintoc_service
 from app.models.platform import SaaSPlan
 from app.models.tenant import LicenseType
 from app.schemas.billing import (
@@ -38,6 +39,7 @@ class SaaSPlanDefinition:
     max_branches: int
     features: tuple[str, ...]
     stripe_price_id: str
+    fintoc_enabled: bool = False
     highlighted: bool = False
     is_active: bool = True
     is_public: bool = True
@@ -48,7 +50,18 @@ class SaaSPlanDefinition:
 
     @property
     def checkout_enabled(self) -> bool:
-        return bool(self.stripe_price_id and stripe_service.is_configured())
+        stripe_ok = bool(self.stripe_price_id and stripe_service.is_configured())
+        fintoc_ok = bool(self.fintoc_enabled and fintoc_service.is_configured())
+        return stripe_ok or fintoc_ok
+
+    @property
+    def checkout_provider(self) -> Optional[str]:
+        """Returns the active checkout provider for this plan, preferring Fintoc when both are set."""
+        if self.fintoc_enabled and fintoc_service.is_configured():
+            return "fintoc"
+        if self.stripe_price_id and stripe_service.is_configured():
+            return "stripe"
+        return None
 
     def to_schema(self) -> SaaSPlanResponse:
         return SaaSPlanResponse(
@@ -65,6 +78,7 @@ class SaaSPlanDefinition:
             features=list(self.features),
             highlighted=self.highlighted,
             checkout_enabled=self.checkout_enabled,
+            checkout_provider=self.checkout_provider,
         )
 
     def to_admin_schema(self) -> AdminSaaSPlanResponse:
@@ -83,7 +97,9 @@ class SaaSPlanDefinition:
             features=list(self.features),
             highlighted=self.highlighted,
             checkout_enabled=self.checkout_enabled,
+            checkout_provider=self.checkout_provider,
             stripe_price_id=self.stripe_price_id or None,
+            fintoc_enabled=self.fintoc_enabled,
             is_active=self.is_active,
             is_public=self.is_public,
             sort_order=self.sort_order,
@@ -195,6 +211,7 @@ def _coerce_decimal(value: object, default: str = "0") -> Decimal:
 
 
 def definition_from_record(record: SaaSPlan) -> SaaSPlanDefinition:
+    fallback_plan = next((plan for plan in default_saas_plan_definitions() if plan.key == record.key), None)
     return SaaSPlanDefinition(
         id=record.id,
         key=record.key,
@@ -208,7 +225,8 @@ def definition_from_record(record: SaaSPlan) -> SaaSPlanDefinition:
         max_members=record.max_members,
         max_branches=record.max_branches,
         features=tuple(parse_plan_features(record.features)),
-        stripe_price_id=record.stripe_price_id or "",
+        stripe_price_id=record.stripe_price_id or (fallback_plan.stripe_price_id if fallback_plan else ""),
+        fintoc_enabled=bool(getattr(record, "fintoc_enabled", False)),
         highlighted=record.highlighted,
         is_active=record.is_active,
         is_public=record.is_public,
@@ -319,6 +337,7 @@ async def create_admin_saas_plan(db: AsyncSession, data: AdminSaaSPlanCreateRequ
         max_branches=data.max_branches,
         features=serialize_plan_features(data.features),
         stripe_price_id=(data.stripe_price_id or "").strip() or None,
+        fintoc_enabled=data.fintoc_enabled,
         highlighted=data.highlighted,
         is_active=data.is_active,
         is_public=data.is_public,
@@ -357,6 +376,9 @@ async def update_admin_saas_plan(
         if key == "stripe_price_id":
             cleaned = str(value).strip() if value is not None else ""
             setattr(record, key, cleaned or None)
+            continue
+        if key == "fintoc_enabled":
+            setattr(record, key, bool(value))
             continue
         if key in {"name", "description"} and value is not None:
             setattr(record, key, str(value).strip())
