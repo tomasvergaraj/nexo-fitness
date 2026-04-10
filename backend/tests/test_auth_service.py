@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.exceptions import ActionRequiredError
 from app.models.tenant import LicenseType, Tenant, TenantStatus
 from app.models.user import User, UserRole
 from app.services.auth_service import AuthService
@@ -65,9 +66,10 @@ async def test_ensure_user_tenant_access_rejects_expired_trial() -> None:
     user = make_user(tenant.id)
     db = DummyDb(tenant)
 
-    with pytest.raises(PermissionError, match="trial has expired"):
+    with pytest.raises(ActionRequiredError, match="Tu período de prueba venció") as exc_info:
         await AuthService._ensure_user_tenant_access(db, user)
 
+    assert exc_info.value.billing_status == TenantStatus.EXPIRED.value
     assert tenant.status == TenantStatus.EXPIRED
     assert tenant.is_active is False
     assert db.flushed is True
