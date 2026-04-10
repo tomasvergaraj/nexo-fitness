@@ -1,7 +1,7 @@
 """create saas plans table
 
 Revision ID: 20260323_1000
-Revises:
+Revises: 20260322_1200
 Create Date: 2026-03-23 10:00:00
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "20260323_1000"
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = "20260322_1200"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
