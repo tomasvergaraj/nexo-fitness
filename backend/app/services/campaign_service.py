@@ -215,7 +215,7 @@ async def dispatch_campaign_broadcast(
 
         if not unique_user_ids:
             if not allow_empty:
-                raise ValueError("No recipients were resolved for this broadcast")
+                raise ValueError("No se encontraron destinatarios para este envío")
 
             if campaign:
                 mark_campaign_dispatch_succeeded(

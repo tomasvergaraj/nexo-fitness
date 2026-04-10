@@ -71,12 +71,12 @@ export default function PlatformLeadsPage() {
                   <span className="badge badge-neutral">{lead.request_type}</span>
                 </div>
                 <div className="mt-3 grid gap-2 text-sm text-surface-500 sm:grid-cols-2">
-                  <p><span className="font-medium text-surface-700 dark:text-surface-300">Owner:</span> {lead.owner_name}</p>
+                  <p><span className="font-medium text-surface-700 dark:text-surface-300">Propietario:</span> {lead.owner_name}</p>
                   <p><span className="font-medium text-surface-700 dark:text-surface-300">Email:</span> {lead.email}</p>
-                  <p><span className="font-medium text-surface-700 dark:text-surface-300">Telefono:</span> {lead.phone || 'Sin telefono'}</p>
+                  <p><span className="font-medium text-surface-700 dark:text-surface-300">Teléfono:</span> {lead.phone || 'Sin teléfono'}</p>
                   <p><span className="font-medium text-surface-700 dark:text-surface-300">Origen:</span> {lead.source}</p>
                 </div>
-                <p className="mt-3 text-sm text-surface-500">{lead.notes || 'Sin notas comerciales todavia.'}</p>
+                <p className="mt-3 text-sm text-surface-500">{lead.notes || 'Sin notas comerciales todavía.'}</p>
                 <p className="mt-2 text-xs text-surface-400">Creado: {formatDateTime(lead.created_at)}</p>
               </div>
 

@@ -36,6 +36,7 @@ export interface SaaSPlan {
   license_type: 'monthly' | 'annual' | 'perpetual';
   currency: string;
   price: number;
+  discount_pct?: number | null;
   billing_interval: 'month' | 'year' | 'manual';
   trial_days: number;
   max_members: number;
@@ -70,6 +71,7 @@ export interface AdminSaaSPlanCreateRequest {
   license_type: 'monthly' | 'annual' | 'perpetual';
   currency: string;
   price: number;
+  discount_pct?: number | null;
   billing_interval: 'month' | 'year' | 'manual';
   trial_days: number;
   max_members: number;
@@ -89,6 +91,7 @@ export interface AdminSaaSPlanUpdateRequest {
   license_type?: 'monthly' | 'annual' | 'perpetual';
   currency?: string;
   price?: number;
+  discount_pct?: number | null;
   billing_interval?: 'month' | 'year' | 'manual';
   trial_days?: number;
   max_members?: number;
@@ -167,6 +170,13 @@ export interface User {
   tags?: string;
   internal_notes?: string;
   last_login_at?: string;
+  // Membership summary (present when fetched from client list endpoint)
+  membership_id?: string;
+  membership_status?: string;
+  membership_expires_at?: string;
+  membership_notes?: string;
+  plan_name?: string;
+  churn_risk?: 'low' | 'medium' | 'high';
 }
 
 export type UserRole = 'superadmin' | 'owner' | 'admin' | 'reception' | 'trainer' | 'marketing' | 'client';
@@ -203,6 +213,7 @@ export interface Plan {
   name: string;
   description?: string;
   price: number;
+  discount_pct?: number | null;
   currency: string;
   duration_type: 'monthly' | 'annual' | 'perpetual' | 'custom';
   duration_days?: number;
@@ -223,6 +234,7 @@ export interface GymClass {
   modality: 'in_person' | 'online' | 'hybrid';
   status: 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
   instructor_id?: string;
+  instructor_name?: string;
   branch_id?: string;
   start_time: string;
   end_time: string;
@@ -250,6 +262,7 @@ export interface Reservation {
 export interface CheckIn {
   id: string;
   user_id: string;
+  user_name?: string;
   gym_class_id?: string;
   check_type: string;
   checked_in_at: string;
@@ -316,6 +329,42 @@ export interface CampaignOverview {
 }
 
 /* ─── Dashboard ──────────────────────────────────────────────── */
+
+export interface DayPanelClass {
+  id: string;
+  name: string;
+  class_type?: string;
+  start_time: string;
+  end_time: string;
+  instructor_name?: string;
+  current_bookings: number;
+  max_capacity: number;
+  status: string;
+}
+
+export interface DayPanelPayment {
+  id: string;
+  user_name?: string;
+  amount: number;
+  method: string;
+  paid_at?: string;
+  plan_name?: string;
+}
+
+export interface DayPanelBirthday {
+  id: string;
+  full_name: string;
+  email: string;
+}
+
+export interface DayPanel {
+  date: string;
+  classes: DayPanelClass[];
+  payments: DayPanelPayment[];
+  birthdays: DayPanelBirthday[];
+  checkins_count: number;
+  revenue_today: number;
+}
 
 export interface DashboardMetrics {
   revenue_today: number;
@@ -529,6 +578,7 @@ export interface TenantPublicProfile {
     duration_type: string;
     duration_days?: number;
     is_featured: boolean;
+    discount_pct?: number | null;
   }>;
   upcoming_classes: Array<{
     id: string;
@@ -584,6 +634,10 @@ export interface MobileWallet {
     modality: string;
   };
   qr_payload?: string;
+  max_reservations_per_week?: number | null;
+  max_reservations_per_month?: number | null;
+  weekly_reservations_used?: number | null;
+  monthly_reservations_used?: number | null;
 }
 
 export interface MobilePaymentHistoryItem {
@@ -600,6 +654,96 @@ export interface MobilePaymentHistoryItem {
   receipt_url?: string;
   external_id?: string;
   plan_name?: string;
+}
+
+/* ─── Progress / Body Measurements ──────────────────────────── */
+
+export interface BodyMeasurement {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  recorded_at: string;
+  weight_kg?: number | null;
+  body_fat_pct?: number | null;
+  muscle_mass_kg?: number | null;
+  chest_cm?: number | null;
+  waist_cm?: number | null;
+  hip_cm?: number | null;
+  arm_cm?: number | null;
+  thigh_cm?: number | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface PersonalRecord {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  exercise_name: string;
+  record_value: number;
+  unit: string;
+  recorded_at: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface ProgressPhoto {
+  id: string;
+  user_id: string;
+  tenant_id: string;
+  recorded_at: string;
+  photo_url: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+/* ─── Promo Codes ────────────────────────────────────────────── */
+
+export interface PromoCode {
+  id: string;
+  tenant_id: string;
+  code: string;
+  name: string;
+  description?: string;
+  discount_type: 'percent' | 'fixed';
+  discount_value: number;
+  max_uses?: number;
+  uses_count: number;
+  expires_at?: string;
+  is_active: boolean;
+  plan_ids?: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromoCodeValidateResponse {
+  valid: boolean;
+  reason?: string;
+  promo_code_id?: string;
+  discount_type?: 'percent' | 'fixed';
+  discount_value?: number;
+  discount_amount?: number;
+  final_price?: number;
+}
+
+/* ─── API Clients (OAuth) ────────────────────────────────────── */
+
+export type ApiClientScope = 'measurements:read' | 'measurements:write' | 'records:read' | 'records:write';
+
+export interface ApiClient {
+  id: string;
+  tenant_id: string;
+  name: string;
+  client_id: string;
+  scopes: ApiClientScope[];
+  rate_limit_per_minute: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiClientWithSecret extends ApiClient {
+  client_secret: string;
 }
 
 /* ─── Paginated ──────────────────────────────────────────────── */

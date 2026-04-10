@@ -130,8 +130,21 @@ class UserDetailResponse(UserResponse):
     model_config = {"from_attributes": True}
 
 
+class UserClientResponse(UserResponse):
+    """UserResponse enriched with the client's active membership summary."""
+    date_of_birth: Optional[date] = None
+    membership_id: Optional[UUID] = None
+    membership_status: Optional[str] = None
+    membership_expires_at: Optional[date] = None
+    membership_notes: Optional[str] = None
+    plan_name: Optional[str] = None
+    churn_risk: Optional[str] = None  # "low" | "medium" | "high"
+
+    model_config = {"from_attributes": True}
+
+
 class ClientListResponse(BaseModel):
-    items: List[UserResponse]
+    items: List[UserClientResponse]
     total: int
     page: int
     per_page: int

@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { CalendarDays, Dumbbell, Plus, Repeat2, Users, X } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { programsApi, staffApi } from '@/services/api';
-import { getApiError } from '@/utils';
+import { cn, getApiError } from '@/utils';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import type { PaginatedResponse, TrainingProgram } from '@/types';
 
@@ -24,22 +24,24 @@ type ProgramForm = {
   is_active: boolean;
 };
 
-const emptyForm: ProgramForm = {
-  name: '',
-  description: '',
-  trainer_id: '',
-  program_type: 'fuerza',
-  duration_weeks: '4',
-  schedule: [
-    { day: 'Lunes', focus: '' },
-    { day: 'Miércoles', focus: '' },
-    { day: 'Viernes', focus: '' },
-  ],
-  is_active: true,
-};
+function createEmptyForm(trainerId = ''): ProgramForm {
+  return {
+    name: '',
+    description: '',
+    trainer_id: trainerId,
+    program_type: 'fuerza',
+    duration_weeks: '4',
+    schedule: [
+      { day: 'Lunes', focus: '' },
+      { day: 'Miércoles', focus: '' },
+      { day: 'Viernes', focus: '' },
+    ],
+    is_active: true,
+  };
+}
 
 function toForm(program?: TrainingProgram): ProgramForm {
-  if (!program) return emptyForm;
+  if (!program) return createEmptyForm();
   const rawSchedule = Array.isArray(program.schedule) ? program.schedule as ScheduleDay[] : [];
   return {
     id: program.id,
@@ -48,7 +50,7 @@ function toForm(program?: TrainingProgram): ProgramForm {
     trainer_id: program.trainer_id ?? '',
     program_type: program.program_type ?? '',
     duration_weeks: program.duration_weeks ? String(program.duration_weeks) : '',
-    schedule: rawSchedule.length ? rawSchedule : emptyForm.schedule,
+    schedule: rawSchedule.length ? rawSchedule : createEmptyForm().schedule,
     is_active: program.is_active,
   };
 }
@@ -130,10 +132,57 @@ function ScheduleBuilder({
   );
 }
 
+function ProgramToggleCard({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (nextValue: boolean) => void;
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-2xl border px-4 py-4 transition-colors',
+        checked
+          ? 'border-emerald-300 bg-emerald-50/80 dark:border-emerald-800/50 dark:bg-emerald-950/20'
+          : 'border-surface-200 bg-white dark:border-surface-800 dark:bg-surface-950/20',
+      )}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-surface-900 dark:text-white">Programa activo</p>
+          <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
+            Si lo pausas, dejará de estar disponible hasta que vuelvas a activarlo.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          onClick={() => onChange(!checked)}
+          className={cn(
+            'relative inline-flex h-7 w-12 shrink-0 rounded-full border p-0.5 transition-all duration-200 focus:outline-none',
+            checked
+              ? 'border-emerald-400/60 bg-emerald-500'
+              : 'border-surface-300 bg-surface-200 dark:border-white/10 dark:bg-white/10',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute left-0.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform duration-200',
+              checked ? 'translate-x-5' : 'translate-x-0',
+            )}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ProgramsPage() {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState<ProgramForm>(emptyForm);
+  const [form, setForm] = useState<ProgramForm>(createEmptyForm());
 
   const { data, isLoading, isError } = useQuery<PaginatedResponse<TrainingProgram>>({
     queryKey: ['programs'],
@@ -153,6 +202,18 @@ export default function ProgramsPage() {
   });
 
   const trainers = staffList.filter((s) => s.role === 'trainer' || s.role === 'admin' || s.role === 'owner');
+  const defaultOwnerTrainerId = useMemo(
+    () => trainers.find((trainer) => trainer.role === 'owner')?.id ?? '',
+    [trainers],
+  );
+
+  useEffect(() => {
+    if (!showModal || form.id || form.trainer_id || !defaultOwnerTrainerId) {
+      return;
+    }
+
+    setForm((current) => ({ ...current, trainer_id: defaultOwnerTrainerId }));
+  }, [defaultOwnerTrainerId, form.id, form.trainer_id, showModal]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -177,7 +238,7 @@ export default function ProgramsPage() {
     onSuccess: () => {
       toast.success(form.id ? 'Programa actualizado' : 'Programa creado');
       setShowModal(false);
-      setForm(emptyForm);
+      setForm(createEmptyForm(defaultOwnerTrainerId));
       queryClient.invalidateQueries({ queryKey: ['programs'] });
     },
     onError: (error: unknown) => {
@@ -199,7 +260,7 @@ export default function ProgramsPage() {
         <button
           type="button"
           onClick={() => {
-            setForm(emptyForm);
+            setForm(createEmptyForm(defaultOwnerTrainerId));
             setShowModal(true);
           }}
           className="btn-primary"
@@ -353,10 +414,10 @@ export default function ProgramsPage() {
             />
           </div>
 
-          <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
-            <input type="checkbox" checked={form.is_active} onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))} />
-            <span className="text-sm text-surface-700 dark:text-surface-300">Programa activo</span>
-          </label>
+          <ProgramToggleCard
+            checked={form.is_active}
+            onChange={(nextValue) => setForm((current) => ({ ...current, is_active: nextValue }))}
+          />
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>

@@ -3,8 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, CalendarDays, Users, CreditCard,
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
-  ChevronLeft, ShieldCheck, WalletCards, Zap, CalendarCheck2,
+  ChevronLeft, ShieldCheck, WalletCards, CalendarCheck2, Tag,
 } from 'lucide-react';
+import NexoBrand from '@/components/branding/NexoBrand';
 import { cn } from '@/utils';
 import { useAuthStore } from '@/stores/authStore';
 import type { UserRole } from '@/types';
@@ -22,10 +23,11 @@ interface NavItemDef {
 }
 
 const tenantNavItems: NavItemDef[] = [
-  { label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
+  { label: 'Panel', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
   { label: 'Clases', path: '/classes', icon: <CalendarDays size={20} />, roles: ['owner', 'admin', 'reception', 'trainer'] },
   { label: 'Clientes', path: '/clients', icon: <Users size={20} />, roles: ['owner', 'admin', 'reception', 'trainer'] },
   { label: 'Planes', path: '/plans', icon: <CreditCard size={20} />, roles: ['owner', 'admin'] },
+  { label: 'Códigos Promo', path: '/promo-codes', icon: <Tag size={20} />, roles: ['owner', 'admin'] },
   { label: 'Check-in', path: '/checkin', icon: <UserCheck size={20} />, roles: ['owner', 'admin', 'reception'] },
   { label: 'Programas', path: '/programs', icon: <Dumbbell size={20} />, roles: ['owner', 'admin', 'trainer'] },
   { label: 'Marketing', path: '/marketing', icon: <Megaphone size={20} />, roles: ['owner', 'admin', 'marketing'] },
@@ -35,9 +37,9 @@ const tenantNavItems: NavItemDef[] = [
 ];
 
 const superadminNavItems: NavItemDef[] = [
-  { label: 'Tenants SaaS', path: '/platform/tenants', icon: <ShieldCheck size={20} />, roles: ['superadmin'] },
+  { label: 'Cuentas SaaS', path: '/platform/tenants', icon: <ShieldCheck size={20} />, roles: ['superadmin'] },
   { label: 'Planes SaaS', path: '/platform/plans', icon: <WalletCards size={20} />, roles: ['superadmin'] },
-  { label: 'Leads', path: '/platform/leads', icon: <CalendarCheck2 size={20} />, roles: ['superadmin'] },
+  { label: 'Oportunidades', path: '/platform/leads', icon: <CalendarCheck2 size={20} />, roles: ['superadmin'] },
 ];
 
 export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
@@ -81,22 +83,14 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
         {/* Brand Header */}
         <div className="flex items-center justify-between px-5 py-5 border-b border-surface-100 dark:border-surface-800/50">
           <NavLink to={homePath} className="flex items-center gap-2.5 group">
-            <motion.div
-              whileHover={{ rotate: [0, -10, 10, 0], scale: 1.05 }}
-              transition={{ duration: 0.5 }}
-              className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600
-                         flex items-center justify-center shadow-lg shadow-brand-500/30"
-            >
-              <Zap size={18} className="text-white" />
-            </motion.div>
-            <div>
-              <h1 className="text-base font-bold font-display text-surface-900 dark:text-white tracking-tight">
-                Nexo<span className="text-brand-500">Fitness</span>
-              </h1>
-              <p className="text-[10px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-widest">
-                Plataforma SaaS
-              </p>
-            </div>
+            <NexoBrand
+              iconSize={36}
+              iconClassName="shadow-lg shadow-brand-500/25"
+              titleClassName="text-base tracking-tight text-surface-900 dark:text-white"
+              accentClassName="text-brand-500"
+              subtitle="Plataforma SaaS"
+              subtitleClassName="font-medium tracking-widest text-[10px] text-surface-400 dark:text-surface-500"
+            />
           </NavLink>
           <button onClick={onToggle} className="lg:hidden p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800">
             <ChevronLeft size={18} className="text-surface-500" />

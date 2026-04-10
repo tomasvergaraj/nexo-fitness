@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, ArrowRight, Loader2 } from 'lucide-react';
+import NexoBrand from '@/components/branding/NexoBrand';
 import { useAuthStore } from '@/stores/authStore';
 import { authApi, billingApi } from '@/services/api';
 import { cn } from '@/utils';
@@ -48,7 +49,7 @@ export default function LoginPage() {
     if (billingState === 'cancelled') {
       return {
         tone: 'amber',
-        text: 'El checkout fue cancelado. Puedes intentarlo otra vez cuando quieras.',
+        text: 'El pago no se completó. Puedes intentarlo otra vez cuando quieras.',
       };
     }
     return null;
@@ -58,13 +59,13 @@ export default function LoginPage() {
     if (purchaseState === 'success') {
       return {
         tone: 'emerald',
-        text: 'Compra recibida correctamente. Inicia sesion con tu correo para continuar.',
+        text: 'Compra recibida correctamente. Inicia sesión con tu correo para continuar.',
       };
     }
     if (purchaseState === 'cancelled') {
       return {
         tone: 'amber',
-        text: 'La compra no se completo o fue rechazada. Puedes iniciar sesion e intentarlo otra vez.',
+        text: 'La compra no se completó o fue rechazada. Puedes iniciar sesión e intentarlo otra vez.',
       };
     }
     return null;
@@ -169,23 +170,18 @@ export default function LoginPage() {
           className="max-w-lg"
         >
           <motion.div
-            initial={{ scale: 0, rotate: -20 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ delay: 0.3, type: 'spring', stiffness: 200, damping: 15 }}
-            className="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600
-                       flex items-center justify-center mb-8 shadow-2xl shadow-brand-500/30"
-          >
-            <Zap size={32} className="text-white" />
-          </motion.div>
-
-          <motion.h1
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5 }}
-            className="text-5xl font-extrabold font-display text-white leading-tight mb-4"
+            className="mb-4"
           >
-            Nexo<span className="text-brand-400">Fitness</span>
-          </motion.h1>
+            <NexoBrand
+              iconSize={64}
+              iconClassName="shadow-2xl shadow-brand-500/30"
+              titleClassName="text-5xl font-extrabold leading-tight"
+              accentClassName="text-brand-400"
+            />
+          </motion.div>
 
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -206,7 +202,7 @@ export default function LoginPage() {
             {[
               { num: '500+', label: 'Gimnasios' },
               { num: '50k+', label: 'Miembros' },
-              { num: '99.9%', label: 'Uptime' },
+              { num: '99.9%', label: 'Disponibilidad' },
             ].map((stat, i) => (
               <div key={i}>
                 <p className="text-2xl font-bold font-display text-white">{stat.num}</p>
@@ -218,7 +214,7 @@ export default function LoginPage() {
       </div>
 
       {/* Right panel - login form */}
-      <div className="flex-1 flex items-center justify-center p-6 lg:p-12 relative">
+      <div className="relative flex-1 items-center justify-center p-4 sm:flex sm:p-6 lg:p-12">
         <motion.div
           initial={{ opacity: 0, y: 30, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -226,61 +222,67 @@ export default function LoginPage() {
           className="w-full max-w-md"
         >
           {/* Mobile brand */}
-          <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600
-                            flex items-center justify-center shadow-lg shadow-brand-500/30">
-              <Zap size={20} className="text-white" />
-            </div>
-            <h1 className="text-2xl font-bold font-display text-white">
-              Nexo<span className="text-brand-400">Fitness</span>
-            </h1>
+          <div className="mb-6 px-1 pt-3 sm:mb-8 sm:pt-0 lg:hidden">
+            <NexoBrand
+              iconSize={40}
+              iconClassName="shadow-lg shadow-brand-500/25"
+              titleClassName="text-2xl leading-none"
+              accentClassName="text-brand-400"
+              subtitle="Accede a tu cuenta desde cualquier dispositivo."
+              subtitleClassName="mt-1 normal-case tracking-normal text-sm text-surface-400"
+            />
           </div>
 
-          <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl">
+          <div className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5 shadow-2xl backdrop-blur-2xl sm:rounded-3xl sm:p-8">
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
+              className="mb-6 space-y-2 sm:mb-8"
             >
-              <h2 className="text-2xl font-bold font-display text-white mb-1">
+              <h2 className="text-2xl font-bold font-display leading-tight text-white">
                 Bienvenido
               </h2>
-              <p className="text-surface-400 text-sm mb-8">Ingresa a tu cuenta para continuar</p>
+              <p className="max-w-sm text-sm leading-6 text-surface-400">Ingresa a tu cuenta para continuar.</p>
             </motion.div>
 
-            {purchaseMessage && (
-              <div
-                className={cn(
-                  'mb-5 rounded-xl border px-4 py-3 text-sm',
-                  purchaseMessage.tone === 'emerald'
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                    : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+            {purchaseMessage || billingMessage ? (
+              <div className="mb-5 space-y-3 sm:mb-6">
+                {purchaseMessage && (
+                  <div
+                    className={cn(
+                      'rounded-xl border px-4 py-3 text-sm leading-6',
+                      purchaseMessage.tone === 'emerald'
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                        : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                    )}
+                  >
+                    {purchaseMessage.text}
+                  </div>
                 )}
-              >
-                {purchaseMessage.text}
-              </div>
-            )}
 
-            {billingMessage && (
-              <div
-                className={cn(
-                  'mb-5 rounded-xl border px-4 py-3 text-sm',
-                  billingMessage.tone === 'emerald'
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                    : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                {billingMessage && (
+                  <div
+                    className={cn(
+                      'rounded-xl border px-4 py-3 text-sm leading-6',
+                      billingMessage.tone === 'emerald'
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                        : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                    )}
+                  >
+                    {billingMessage.text}
+                  </div>
                 )}
-              >
-                {billingMessage.text}
               </div>
-            )}
+            ) : null}
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
               <motion.div
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.4 }}
               >
-                <label className="block text-sm font-medium text-surface-300 mb-2">Correo electrónico</label>
+                <label className="mb-2 block text-sm font-medium text-surface-300">Correo electrónico</label>
                 <input
                   type="email"
                   value={email}
@@ -299,7 +301,7 @@ export default function LoginPage() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.5 }}
               >
-                <label className="block text-sm font-medium text-surface-300 mb-2">Contraseña</label>
+                <label className="mb-2 block text-sm font-medium text-surface-300">Contraseña</label>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
@@ -326,13 +328,13 @@ export default function LoginPage() {
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+                  className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm leading-6 text-red-400"
                 >
                   {error}
                 </motion.div>
               )}
 
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" className="w-4 h-4 rounded border-white/20 bg-white/5 text-brand-500
                                                     focus:ring-brand-500/50 focus:ring-offset-0" />
@@ -352,7 +354,7 @@ export default function LoginPage() {
                 whileHover={{ scale: loading ? 1 : 1.01 }}
                 whileTap={{ scale: loading ? 1 : 0.98 }}
                 className={cn(
-                  'w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold',
+                  'flex w-full items-center justify-center gap-2 rounded-xl py-3.5 font-semibold',
                   'bg-gradient-to-r from-brand-500 to-brand-600 text-white',
                   'shadow-xl shadow-brand-500/25 hover:shadow-brand-500/40',
                   'transition-all duration-300',
@@ -374,28 +376,19 @@ export default function LoginPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.8 }}
-              className="mt-6 text-center"
+              className="mt-6 border-t border-white/10 pt-5 text-center sm:mt-7"
             >
-              <p className="text-sm text-surface-500">
-                ¿No tienes cuenta?{' '}
-                <a href="/register" className="text-brand-400 hover:text-brand-300 font-medium transition-colors">
+              <p className="text-sm leading-6 text-surface-500">
+                ¿No tienes cuenta?
+              </p>
+              <p className="mt-1 text-sm leading-6">
+                <a href="/register" className="font-medium text-brand-400 transition-colors hover:text-brand-300">
                   Registra tu gimnasio
                 </a>
               </p>
             </motion.div>
           </div>
 
-          {/* Demo credentials */}
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 1 }}
-            className="mt-4 p-3 rounded-xl bg-brand-500/10 border border-brand-500/20 text-center"
-          >
-            <p className="text-xs text-brand-300">
-              Demo: <span className="font-mono">owner@nexogym.cl</span> / <span className="font-mono">Owner123!</span>
-            </p>
-          </motion.div>
         </motion.div>
       </div>
     </div>

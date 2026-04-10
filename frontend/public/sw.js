@@ -2,7 +2,12 @@
 // Scope registrado: /member (ver frontend/src/lib/pwa.ts)
 // Solo intercepta requests bajo /member — no afecta al dashboard de admin ni rutas públicas.
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v5';
+const ICON_VERSION = '20260409-2';
+const MANIFEST_PATH = `/manifest.webmanifest?v=${ICON_VERSION}`;
+const SYSTEM_ICON_PATH = `/icon.png?v=${ICON_VERSION}`;
+const PWA_ICON_192_PATH = `/icons/icon-192.png?v=${ICON_VERSION}`;
+const PWA_ICON_512_PATH = `/icons/icon-512.png?v=${ICON_VERSION}`;
 const APP_SHELL_CACHE = `nexo-fitness-member-shell-${CACHE_VERSION}`;
 const STATIC_CACHE = `nexo-fitness-member-static-${CACHE_VERSION}`;
 const PUBLIC_CACHE = `nexo-fitness-member-public-${CACHE_VERSION}`;
@@ -11,10 +16,10 @@ const KNOWN_CACHES = [APP_SHELL_CACHE, STATIC_CACHE, PUBLIC_CACHE];
 // Shell mínima para que la PWA cargue offline desde /member
 const APP_SHELL = [
   '/member',
-  '/manifest.webmanifest',
-  '/favicon.svg',
-  '/icons/icon-192.svg',
-  '/icons/icon-512.svg',
+  MANIFEST_PATH,
+  SYSTEM_ICON_PATH,
+  PWA_ICON_192_PATH,
+  PWA_ICON_512_PATH,
 ];
 
 self.addEventListener('install', (event) => {
@@ -77,13 +82,23 @@ self.addEventListener('push', (event) => {
   const targetUrl = payload.url || payload.action_url || '/member?tab=notifications';
 
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body: payload.body || payload.message || 'Tienes una nueva novedad en tu cuenta.',
-      icon: payload.icon || '/icons/icon-192.svg',
-      badge: payload.badge || '/icons/icon-192.svg',
-      tag: payload.tag || 'nexo-member-web-push',
-      data: { url: targetUrl },
-    }),
+    Promise.all([
+      self.registration.showNotification(title, {
+        body: payload.body || payload.message || 'Tienes una nueva novedad en tu cuenta.',
+        icon: payload.icon || PWA_ICON_192_PATH,
+        badge: payload.badge || PWA_ICON_192_PATH,
+        tag: payload.tag || 'nexo-member-web-push',
+        data: { url: targetUrl },
+      }),
+      broadcastToClients({
+        type: 'member-push-received',
+        payload: {
+          title,
+          url: targetUrl,
+          notificationId: payload.notification_id || payload.id || null,
+        },
+      }),
+    ]),
   );
 });
 
@@ -92,18 +107,24 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ('focus' in client && client.url.includes(self.location.origin)) {
-          client.navigate(targetUrl);
-          return client.focus();
+    Promise.all([
+      broadcastToClients({
+        type: 'member-notification-clicked',
+        payload: { url: targetUrl },
+      }),
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+        for (const client of clients) {
+          if ('focus' in client && client.url.includes(self.location.origin)) {
+            client.navigate(targetUrl);
+            return client.focus();
+          }
         }
-      }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
-      return undefined;
-    }),
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(targetUrl);
+        }
+        return undefined;
+      }),
+    ]),
   );
 });
 
@@ -119,9 +140,9 @@ function isStaticAssetRequest(request, url) {
   }
   return [
     '/manifest.webmanifest',
-    '/favicon.svg',
-    '/icons/icon-192.svg',
-    '/icons/icon-512.svg',
+    '/icon.png',
+    '/icons/icon-192.png',
+    '/icons/icon-512.png',
   ].includes(url.pathname);
 }
 
@@ -165,4 +186,11 @@ function readPushPayload(event) {
   } catch {
     return { body: event.data.text() };
   }
+}
+
+async function broadcastToClients(message) {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  clients.forEach((client) => {
+    client.postMessage(message);
+  });
 }

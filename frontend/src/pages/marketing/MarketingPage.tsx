@@ -2,11 +2,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Bell, Clock3, Eye, Megaphone, MessageCircle, MousePointerClick, Plus, Search, Send, UsersRound } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bell,
+  CheckCircle2,
+  Clock3,
+  Eye,
+  Megaphone,
+  MessageCircle,
+  MessageSquare,
+  MousePointerClick,
+  Plus,
+  Search,
+  Send,
+  UsersRound,
+  Zap,
+} from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import Tooltip from '@/components/ui/Tooltip';
 import { campaignsApi, clientsApi, notificationsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
-import { cn, formatDateTime, toDateInputValue , getApiError } from '@/utils';
+import { cn, formatDateTime, toDateInputValue, getApiError } from '@/utils';
 import type { AppNotification, Campaign, CampaignOverview, NotificationBroadcastResponse, PaginatedResponse, User } from '@/types';
 
 type CampaignSegmentFilter = NonNullable<Campaign['segment_filter']>;
@@ -42,7 +58,7 @@ type BroadcastForm = {
 };
 
 const actionUrlPresets = [
-  { label: 'Store', value: 'nexofitness://store' },
+  { label: 'Planes', value: 'nexofitness://store' },
   { label: 'Perfil', value: 'nexofitness://account/profile' },
   { label: 'Pagos', value: 'nexofitness://payments' },
   { label: 'Agenda', value: 'nexofitness://agenda' },
@@ -116,9 +132,18 @@ function buildSegmentSummary(segmentFilter?: Campaign['segment_filter'] | null) 
 }
 
 function formatDispatchTrigger(trigger?: Campaign['last_dispatch_trigger']) {
-  if (trigger === 'scheduled') return 'scheduler';
-  if (trigger === 'manual') return 'manual';
-  return 'sin trigger';
+  if (trigger === 'scheduled') return 'programación automática';
+  if (trigger === 'manual') return 'envío manual';
+  return 'sin registro';
+}
+
+function formatCampaignStatus(status: Campaign['status']) {
+  if (status === 'draft') return 'Borrador';
+  if (status === 'scheduled') return 'Programada';
+  if (status === 'sending') return 'Enviando';
+  if (status === 'sent') return 'Enviada';
+  if (status === 'cancelled') return 'Cancelada';
+  return status;
 }
 
 function calculateRate(total: number, base: number) {
@@ -151,8 +176,8 @@ function toForm(campaign?: Campaign): CampaignForm {
 function createBroadcastForm(campaign?: Campaign): BroadcastForm {
   return {
     campaign_id: campaign?.id,
-    campaign_name: campaign?.name ?? 'Broadcast libre',
-    title: campaign?.subject?.trim() || campaign?.name || 'Nueva campana',
+    campaign_name: campaign?.name ?? 'Envío libre',
+    title: campaign?.subject?.trim() || campaign?.name || 'Nueva campaña',
     message: campaign?.content ?? '',
     type: campaign?.notification_type ?? 'info',
     action_url: campaign?.action_url ?? 'nexofitness://store',
@@ -160,6 +185,18 @@ function createBroadcastForm(campaign?: Campaign): BroadcastForm {
     user_ids: [],
     segment_filter: campaign?.segment_filter ? normalizeSegmentFilter(campaign.segment_filter) : undefined,
   };
+}
+
+function ChannelIcon({ channel, size = 18 }: { channel: Campaign['channel']; size?: number }) {
+  if (channel === 'email') return <Send size={size} />;
+  if (channel === 'whatsapp') return <MessageCircle size={size} />;
+  return <MessageSquare size={size} />;
+}
+
+function channelColors(channel: Campaign['channel']) {
+  if (channel === 'email') return 'bg-brand-50 text-brand-500 dark:bg-brand-950/40';
+  if (channel === 'whatsapp') return 'bg-emerald-50 text-emerald-500 dark:bg-emerald-950/40';
+  return 'bg-sky-50 text-sky-500 dark:bg-sky-950/40';
 }
 
 export default function MarketingPage() {
@@ -181,7 +218,7 @@ export default function MarketingPage() {
     },
   });
 
-  const { data: overviewData } = useQuery<CampaignOverview>({
+  const { data: overviewData, isLoading: isLoadingOverview } = useQuery<CampaignOverview>({
     queryKey: ['campaigns-overview'],
     queryFn: async () => {
       const response = await campaignsApi.overview();
@@ -209,9 +246,6 @@ export default function MarketingPage() {
         notification_type: form.notification_type,
         action_url: form.action_url || null,
         send_push: form.send_push,
-        total_recipients: Number(form.total_recipients),
-        total_sent: Number(form.total_sent),
-        total_opened: Number(form.total_opened),
         segment_filter: normalizeSegmentFilter({
           status: form.audience_status,
           search: form.audience_search.trim(),
@@ -224,18 +258,24 @@ export default function MarketingPage() {
         return response.data;
       }
 
-      const response = await campaignsApi.create(payload);
+      const response = await campaignsApi.create({
+        ...payload,
+        total_recipients: 0,
+        total_sent: 0,
+        total_opened: 0,
+        total_clicked: 0,
+      });
       return response.data;
     },
     onSuccess: () => {
-      toast.success(form.id ? 'Campana actualizada' : 'Campana creada');
+      toast.success(form.id ? 'Campaña actualizada' : 'Campaña creada');
       setShowModal(false);
       setForm(emptyForm);
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       queryClient.invalidateQueries({ queryKey: ['campaigns-overview'] });
     },
-    onError: (error: any) => {
-      toast.error(getApiError(error, 'No se pudo guardar la campana'));
+    onError: (error: unknown) => {
+      toast.error(getApiError(error, 'No se pudo guardar la campaña'));
     },
   });
 
@@ -252,24 +292,24 @@ export default function MarketingPage() {
       });
       return response.data as NotificationBroadcastResponse;
     },
-    onSuccess: (result) => {
+    onSuccess: (result: NotificationBroadcastResponse) => {
       setLastBroadcastResult(result);
       setLastBroadcastUsedPush(broadcastForm.send_push);
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       queryClient.invalidateQueries({ queryKey: ['campaigns-overview'] });
 
       if (!broadcastForm.send_push) {
-        toast.success(`Broadcast creado para ${result.total_recipients} cliente(s) sin envio push.`);
+        toast.success(`Envío creado para ${result.total_recipients} cliente(s) sin aviso al dispositivo.`);
         return;
       }
       if (!result.total_push_deliveries) {
-        toast.success(`Broadcast creado para ${result.total_recipients} cliente(s). Ninguno tenia push activo.`);
+        toast.success(`Envío creado para ${result.total_recipients} cliente(s). Nadie tenía avisos activados.`);
         return;
       }
-      toast.success(`Broadcast enviado. ${result.accepted_push_deliveries}/${result.total_push_deliveries} delivery(s) aceptadas por Expo.`);
+      toast.success(`Envío realizado. ${result.accepted_push_deliveries}/${result.total_push_deliveries} entrega(s) correctas.`);
     },
-    onError: (error: any) => {
-      toast.error(getApiError(error, 'No se pudo enviar el broadcast'));
+    onError: (error: unknown) => {
+      toast.error(getApiError(error, 'No se pudo enviar el aviso'));
     },
   });
 
@@ -277,21 +317,23 @@ export default function MarketingPage() {
   const overview = overviewData ?? emptyOverview;
   const clientItems = clientsData?.items ?? [];
   const editingCampaign = useMemo(
-    () => (form.id ? campaigns.find((campaign) => campaign.id === form.id) : undefined),
+    () => (form.id ? campaigns.find((campaign: Campaign) => campaign.id === form.id) : undefined),
     [campaigns, form.id],
   );
 
   const filteredClients = useMemo(() => {
     const normalizedSearch = recipientSearch.trim().toLowerCase();
     if (!normalizedSearch) return clientItems;
-    return clientItems.filter((client) =>
+    return clientItems.filter((client: User) =>
       `${client.first_name} ${client.last_name} ${client.email}`.toLowerCase().includes(normalizedSearch),
     );
   }, [clientItems, recipientSearch]);
 
   const segmentMatchedClients = useMemo(() => {
     if (!broadcastForm.segment_filter) return [];
-    return clientItems.filter((client) => matchesCampaignSegment(client, normalizeSegmentFilter(broadcastForm.segment_filter)));
+    return clientItems.filter((client: User) =>
+      matchesCampaignSegment(client, normalizeSegmentFilter(broadcastForm.segment_filter)),
+    );
   }, [clientItems, broadcastForm.segment_filter]);
 
   useEffect(() => {
@@ -300,27 +342,18 @@ export default function MarketingPage() {
       setHasAppliedInitialSegmentSelection(true);
       return;
     }
-
     setBroadcastForm((current) => ({
       ...current,
-      user_ids: segmentMatchedClients.map((client) => client.id),
+      user_ids: segmentMatchedClients.map((client: User) => client.id),
     }));
     setHasAppliedInitialSegmentSelection(true);
   }, [showBroadcastModal, hasAppliedInitialSegmentSelection, clientItems.length, broadcastForm.segment_filter, segmentMatchedClients]);
-
-  const stats = {
-    active: overview.scheduled_pending + overview.sending_now,
-    sent: overview.sent_total,
-    clicked: overview.clicked_total,
-    openRate: overview.open_rate,
-    clickRate: overview.click_rate,
-  };
 
   const toggleRecipient = (userId: string) => {
     setBroadcastForm((current) => ({
       ...current,
       user_ids: current.user_ids.includes(userId)
-        ? current.user_ids.filter((currentUserId) => currentUserId !== userId)
+        ? current.user_ids.filter((id) => id !== userId)
         : [...current.user_ids, userId],
     }));
   };
@@ -328,7 +361,7 @@ export default function MarketingPage() {
   const selectAllFilteredRecipients = () => {
     setBroadcastForm((current) => ({
       ...current,
-      user_ids: Array.from(new Set([...current.user_ids, ...filteredClients.map((client) => client.id)])),
+      user_ids: Array.from(new Set([...current.user_ids, ...filteredClients.map((c: User) => c.id)])),
     }));
   };
 
@@ -339,7 +372,7 @@ export default function MarketingPage() {
   const applySavedSegment = () => {
     setBroadcastForm((current) => ({
       ...current,
-      user_ids: segmentMatchedClients.map((client) => client.id),
+      user_ids: segmentMatchedClients.map((c: User) => c.id),
     }));
   };
 
@@ -352,17 +385,30 @@ export default function MarketingPage() {
     setShowBroadcastModal(true);
   };
 
+  const resetBroadcastForNew = () => {
+    const campaign = campaigns.find((c: Campaign) => c.id === broadcastForm.campaign_id);
+    setBroadcastForm(createBroadcastForm(campaign));
+    setRecipientSearch('');
+    setLastBroadcastResult(null);
+    setLastBroadcastUsedPush(null);
+    setHasAppliedInitialSegmentSelection(false);
+  };
+
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
+
+      {/* ── Encabezado ── */}
       <motion.div variants={fadeInUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Marketing</h1>
-          <p className="mt-1 text-sm text-surface-500">Campanas persistentes por tenant, con segmentos reutilizables, broadcast real y engagement medido por aperturas/clicks desde mobile</p>
+          <p className="mt-1 text-sm text-surface-500">
+            Crea campañas, reutiliza grupos de clientes y revisa sus resultados con un lenguaje simple.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => openBroadcastModal()} className="btn-secondary">
-            <Bell size={16} />
-            Composer push
+            <Zap size={16} />
+            Envío rápido
           </button>
           <button
             type="button"
@@ -373,203 +419,338 @@ export default function MarketingPage() {
             className="btn-primary"
           >
             <Plus size={16} />
-            Nueva campana
+            Nueva campaña
           </button>
         </div>
       </motion.div>
 
       {isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-          No pudimos cargar las campanas del tenant.
+          No pudimos cargar las campañas de la cuenta.
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><Megaphone size={18} className="text-brand-500" /><span className="text-sm text-surface-500">Activas</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.active}</p>
-        </div>
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><Send size={18} className="text-emerald-500" /><span className="text-sm text-surface-500">Enviados</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.sent}</p>
-        </div>
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><Eye size={18} className="text-violet-500" /><span className="text-sm text-surface-500">Apertura</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.openRate}%</p>
-        </div>
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><MousePointerClick size={18} className="text-amber-500" /><span className="text-sm text-surface-500">CTR</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{stats.clickRate}%</p>
-          <p className="mt-1 text-xs text-surface-500">{stats.clicked} click(s) registrados</p>
-        </div>
+      {/* ── Dashboard KPIs primarios ── */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {isLoadingOverview ? (
+          Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-28 rounded-2xl" />)
+        ) : (
+          <>
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <Megaphone size={15} className="text-brand-500" />
+                <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Activas</span>
+              </div>
+              <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">
+                {overview.scheduled_pending + overview.sending_now}
+              </p>
+              <p className="mt-1 text-xs text-surface-400">{overview.total_campaigns} campaña(s) guardadas</p>
+            </div>
+
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <Send size={15} className="text-emerald-500" />
+                <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Enviados</span>
+              </div>
+              <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.sent_total}</p>
+              <p className="mt-1 text-xs text-surface-400">
+                {overview.manual_runs} manual · {overview.scheduler_runs} auto
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <Eye size={15} className="text-violet-500" />
+                <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Apertura</span>
+              </div>
+              <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.open_rate}%</p>
+              <p className="mt-1 text-xs text-surface-400">{overview.opened_total} abiertos</p>
+            </div>
+
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <MousePointerClick size={15} className="text-amber-500" />
+                <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Tasa de clics</span>
+              </div>
+              <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.click_rate}%</p>
+              <p className="mt-1 text-xs text-surface-400">{overview.clicked_total} clic(s)</p>
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><Clock3 size={18} className="text-sky-500" /><span className="text-sm text-surface-500">Pendientes</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.scheduled_pending}</p>
-          <p className="mt-1 text-xs text-surface-500">{overview.total_campaigns} campana(s) persistidas</p>
-        </div>
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><Send size={18} className="text-emerald-500" /><span className="text-sm text-surface-500">Scheduler OK</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.scheduler_runs}</p>
-          <p className="mt-1 text-xs text-surface-500">{overview.manual_runs} corrida(s) manuales exitosas</p>
-        </div>
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><AlertTriangle size={18} className="text-amber-500" /><span className="text-sm text-surface-500">Scheduler error</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.scheduler_failures}</p>
-          <p className="mt-1 text-xs text-surface-500">{overview.sending_now} campana(s) en envio ahora</p>
-        </div>
-        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <div className="flex items-center gap-3"><Bell size={18} className="text-brand-500" /><span className="text-sm text-surface-500">Receipts push</span></div>
-          <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.pending_push_receipts}</p>
-          <p className="mt-1 text-xs text-surface-500">{overview.failed_push_receipts} con receipt final en error</p>
-        </div>
+      {/* ── Dashboard métricas operativas ── */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {isLoadingOverview ? (
+          Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-24 rounded-2xl" />)
+        ) : (
+          <>
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <Clock3 size={14} className="text-sky-500" />
+                <span className="text-xs font-medium text-surface-500">Pendientes de envío</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {overview.scheduled_pending}
+              </p>
+              {overview.sending_now > 0 && (
+                <p className="mt-1 text-xs text-amber-500">{overview.sending_now} enviándose ahora</p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <Send size={14} className="text-emerald-500" />
+                <span className="text-xs font-medium text-surface-500">Envíos automáticos</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {overview.scheduler_runs}
+              </p>
+              {overview.scheduler_failures > 0 ? (
+                <p className="mt-1 text-xs text-rose-500">{overview.scheduler_failures} con error</p>
+              ) : (
+                <p className="mt-1 text-xs text-surface-400">sin errores registrados</p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <Bell size={14} className="text-brand-500" />
+                <span className="text-xs font-medium text-surface-500">Push pendientes</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {overview.pending_push_receipts}
+              </p>
+              {overview.failed_push_receipts > 0 ? (
+                <p className="mt-1 text-xs text-rose-500">{overview.failed_push_receipts} con error final</p>
+              ) : (
+                <p className="mt-1 text-xs text-surface-400">confirmaciones en espera</p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={14} className="text-amber-500" />
+                <span className="text-xs font-medium text-surface-500">Errores scheduler</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {overview.scheduler_failures}
+              </p>
+              <p className="mt-1 text-xs text-surface-400">fallos en envío automático</p>
+            </div>
+          </>
+        )}
       </div>
 
+      {/* ── Lista de campañas ── */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {isLoading ? (
-          Array.from({ length: 4 }).map((_, index) => <div key={index} className="shimmer h-64 rounded-3xl" />)
-        ) : campaigns.map((campaign) => (
+          Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="shimmer h-64 rounded-3xl" />
+          ))
+        ) : campaigns.length === 0 ? (
           <motion.div
-            key={campaign.id}
             variants={fadeInUp}
-            className="rounded-3xl border border-surface-200/50 bg-white p-6 transition-all hover:-translate-y-1 hover:shadow-xl dark:border-surface-800/50 dark:bg-surface-900"
+            className="col-span-full flex flex-col items-center justify-center rounded-3xl border border-dashed border-surface-300 bg-white py-16 text-center dark:border-surface-700 dark:bg-surface-900"
           >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${campaign.channel === 'email' ? 'bg-brand-50 text-brand-500 dark:bg-brand-950/40' : 'bg-emerald-50 text-emerald-500 dark:bg-emerald-950/40'}`}>
-                    {campaign.channel === 'email' ? <Send size={18} /> : <MessageCircle size={18} />}
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-surface-900 dark:text-white">{campaign.name}</h2>
-                    <p className="text-sm text-surface-500">{campaign.subject || 'Sin asunto definido'}</p>
-                  </div>
-                </div>
-              </div>
-              <span className={`badge ${campaign.status === 'sent' ? 'badge-success' : campaign.status === 'scheduled' ? 'badge-info' : campaign.status === 'sending' ? 'badge-warning' : campaign.status === 'cancelled' ? 'badge-danger' : 'badge-neutral'}`}>
-                {campaign.status}
-              </span>
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500 dark:bg-brand-950/40">
+              <Megaphone size={24} />
             </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
-                <p className="text-surface-500">Destinatarios</p>
-                <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_recipients}</p>
-              </div>
-              <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
-                <p className="text-surface-500">Enviados</p>
-                <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_sent}</p>
-              </div>
-              <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
-                <p className="text-surface-500">Abiertos</p>
-                <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_opened}</p>
-              </div>
-              <div className="rounded-2xl bg-surface-50 px-4 py-4 dark:bg-surface-950/60">
-                <p className="text-surface-500">Clicks</p>
-                <p className="mt-2 font-semibold text-surface-900 dark:text-white">{campaign.total_clicked}</p>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2 text-sm text-surface-500">
-              <p className="line-clamp-3 leading-6">{campaign.content || 'Sin contenido guardado todavia.'}</p>
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
-                  <UsersRound size={12} className="mr-1 inline-block" />
-                  {buildSegmentSummary(campaign.segment_filter)}
-                </span>
-                <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
-                  {campaign.send_push ? 'Push remoto activo' : 'Solo bandeja'}
-                </span>
-                {campaign.scheduled_at ? (
-                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
-                    <Clock3 size={12} className="mr-1 inline-block" />
-                    {formatDateTime(campaign.scheduled_at)}
-                  </span>
-                ) : null}
-                {campaign.dispatch_attempts ? (
-                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
-                    Intentos: {campaign.dispatch_attempts}
-                  </span>
-                ) : null}
-                {campaign.total_sent ? (
-                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
-                    Open rate: {calculateRate(campaign.total_opened, campaign.total_sent)}%
-                  </span>
-                ) : null}
-                {campaign.total_sent ? (
-                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs dark:bg-surface-800">
-                    CTR: {calculateRate(campaign.total_clicked, campaign.total_sent)}%
-                  </span>
-                ) : null}
-              </div>
-            </div>
-
-            {campaign.last_dispatch_error ? (
-              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <div>
-                    <p className="font-semibold">
-                      Ultimo intento por {formatDispatchTrigger(campaign.last_dispatch_trigger)}
-                      {campaign.last_dispatch_attempted_at ? ` el ${formatDateTime(campaign.last_dispatch_attempted_at)}` : ''}
-                    </p>
-                    <p className="mt-1 leading-6">{campaign.last_dispatch_error}</p>
-                  </div>
-                </div>
-              </div>
-            ) : campaign.last_dispatch_finished_at ? (
-              <div className="mt-4 rounded-2xl border border-surface-200/70 bg-surface-50 px-4 py-4 text-sm text-surface-600 dark:border-surface-800/70 dark:bg-surface-950/60 dark:text-surface-300">
-                Ultima ejecucion por {formatDispatchTrigger(campaign.last_dispatch_trigger)} finalizada el {formatDateTime(campaign.last_dispatch_finished_at)}.
-              </div>
-            ) : null}
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setForm(toForm(campaign));
-                  setShowModal(true);
-                }}
-                className="btn-secondary"
-              >
-                Editar
-              </button>
-              <button type="button" onClick={() => openBroadcastModal(campaign)} className="btn-primary">
-                <Bell size={16} />
-                Enviar
-              </button>
-            </div>
+            <h3 className="mt-4 text-base font-semibold text-surface-900 dark:text-white">Sin campañas todavía</h3>
+            <p className="mt-1 max-w-sm text-sm text-surface-500">
+              Crea tu primera campaña para guardar mensajes, audiencias y enviarlos cuando quieras.
+            </p>
+            <button
+              type="button"
+              className="btn-primary mt-6"
+              onClick={() => {
+                setForm(emptyForm);
+                setShowModal(true);
+              }}
+            >
+              <Plus size={16} />
+              Nueva campaña
+            </button>
           </motion.div>
-        ))}
+        ) : (
+          campaigns.map((campaign: Campaign) => (
+            <motion.div
+              key={campaign.id}
+              variants={fadeInUp}
+              className="rounded-3xl border border-surface-200/50 bg-white p-6 transition-all hover:-translate-y-1 hover:shadow-xl dark:border-surface-800/50 dark:bg-surface-900"
+            >
+              {/* Cabecera de tarjeta */}
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${channelColors(campaign.channel)}`}>
+                    <ChannelIcon channel={campaign.channel} />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-base font-semibold text-surface-900 dark:text-white">{campaign.name}</h2>
+                    <p className="truncate text-sm text-surface-500">{campaign.subject || 'Sin asunto definido'}</p>
+                  </div>
+                </div>
+                <span
+                  className={`badge shrink-0 ${
+                    campaign.status === 'sent'
+                      ? 'badge-success'
+                      : campaign.status === 'scheduled'
+                        ? 'badge-info'
+                        : campaign.status === 'sending'
+                          ? 'badge-warning'
+                          : campaign.status === 'cancelled'
+                            ? 'badge-danger'
+                            : 'badge-neutral'
+                  }`}
+                >
+                  {formatCampaignStatus(campaign.status)}
+                </span>
+              </div>
+
+              {/* Métricas */}
+              <div className="mt-5 grid grid-cols-4 gap-2 text-center">
+                <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
+                  <p className="text-xs text-surface-400">Destinatarios</p>
+                  <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{campaign.total_recipients}</p>
+                </div>
+                <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
+                  <p className="text-xs text-surface-400">Enviados</p>
+                  <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{campaign.total_sent}</p>
+                </div>
+                <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
+                  <p className="text-xs text-surface-400">Apertura</p>
+                  <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">
+                    {campaign.total_sent
+                      ? `${calculateRate(campaign.total_opened, campaign.total_sent)}%`
+                      : campaign.total_opened}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
+                  <p className="text-xs text-surface-400">CTR</p>
+                  <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">
+                    {campaign.total_sent
+                      ? `${calculateRate(campaign.total_clicked, campaign.total_sent)}%`
+                      : campaign.total_clicked}
+                  </p>
+                </div>
+              </div>
+
+              {/* Etiquetas e info adicional */}
+              <div className="mt-4 space-y-2">
+                <p className="line-clamp-2 text-sm leading-6 text-surface-500">
+                  {campaign.content || 'Sin contenido guardado todavía.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs text-surface-600 dark:bg-surface-800 dark:text-surface-400">
+                    <UsersRound size={11} className="mr-1 inline-block" />
+                    {buildSegmentSummary(campaign.segment_filter)}
+                  </span>
+                  <span className="rounded-full bg-surface-100 px-3 py-1 text-xs text-surface-600 dark:bg-surface-800 dark:text-surface-400">
+                    {campaign.send_push ? 'Push activo' : 'Solo bandeja'}
+                  </span>
+                  {campaign.scheduled_at ? (
+                    <span className="rounded-full bg-sky-50 px-3 py-1 text-xs text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                      <Clock3 size={11} className="mr-1 inline-block" />
+                      {formatDateTime(campaign.scheduled_at)}
+                    </span>
+                  ) : null}
+                  {campaign.dispatch_attempts > 0 ? (
+                    <span className="rounded-full bg-surface-100 px-3 py-1 text-xs text-surface-600 dark:bg-surface-800 dark:text-surface-400">
+                      {campaign.dispatch_attempts} intento(s)
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Estado último dispatch */}
+              {campaign.last_dispatch_error ? (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium">
+                        Error en {formatDispatchTrigger(campaign.last_dispatch_trigger)}
+                        {campaign.last_dispatch_attempted_at
+                          ? ` — ${formatDateTime(campaign.last_dispatch_attempted_at)}`
+                          : ''}
+                      </p>
+                      <p className="mt-1 leading-5">{campaign.last_dispatch_error}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : campaign.last_dispatch_finished_at ? (
+                <div className="mt-4 flex items-center gap-2 rounded-2xl border border-emerald-200/60 bg-emerald-50/50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
+                  <CheckCircle2 size={14} className="shrink-0" />
+                  <span>
+                    Último envío por {formatDispatchTrigger(campaign.last_dispatch_trigger)} completado
+                    el {formatDateTime(campaign.last_dispatch_finished_at)}.
+                  </span>
+                </div>
+              ) : null}
+
+              {/* Acciones */}
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Tooltip content="Editar esta campaña">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(toForm(campaign));
+                      setShowModal(true);
+                    }}
+                    className="btn-secondary"
+                  >
+                    Editar
+                  </button>
+                </Tooltip>
+                <Tooltip content="Enviar esta campaña ahora">
+                  <button type="button" onClick={() => openBroadcastModal(campaign)} className="btn-primary">
+                    <Send size={15} />
+                    Enviar ahora
+                  </button>
+                </Tooltip>
+              </div>
+            </motion.div>
+          ))
+        )}
       </div>
 
+      {/* ── Modal: Nueva / Editar campaña ── */}
       <Modal
         open={showModal}
-        title={form.id ? 'Editar campana' : 'Nueva campana'}
-        description="La campana ahora guarda audiencia, payload y fecha de envio para que el scheduler pueda ejecutarla sin volver al composer."
+        title={form.id ? 'Editar campaña' : 'Nueva campaña'}
+        description="Guarda el mensaje, el grupo de clientes y la fecha para enviarlo ahora o más adelante."
         onClose={() => {
-          if (!saveMutation.isPending) {
-            setShowModal(false);
-          }
+          if (!saveMutation.isPending) setShowModal(false);
         }}
       >
         <form
-          className="space-y-4"
+          className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
             saveMutation.mutate();
           }}
         >
+          {/* Nombre + canal */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Nombre</label>
-              <input className="input" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Nombre <span className="text-rose-500">*</span>
+              </label>
+              <input
+                className="input"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="Ej. Promo de verano"
+                required
+              />
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Canal</label>
-              <select className="input" value={form.channel} onChange={(event) => setForm((current) => ({ ...current, channel: event.target.value as Campaign['channel'] }))}>
+              <select
+                className="input"
+                value={form.channel}
+                onChange={(e) => setForm((f) => ({ ...f, channel: e.target.value as Campaign['channel'] }))}
+              >
                 <option value="email">Email</option>
                 <option value="whatsapp">WhatsApp</option>
                 <option value="sms">SMS</option>
@@ -577,49 +758,85 @@ export default function MarketingPage() {
             </div>
           </div>
 
+          {/* Asunto + estado */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Asunto</label>
-              <input className="input" value={form.subject} onChange={(event) => setForm((current) => ({ ...current, subject: event.target.value }))} />
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Asunto / Título del aviso
+              </label>
+              <input
+                className="input"
+                value={form.subject}
+                onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
+                placeholder="Lo que verá el cliente primero"
+              />
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Estado</label>
-              <select className="input" value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as Campaign['status'] }))}>
-                <option value="draft">draft</option>
-                <option value="scheduled">scheduled</option>
-                <option value="sending">sending</option>
-                <option value="sent">sent</option>
-                <option value="cancelled">cancelled</option>
+              <select
+                className="input"
+                value={form.status}
+                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Campaign['status'] }))}
+              >
+                <option value="draft">Borrador</option>
+                <option value="scheduled">Programada</option>
+                <option value="cancelled">Cancelada</option>
+                {form.status === 'sending' && (
+                  <option value="sending" disabled>Enviando (sistema)</option>
+                )}
+                {form.status === 'sent' && (
+                  <option value="sent" disabled>Enviada (sistema)</option>
+                )}
               </select>
+              <p className="mt-1 text-xs text-surface-400">
+                "Enviando" y "Enviada" los gestiona el sistema automáticamente.
+              </p>
             </div>
           </div>
 
+          {/* Contenido */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Contenido</label>
-            <textarea className="input min-h-32 resize-y" value={form.content} onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))} />
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Contenido del mensaje
+            </label>
+            <textarea
+              className="input min-h-28 resize-y"
+              value={form.content}
+              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+              placeholder="Texto que se guardará en la bandeja del cliente y se enviará como aviso."
+            />
           </div>
 
+          {/* Configuración del aviso */}
           <div className="rounded-3xl border border-surface-200/60 bg-surface-50 p-5 dark:border-surface-800/60 dark:bg-surface-950/60">
-            <h3 className="text-base font-semibold text-surface-900 dark:text-white">Payload reutilizable</h3>
-            <p className="mt-1 text-sm text-surface-500">Estos datos se usarán tanto al abrir el composer como cuando la campaña se ejecute automáticamente por `scheduled_at`.</p>
+            <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Configuración del aviso</h3>
+            <p className="mt-0.5 text-xs text-surface-500">
+              Estos datos se usan cuando se envía la campaña, manual o automáticamente.
+            </p>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-[220px_1fr]">
+            <div className="mt-4 grid gap-4 sm:grid-cols-[180px_1fr]">
               <div>
                 <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Tipo</label>
-                <select className="input" value={form.notification_type} onChange={(event) => setForm((current) => ({ ...current, notification_type: event.target.value as AppNotification['type'] }))}>
-                  <option value="info">info</option>
-                  <option value="success">success</option>
-                  <option value="warning">warning</option>
-                  <option value="error">error</option>
+                <select
+                  className="input"
+                  value={form.notification_type}
+                  onChange={(e) => setForm((f) => ({ ...f, notification_type: e.target.value as AppNotification['type'] }))}
+                >
+                  <option value="info">Informativo</option>
+                  <option value="success">Confirmación</option>
+                  <option value="warning">Importante</option>
+                  <option value="error">Urgente</option>
                 </select>
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Action URL</label>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  Abrir al tocar el aviso
+                </label>
                 <input
                   className="input"
                   value={form.action_url}
-                  onChange={(event) => setForm((current) => ({ ...current, action_url: event.target.value }))}
-                  placeholder="nexofitness://store"
+                  onChange={(e) => setForm((f) => ({ ...f, action_url: e.target.value }))}
+                  placeholder="Sección de la app o URL personalizada"
                 />
               </div>
             </div>
@@ -629,35 +846,48 @@ export default function MarketingPage() {
                 <button
                   key={preset.value}
                   type="button"
-                  onClick={() => setForm((current) => ({ ...current, action_url: preset.value }))}
-                  className={cn('rounded-xl px-3 py-2 text-sm transition-colors', form.action_url === preset.value ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300' : 'bg-white text-surface-600 hover:bg-surface-100 dark:bg-surface-900 dark:text-surface-300 dark:hover:bg-surface-800')}
+                  onClick={() => setForm((f) => ({ ...f, action_url: preset.value }))}
+                  className={cn(
+                    'rounded-xl px-3 py-1.5 text-sm transition-colors',
+                    form.action_url === preset.value
+                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                      : 'bg-white text-surface-600 hover:bg-surface-100 dark:bg-surface-900 dark:text-surface-300 dark:hover:bg-surface-800',
+                  )}
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
 
-            <label className="mt-4 flex items-center gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3 dark:border-surface-800 dark:bg-surface-900">
-              <input type="checkbox" checked={form.send_push} onChange={(event) => setForm((current) => ({ ...current, send_push: event.target.checked }))} />
-              <span className="text-sm text-surface-700 dark:text-surface-300">Intentar tambien envio push remoto cuando esta campana se dispare</span>
+            <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3 dark:border-surface-800 dark:bg-surface-900">
+              <input
+                type="checkbox"
+                checked={form.send_push}
+                onChange={(e) => setForm((f) => ({ ...f, send_push: e.target.checked }))}
+              />
+              <span className="text-sm text-surface-700 dark:text-surface-300">
+                Enviar también al dispositivo del cliente (push remoto)
+              </span>
             </label>
           </div>
 
+          {/* Audiencia guardada */}
           <div className="rounded-3xl border border-surface-200/60 bg-surface-50 p-5 dark:border-surface-800/60 dark:bg-surface-950/60">
-            <h3 className="text-base font-semibold text-surface-900 dark:text-white">Audiencia persistida</h3>
-            <p className="mt-1 text-sm text-surface-500">La campana puede guardar una audiencia base reutilizable para el broadcast, sin tener que volver a filtrar clientes desde cero.</p>
+            <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Audiencia guardada</h3>
+            <p className="mt-0.5 text-xs text-surface-500">
+              Define un grupo base para no tener que seleccionar clientes cada vez que envíes.
+            </p>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-[220px_1fr]">
+            <div className="mt-4 grid gap-4 sm:grid-cols-[180px_1fr]">
               <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Estado clientes</label>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  Estado de clientes
+                </label>
                 <select
                   className="input"
                   value={form.audience_status}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      audience_status: event.target.value as CampaignForm['audience_status'],
-                    }))
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, audience_status: e.target.value as CampaignForm['audience_status'] }))
                   }
                 >
                   <option value="active">Activos</option>
@@ -666,147 +896,213 @@ export default function MarketingPage() {
                 </select>
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Busqueda base</label>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  Filtro de búsqueda base
+                </label>
                 <input
                   className="input"
                   value={form.audience_search}
-                  onChange={(event) => setForm((current) => ({ ...current, audience_search: event.target.value }))}
-                  placeholder="Nombre, email o telefono que se usara al abrir el composer"
+                  onChange={(e) => setForm((f) => ({ ...f, audience_search: e.target.value }))}
+                  placeholder="Nombre, correo o teléfono (opcional)"
                 />
               </div>
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-[1fr_220px]">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Destinatarios</label>
-                <input type="number" min="0" className="input" value={form.total_recipients} onChange={(event) => setForm((current) => ({ ...current, total_recipients: event.target.value }))} />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Enviados</label>
-                <input type="number" min="0" className="input" value={form.total_sent} onChange={(event) => setForm((current) => ({ ...current, total_sent: event.target.value }))} />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Abiertos</label>
-                <input type="number" min="0" className="input" value={form.total_opened} onChange={(event) => setForm((current) => ({ ...current, total_opened: event.target.value }))} />
-              </div>
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Programar para</label>
-              <input
-                type="datetime-local"
-                className="input"
-                value={form.scheduled_at}
-                onChange={(event) => setForm((current) => ({ ...current, scheduled_at: event.target.value }))}
-              />
-            </div>
+          {/* Programar envío */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              <Clock3 size={14} className="mr-1.5 inline-block text-sky-500" />
+              Programar para (opcional)
+            </label>
+            <input
+              type="datetime-local"
+              className="input"
+              value={form.scheduled_at}
+              onChange={(e) => setForm((f) => ({ ...f, scheduled_at: e.target.value }))}
+            />
+            <p className="mt-1 text-xs text-surface-400">
+              Si eliges una fecha, la campaña se enviará automáticamente en ese momento.
+            </p>
           </div>
 
+          {/* Seguimiento — solo al editar */}
           {editingCampaign ? (
             <div className="rounded-3xl border border-surface-200/60 bg-surface-50 p-5 dark:border-surface-800/60 dark:bg-surface-950/60">
-              <h3 className="text-base font-semibold text-surface-900 dark:text-white">Observabilidad</h3>
-              <p className="mt-1 text-sm text-surface-500">Resumen del ultimo intento de envio y del engagement real que devolvio mobile para esta campana.</p>
+              <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Seguimiento</h3>
+              <p className="mt-0.5 text-xs text-surface-500">Historial del último intento de envío de esta campaña.</p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-500">Trigger</p>
-                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">{formatDispatchTrigger(editingCampaign.last_dispatch_trigger)}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-500">Intentos</p>
-                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">{editingCampaign.dispatch_attempts}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-500">Abiertos</p>
-                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">{editingCampaign.total_opened}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-500">Clicks</p>
-                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">{editingCampaign.total_clicked}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-500">Ultimo inicio</p>
-                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">
-                    {editingCampaign.last_dispatch_attempted_at ? formatDateTime(editingCampaign.last_dispatch_attempted_at) : 'Sin ejecuciones'}
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-400">Origen</p>
+                  <p className="mt-1.5 text-sm font-semibold capitalize text-surface-900 dark:text-white">
+                    {formatDispatchTrigger(editingCampaign.last_dispatch_trigger)}
                   </p>
                 </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-500">Ultimo fin</p>
-                  <p className="mt-2 font-semibold text-surface-900 dark:text-white">
-                    {editingCampaign.last_dispatch_finished_at ? formatDateTime(editingCampaign.last_dispatch_finished_at) : 'Sin cierre registrado'}
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-400">Intentos</p>
+                  <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
+                    {editingCampaign.dispatch_attempts}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-400">Destinatarios</p>
+                  <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
+                    {editingCampaign.total_recipients}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-400">Abiertos / CTR</p>
+                  <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
+                    {editingCampaign.total_opened} / {calculateRate(editingCampaign.total_clicked, editingCampaign.total_sent)}%
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-400">Último inicio</p>
+                  <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
+                    {editingCampaign.last_dispatch_attempted_at
+                      ? formatDateTime(editingCampaign.last_dispatch_attempted_at)
+                      : '—'}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-wide text-surface-400">Último fin</p>
+                  <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
+                    {editingCampaign.last_dispatch_finished_at
+                      ? formatDateTime(editingCampaign.last_dispatch_finished_at)
+                      : '—'}
                   </p>
                 </div>
               </div>
 
               {editingCampaign.last_dispatch_error ? (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
-                  <p className="font-semibold">Ultimo error</p>
-                  <p className="mt-1 leading-6">{editingCampaign.last_dispatch_error}</p>
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+                  <p className="font-semibold">Último error</p>
+                  <p className="mt-1 leading-5">{editingCampaign.last_dispatch_error}</p>
                 </div>
               ) : null}
             </div>
           ) : null}
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
+            <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>
+              Cancelar
+            </button>
             <button type="submit" className="btn-primary" disabled={saveMutation.isPending}>
-              {saveMutation.isPending ? 'Guardando...' : form.id ? 'Guardar cambios' : 'Crear campana'}
+              {saveMutation.isPending ? 'Guardando…' : form.id ? 'Guardar cambios' : 'Crear campaña'}
             </button>
           </div>
         </form>
       </Modal>
 
+      {/* ── Modal: Envío rápido ── */}
       <Modal
         open={showBroadcastModal}
         size="lg"
-        title="Composer de broadcast"
-        description="Selecciona clientes, reutiliza la audiencia guardada de la campana y dispara notificaciones o push por lote con feedback agregado."
+        title="Envío rápido"
+        description="Selecciona clientes y envía el mismo aviso de una sola vez."
         onClose={() => {
-          if (!broadcastMutation.isPending) {
-            setShowBroadcastModal(false);
-          }
+          if (!broadcastMutation.isPending) setShowBroadcastModal(false);
         }}
       >
-        <form className="space-y-5" onSubmit={(event) => { event.preventDefault(); broadcastMutation.mutate(); }}>
-          <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/60">
-            <p className="text-sm font-semibold text-surface-900 dark:text-white">{broadcastForm.campaign_name}</p>
-            <p className="mt-1 text-sm text-surface-500">
-              {broadcastForm.campaign_id ? 'Broadcast vinculado a una campana existente; al enviarlo se actualizan sus metricas base.' : 'Broadcast libre no vinculado a una campana persistida.'}
+        <form
+          className="space-y-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            broadcastMutation.mutate();
+          }}
+        >
+          {/* Contexto de campaña */}
+          <div
+            className={cn(
+              'rounded-2xl border px-4 py-3',
+              broadcastForm.campaign_id
+                ? 'border-brand-200 bg-brand-50 dark:border-brand-800/50 dark:bg-brand-950/20'
+                : 'border-surface-200 bg-surface-50 dark:border-surface-800 dark:bg-surface-950/60',
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {broadcastForm.campaign_id ? (
+                <Megaphone size={14} className="shrink-0 text-brand-500" />
+              ) : (
+                <Zap size={14} className="shrink-0 text-surface-400" />
+              )}
+              <p className="text-sm font-semibold text-surface-900 dark:text-white">{broadcastForm.campaign_name}</p>
+            </div>
+            <p className="mt-0.5 text-xs text-surface-500">
+              {broadcastForm.campaign_id
+                ? 'Los resultados de este envío se sumarán a la campaña vinculada.'
+                : 'Este envío es independiente y no se vincula a ninguna campaña guardada.'}
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-[1fr_220px]">
+          {/* Título + tipo */}
+          <div className="grid gap-4 sm:grid-cols-[1fr_180px]">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Titulo</label>
-              <input className="input" value={broadcastForm.title} onChange={(event) => setBroadcastForm((current) => ({ ...current, title: event.target.value }))} required />
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Título del aviso <span className="text-rose-500">*</span>
+              </label>
+              <input
+                className="input"
+                value={broadcastForm.title}
+                onChange={(e) => setBroadcastForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="Lo que verá el cliente"
+                required
+              />
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Tipo</label>
-              <select className="input" value={broadcastForm.type} onChange={(event) => setBroadcastForm((current) => ({ ...current, type: event.target.value as AppNotification['type'] }))}>
-                <option value="info">info</option>
-                <option value="success">success</option>
-                <option value="warning">warning</option>
-                <option value="error">error</option>
+              <select
+                className="input"
+                value={broadcastForm.type}
+                onChange={(e) =>
+                  setBroadcastForm((f) => ({ ...f, type: e.target.value as AppNotification['type'] }))
+                }
+              >
+                <option value="info">Informativo</option>
+                <option value="success">Confirmación</option>
+                <option value="warning">Importante</option>
+                <option value="error">Urgente</option>
               </select>
             </div>
           </div>
 
+          {/* Mensaje */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Mensaje</label>
-            <textarea className="input min-h-32 resize-y" value={broadcastForm.message} onChange={(event) => setBroadcastForm((current) => ({ ...current, message: event.target.value }))} placeholder="Oferta, recordatorio o anuncio que se guardara como notificacion del cliente." />
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Mensaje (opcional)
+            </label>
+            <textarea
+              className="input min-h-24 resize-y"
+              value={broadcastForm.message}
+              onChange={(e) => setBroadcastForm((f) => ({ ...f, message: e.target.value }))}
+              placeholder="Detalle de la oferta, recordatorio o anuncio."
+            />
           </div>
 
+          {/* Destino */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Action URL</label>
-            <input className="input" value={broadcastForm.action_url} onChange={(event) => setBroadcastForm((current) => ({ ...current, action_url: event.target.value }))} placeholder="nexofitness://store" />
-            <div className="mt-3 flex flex-wrap gap-2">
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Abrir al tocar el aviso
+            </label>
+            <input
+              className="input"
+              value={broadcastForm.action_url}
+              onChange={(e) => setBroadcastForm((f) => ({ ...f, action_url: e.target.value }))}
+              placeholder="Sección de la app o URL personalizada"
+            />
+            <div className="mt-2 flex flex-wrap gap-2">
               {actionUrlPresets.map((preset) => (
                 <button
                   key={preset.value}
                   type="button"
-                  onClick={() => setBroadcastForm((current) => ({ ...current, action_url: preset.value }))}
-                  className={cn('rounded-xl px-3 py-2 text-sm transition-colors', broadcastForm.action_url === preset.value ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300' : 'bg-surface-100 text-surface-600 hover:bg-surface-200 dark:bg-surface-900 dark:text-surface-300 dark:hover:bg-surface-800')}
+                  onClick={() => setBroadcastForm((f) => ({ ...f, action_url: preset.value }))}
+                  className={cn(
+                    'rounded-xl px-3 py-1.5 text-sm transition-colors',
+                    broadcastForm.action_url === preset.value
+                      ? 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                      : 'bg-surface-100 text-surface-600 hover:bg-surface-200 dark:bg-surface-800 dark:text-surface-300 dark:hover:bg-surface-700',
+                  )}
                 >
                   {preset.label}
                 </button>
@@ -814,140 +1110,251 @@ export default function MarketingPage() {
             </div>
           </div>
 
-          <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
-            <input type="checkbox" checked={broadcastForm.send_push} onChange={(event) => setBroadcastForm((current) => ({ ...current, send_push: event.target.checked }))} />
-            <span className="text-sm text-surface-700 dark:text-surface-300">Intentar envio push remoto via Expo para todos los clientes seleccionados</span>
+          {/* Push toggle */}
+          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
+            <input
+              type="checkbox"
+              checked={broadcastForm.send_push}
+              onChange={(e) => setBroadcastForm((f) => ({ ...f, send_push: e.target.checked }))}
+            />
+            <span className="text-sm text-surface-700 dark:text-surface-300">
+              Enviar también al dispositivo de cada cliente (push remoto)
+            </span>
           </label>
 
+          {/* Audiencia */}
           <div className="rounded-3xl border border-surface-200/60 bg-surface-50 p-5 dark:border-surface-800/60 dark:bg-surface-950/60">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h3 className="text-base font-semibold text-surface-900 dark:text-white">Audiencia</h3>
-                <p className="mt-1 text-sm text-surface-500">
-                  {broadcastForm.segment_filter ? `La campana trae guardado este segmento: ${buildSegmentSummary(broadcastForm.segment_filter)}.` : 'Este broadcast no tiene segmento persistido; puedes seleccionar clientes manualmente.'}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Destinatarios</h3>
+                  {broadcastForm.user_ids.length > 0 && (
+                    <span className="rounded-full bg-brand-500 px-2 py-0.5 text-xs font-bold text-white">
+                      {broadcastForm.user_ids.length}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-surface-500">
+                  {broadcastForm.segment_filter
+                    ? `Segmento guardado: ${buildSegmentSummary(broadcastForm.segment_filter)}.`
+                    : 'Selecciona clientes manualmente para este envío.'}
                 </p>
               </div>
               {broadcastForm.segment_filter ? (
-                <button type="button" className="btn-secondary" onClick={applySavedSegment}>
-                  Aplicar segmento
-                </button>
+                <Tooltip content={`Seleccionar los ${segmentMatchedClients.length} clientes del segmento guardado`}>
+                  <button type="button" className="btn-secondary shrink-0" onClick={applySavedSegment}>
+                    <UsersRound size={14} />
+                    Usar segmento ({segmentMatchedClients.length})
+                  </button>
+                </Tooltip>
               ) : null}
             </div>
 
-            {broadcastForm.segment_filter ? (
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-surface-500">
-                <span className="rounded-full bg-white px-3 py-1 dark:bg-surface-900">{buildSegmentSummary(broadcastForm.segment_filter)}</span>
-                <span className="rounded-full bg-white px-3 py-1 dark:bg-surface-900">{segmentMatchedClients.length} coincidencia(s) actuales</span>
+            {/* Barra de progreso */}
+            {clientItems.length > 0 && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-xs text-surface-400">
+                  <span>
+                    {broadcastForm.user_ids.length} de {clientItems.length} seleccionados
+                  </span>
+                  <span>máx. 100 clientes cargados</span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-200 dark:bg-surface-700">
+                  <div
+                    className="h-full rounded-full bg-brand-500 transition-all duration-300"
+                    style={{
+                      width: `${clientItems.length ? (broadcastForm.user_ids.length / clientItems.length) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
               </div>
-            ) : null}
+            )}
 
+            {/* Búsqueda + acciones */}
             <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
               <div className="relative flex-1">
-                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400" />
-                <input className="input pl-10" value={recipientSearch} onChange={(event) => setRecipientSearch(event.target.value)} placeholder="Buscar cliente por nombre o email" />
+                <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400" />
+                <input
+                  className="input pl-10"
+                  value={recipientSearch}
+                  onChange={(e) => setRecipientSearch(e.target.value)}
+                  placeholder="Buscar por nombre o email…"
+                />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn-secondary" onClick={selectAllFilteredRecipients}>Seleccionar filtrados</button>
-                <button type="button" className="btn-secondary" onClick={clearRecipients}>Limpiar</button>
+              <div className="flex gap-2">
+                <button type="button" className="btn-secondary" onClick={selectAllFilteredRecipients}>
+                  Seleccionar todos
+                </button>
+                {broadcastForm.user_ids.length > 0 && (
+                  <button type="button" className="btn-secondary" onClick={clearRecipients}>
+                    Limpiar
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="mt-4 flex items-center justify-between text-sm text-surface-500">
-              <span>{broadcastForm.user_ids.length} cliente(s) seleccionados</span>
-              <span>Base cargada: hasta 100 clientes del tenant</span>
-            </div>
+            {/* Lista de clientes */}
+            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+              {isLoadingClients
+                ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-16 rounded-2xl" />)
+                : null}
 
-            <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
-              {isLoadingClients ? Array.from({ length: 4 }).map((_, index) => <div key={index} className="shimmer h-16 rounded-2xl" />) : null}
               {isClientsError ? (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-                  No pudimos cargar clientes para esta campana.
+                  No pudimos cargar los clientes. Intenta cerrar y abrir el modal de nuevo.
                 </div>
               ) : null}
-              {!isLoadingClients && !isClientsError && !filteredClients.length ? (
-                <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-sm text-surface-500 dark:border-surface-700">
-                  No hay clientes que coincidan con la busqueda actual.
+
+              {!isLoadingClients && !isClientsError && filteredClients.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-center text-sm text-surface-500 dark:border-surface-700">
+                  No hay clientes que coincidan con la búsqueda.
                 </div>
               ) : null}
-              {!isLoadingClients && !isClientsError ? filteredClients.map((client) => {
-                const selected = broadcastForm.user_ids.includes(client.id);
-                const matchesSegment = broadcastForm.segment_filter ? matchesCampaignSegment(client, normalizeSegmentFilter(broadcastForm.segment_filter)) : false;
-                return (
-                  <button
-                    key={client.id}
-                    type="button"
-                    onClick={() => toggleRecipient(client.id)}
-                    className={cn('flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition-colors', selected ? 'border-brand-300 bg-brand-50 dark:border-brand-700 dark:bg-brand-950/30' : 'border-surface-200 bg-white hover:border-surface-300 dark:border-surface-800 dark:bg-surface-900')}
-                  >
-                    <div>
-                      <p className="font-medium text-surface-900 dark:text-white">{client.first_name} {client.last_name}</p>
-                      <p className="mt-1 text-sm text-surface-500">{client.email}</p>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-surface-500">
-                        <span className={cn('rounded-full px-2 py-1', client.is_active ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-surface-100 dark:bg-surface-800')}>
-                          {client.is_active ? 'Activo' : 'Inactivo'}
+
+              {!isLoadingClients && !isClientsError
+                ? filteredClients.map((client: User) => {
+                    const selected = broadcastForm.user_ids.includes(client.id);
+                    const matchesSegment = broadcastForm.segment_filter
+                      ? matchesCampaignSegment(client, normalizeSegmentFilter(broadcastForm.segment_filter))
+                      : false;
+                    return (
+                      <button
+                        key={client.id}
+                        type="button"
+                        onClick={() => toggleRecipient(client.id)}
+                        className={cn(
+                          'flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors',
+                          selected
+                            ? 'border-brand-300 bg-brand-50 dark:border-brand-700 dark:bg-brand-950/30'
+                            : 'border-surface-200 bg-white hover:border-surface-300 dark:border-surface-800 dark:bg-surface-900 dark:hover:border-surface-700',
+                        )}
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-surface-900 dark:text-white">
+                            {client.first_name} {client.last_name}
+                          </p>
+                          <p className="mt-0.5 text-xs text-surface-500">{client.email}</p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            <span
+                              className={cn(
+                                'rounded-full px-2 py-0.5 text-xs',
+                                client.is_active
+                                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : 'bg-surface-100 text-surface-500 dark:bg-surface-800',
+                              )}
+                            >
+                              {client.is_active ? 'Activo' : 'Inactivo'}
+                            </span>
+                            {matchesSegment ? (
+                              <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">
+                                En segmento
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <span className={cn('badge ml-3 shrink-0', selected ? 'badge-success' : 'badge-neutral')}>
+                          {selected ? 'Incluido' : 'Disponible'}
                         </span>
-                        {matchesSegment ? (
-                          <span className="rounded-full bg-brand-50 px-2 py-1 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">
-                            Coincide con segmento
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <span className={cn('badge', selected ? 'badge-success' : 'badge-neutral')}>{selected ? 'Incluido' : 'Disponible'}</span>
-                  </button>
-                );
-              }) : null}
+                      </button>
+                    );
+                  })
+                : null}
             </div>
           </div>
 
+          {/* Resultado del último envío */}
           {lastBroadcastResult ? (
-            <div className="space-y-4 rounded-3xl border border-surface-200/60 bg-surface-50 p-5 dark:border-surface-800/60 dark:bg-surface-950/60">
+            <div className="space-y-4 rounded-3xl border border-emerald-200/60 bg-emerald-50/40 p-5 dark:border-emerald-900/40 dark:bg-emerald-950/10">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h3 className="text-base font-semibold text-surface-900 dark:text-white">Resultado del ultimo broadcast</h3>
-                  <p className="mt-1 text-sm text-surface-500">
-                    {lastBroadcastResult.total_notifications} notificacion(es) creadas para {lastBroadcastResult.total_recipients} cliente(s).
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={17} className="text-emerald-500" />
+                    <h3 className="text-sm font-semibold text-surface-900 dark:text-white">Envío completado</h3>
+                  </div>
+                  <p className="mt-1 text-xs text-surface-500">
+                    {lastBroadcastResult.total_notifications} notificación(es) para{' '}
+                    {lastBroadcastResult.total_recipients} cliente(s).
                   </p>
                 </div>
-                <span className={cn('badge', lastBroadcastResult.errored_push_deliveries ? 'badge-warning' : 'badge-success')}>
-                  {lastBroadcastResult.accepted_push_deliveries}/{lastBroadcastResult.total_push_deliveries} delivery(s) ok
-                </span>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-4">
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-sm text-surface-500">Clientes</p>
-                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{lastBroadcastResult.total_recipients}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-sm text-surface-500">Notifications</p>
-                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{lastBroadcastResult.total_notifications}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-sm text-surface-500">Push OK</p>
-                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{lastBroadcastResult.accepted_push_deliveries}</p>
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-4 dark:bg-surface-900">
-                  <p className="text-sm text-surface-500">Push error</p>
-                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{lastBroadcastResult.errored_push_deliveries}</p>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      'badge shrink-0',
+                      lastBroadcastResult.errored_push_deliveries ? 'badge-warning' : 'badge-success',
+                    )}
+                  >
+                    {lastBroadcastResult.accepted_push_deliveries}/{lastBroadcastResult.total_push_deliveries} push
+                    correctas
+                  </span>
+                  <button type="button" className="btn-secondary shrink-0" onClick={resetBroadcastForNew}>
+                    Nuevo envío
+                  </button>
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs text-surface-500">Clientes</p>
+                  <p className="mt-1 text-xl font-bold font-display text-surface-900 dark:text-white">
+                    {lastBroadcastResult.total_recipients}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs text-surface-500">Notificaciones</p>
+                  <p className="mt-1 text-xl font-bold font-display text-surface-900 dark:text-white">
+                    {lastBroadcastResult.total_notifications}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs text-surface-500">Push correctas</p>
+                  <p className="mt-1 text-xl font-bold font-display text-emerald-600 dark:text-emerald-400">
+                    {lastBroadcastResult.accepted_push_deliveries}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs text-surface-500">Con problemas</p>
+                  <p
+                    className={cn(
+                      'mt-1 text-xl font-bold font-display',
+                      lastBroadcastResult.errored_push_deliveries
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-surface-900 dark:text-white',
+                    )}
+                  >
+                    {lastBroadcastResult.errored_push_deliveries}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 {lastBroadcastResult.recipients.map((recipient) => (
-                  <div key={recipient.user_id} className="rounded-2xl border border-surface-200/60 bg-white px-4 py-4 dark:border-surface-800/60 dark:bg-surface-900">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div
+                    key={recipient.user_id}
+                    className="rounded-2xl border border-surface-200/60 bg-white px-4 py-3 dark:border-surface-800/60 dark:bg-surface-900"
+                  >
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="font-medium text-surface-900 dark:text-white">{recipient.user_name || recipient.user_id}</p>
-                        <p className="mt-1 text-sm text-surface-500">
+                        <p className="text-sm font-medium text-surface-900 dark:text-white">
+                          {recipient.user_name || 'Cliente sin nombre'}
+                        </p>
+                        <p className="text-xs text-surface-500">
                           {recipient.notification.title} · {formatDateTime(recipient.notification.created_at)}
                         </p>
                       </div>
-                      <span className={cn('badge', recipient.push_deliveries.some((delivery) => delivery.status !== 'ok') ? 'badge-warning' : recipient.push_deliveries.length ? 'badge-success' : 'badge-neutral')}>
+                      <span
+                        className={cn(
+                          'badge shrink-0',
+                          recipient.push_deliveries.some((d) => d.status !== 'ok')
+                            ? 'badge-warning'
+                            : recipient.push_deliveries.length
+                              ? 'badge-success'
+                              : 'badge-neutral',
+                        )}
+                      >
                         {recipient.push_deliveries.length
-                          ? `${recipient.push_deliveries.filter((delivery) => delivery.status === 'ok').length}/${recipient.push_deliveries.length} ok`
+                          ? `${recipient.push_deliveries.filter((d) => d.status === 'ok').length}/${recipient.push_deliveries.length} push`
                           : lastBroadcastUsedPush
-                            ? 'Sin push'
+                            ? 'Sin dispositivo'
                             : 'Solo bandeja'}
                       </span>
                     </div>
@@ -964,9 +1371,15 @@ export default function MarketingPage() {
             <button
               type="submit"
               className="btn-primary"
-              disabled={broadcastMutation.isPending || !broadcastForm.title.trim() || !broadcastForm.user_ids.length}
+              disabled={broadcastMutation.isPending || !broadcastForm.title.trim() || broadcastForm.user_ids.length === 0}
             >
-              {broadcastMutation.isPending ? 'Enviando...' : broadcastForm.send_push ? 'Enviar broadcast push' : 'Crear broadcast'}
+              {broadcastMutation.isPending
+                ? 'Enviando…'
+                : broadcastForm.user_ids.length === 0
+                  ? 'Selecciona destinatarios'
+                  : broadcastForm.send_push
+                    ? `Enviar a ${broadcastForm.user_ids.length} cliente(s)`
+                    : `Guardar para ${broadcastForm.user_ids.length} cliente(s)`}
             </button>
           </div>
         </form>

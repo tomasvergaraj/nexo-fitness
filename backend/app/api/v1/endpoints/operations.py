@@ -2,12 +2,14 @@
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +24,7 @@ from app.core.dependencies import (
     require_roles,
 )
 from app.models.business import (
+    BodyMeasurement,
     Branch,
     Campaign,
     CampaignStatus,
@@ -33,8 +36,12 @@ from app.models.business import (
     Notification,
     Payment,
     PaymentStatus,
+    PersonalRecord,
     Plan,
+    PromoCode,
+    ProgressPhoto,
     Reservation,
+    ReservationStatus,
     SupportInteraction,
     TrainingProgram,
 )
@@ -50,10 +57,13 @@ from app.schemas.business import (
     PaginatedResponse,
 )
 from app.schemas.platform import (
+    BodyMeasurementCreate,
+    BodyMeasurementResponse,
     CampaignOverviewResponse,
     CampaignUpdateRequest,
     MembershipCreateRequest,
     MembershipResponse,
+    MobileSupportInteractionCreateRequest,
     NotificationBroadcastRecipientResponse,
     NotificationBroadcastRequest,
     NotificationBroadcastResponse,
@@ -68,6 +78,14 @@ from app.schemas.platform import (
     PaymentProviderAccountCreateRequest,
     PaymentProviderAccountResponse,
     PaymentProviderAccountUpdateRequest,
+    PersonalRecordCreate,
+    PersonalRecordResponse,
+    ProgressPhotoResponse,
+    PromoCodeCreate,
+    PromoCodeUpdate,
+    PromoCodeResponse,
+    PromoCodeValidateRequest,
+    PromoCodeValidateResponse,
     PushDeliveryResponse,
     PushSubscriptionCreateRequest,
     PushSubscriptionResponse,
@@ -92,6 +110,7 @@ from app.services.campaign_service import (
     parse_segment_filter,
     serialize_segment_filter,
 )
+from app.services.calendar_export_service import build_member_calendar_ical
 from app.services.branding_service import (
     DEFAULT_PRIMARY_COLOR,
     DEFAULT_SECONDARY_COLOR,
@@ -102,6 +121,7 @@ from app.services.push_notification_service import NotificationDispatchResult, c
 from app.services.push_notification_service import get_notification_dispatch_result, refresh_push_receipts
 from app.services.push_notification_service import record_notification_engagement
 from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
+from app.services.support_contact_service import resolve_tenant_support_contacts
 
 branches_router = APIRouter(prefix="/branches", tags=["Branches"])
 memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
@@ -115,7 +135,17 @@ reports_router = APIRouter(prefix="/reports", tags=["Reports"])
 notifications_router = APIRouter(prefix="/notifications", tags=["Notifications"])
 payment_accounts_router = APIRouter(prefix="/payment-provider/accounts", tags=["Payment Accounts"])
 mobile_router = APIRouter(prefix="/mobile", tags=["Mobile"])
+promo_codes_router = APIRouter(prefix="/promo-codes", tags=["Promo Codes"])
+progress_router = APIRouter(prefix="/progress", tags=["Progress"])
+personal_records_router = APIRouter(prefix="/personal-records", tags=["Personal Records"])
 settings = get_settings()
+_SUPPORT_STAFF_ROLES = (
+    UserRole.OWNER,
+    UserRole.ADMIN,
+    UserRole.RECEPTION,
+    UserRole.TRAINER,
+    UserRole.MARKETING,
+)
 
 
 def _loads_dict(raw_value: Optional[str]) -> dict[str, Any]:
@@ -305,6 +335,18 @@ def _program_payload(program: TrainingProgram, trainer: Optional[User]) -> Train
     )
 
 
+async def _get_default_program_trainer_id(db: AsyncSession, tenant_id: UUID) -> Optional[UUID]:
+    return (
+        await db.execute(
+            select(User.id).where(
+                User.tenant_id == tenant_id,
+                User.role == UserRole.OWNER,
+                User.is_active == True,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 def _support_payload(
     interaction: SupportInteraction,
     client: Optional[User],
@@ -322,6 +364,57 @@ def _support_payload(
         client_name=client.full_name if client else None,
         handler_name=handler.full_name if handler else None,
     )
+
+
+async def _get_support_related_users(
+    db: AsyncSession,
+    interactions: list[SupportInteraction],
+) -> dict[UUID, User]:
+    related_ids = [value for item in interactions for value in (item.user_id, item.handled_by) if value]
+    if not related_ids:
+        return {}
+
+    result = await db.execute(select(User).where(User.id.in_(related_ids)))
+    return {user.id: user for user in result.scalars().all()}
+
+
+async def _get_support_client(
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID | None,
+) -> User | None:
+    if user_id is None:
+        return None
+
+    return (
+        await db.execute(
+            select(User).where(
+                User.id == user_id,
+                User.tenant_id == tenant_id,
+                User.role == UserRole.CLIENT,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _get_support_handler(
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID | None,
+) -> User | None:
+    if user_id is None:
+        return None
+
+    return (
+        await db.execute(
+            select(User).where(
+                User.id == user_id,
+                User.tenant_id == tenant_id,
+                User.role.in_(_SUPPORT_STAFF_ROLES),
+                User.is_active == True,
+            )
+        )
+    ).scalar_one_or_none()
 
 
 def _payment_account_payload(account: TenantPaymentProviderAccount) -> PaymentProviderAccountResponse:
@@ -397,7 +490,7 @@ async def update_branch(
 ):
     branch = await db.get(Branch, branch_id)
     if not branch or branch.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Branch not found")
+        raise HTTPException(status_code=404, detail="Sede no encontrada")
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(branch, field, value)
@@ -467,11 +560,11 @@ async def create_membership(
 ):
     user = await db.get(User, data.user_id)
     if not user or user.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     plan = await db.get(Plan, data.plan_id)
     if not plan or plan.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Plan not found")
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
 
     expires_at = data.expires_at
     if expires_at is None and plan.duration_days:
@@ -502,7 +595,7 @@ async def update_membership(
 ):
     membership = await db.get(Membership, membership_id)
     if not membership or membership.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Membership not found")
+        raise HTTPException(status_code=404, detail="Membresía no encontrada")
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(membership, field, value)
@@ -656,7 +749,7 @@ async def update_campaign(
 ):
     campaign = await db.get(Campaign, campaign_id)
     if not campaign or campaign.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
     previous_status = campaign.status
     payload = data.model_dump(exclude_unset=True)
@@ -693,15 +786,26 @@ async def list_support_interactions(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     resolved: Optional[bool] = None,
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception")),
 ):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser mayor que la fecha final")
+
     query = select(SupportInteraction).where(SupportInteraction.tenant_id == ctx.tenant_id)
     count_query = select(func.count()).select_from(SupportInteraction).where(SupportInteraction.tenant_id == ctx.tenant_id)
     if resolved is not None:
         query = query.where(SupportInteraction.resolved == resolved)
         count_query = count_query.where(SupportInteraction.resolved == resolved)
+    if date_from:
+        query = query.where(SupportInteraction.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
+        count_query = count_query.where(SupportInteraction.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
+    if date_to:
+        query = query.where(SupportInteraction.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
+        count_query = count_query.where(SupportInteraction.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
 
     total = (await db.execute(count_query)).scalar() or 0
     interactions = (
@@ -710,12 +814,7 @@ async def list_support_interactions(
         )
     ).scalars().all()
 
-    related_ids = [value for item in interactions for value in (item.user_id, item.handled_by) if value]
-    related_users = {
-        user.id: user for user in (
-            await db.execute(select(User).where(User.id.in_(related_ids)))
-        ).scalars().all()
-    } if related_ids else {}
+    related_users = await _get_support_related_users(db, interactions)
 
     return PaginatedResponse(
         items=[
@@ -734,8 +833,16 @@ async def create_support_interaction(
     data: SupportInteractionCreateRequest,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
+    _user: User = Depends(require_roles("owner", "admin", "reception")),
 ):
+    client = await _get_support_client(db, ctx.tenant_id, data.user_id)
+    if data.user_id and client is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    handler = await _get_support_handler(db, ctx.tenant_id, data.handled_by)
+    if data.handled_by and handler is None:
+        raise HTTPException(status_code=404, detail="Responsable no encontrado")
+
     interaction = SupportInteraction(
         tenant_id=ctx.tenant_id,
         user_id=data.user_id,
@@ -743,13 +850,12 @@ async def create_support_interaction(
         subject=data.subject,
         notes=data.notes,
         handled_by=data.handled_by,
+        resolved=data.resolved,
     )
     db.add(interaction)
     await db.flush()
     await db.refresh(interaction)
 
-    client = await db.get(User, interaction.user_id) if interaction.user_id else None
-    handler = await db.get(User, interaction.handled_by) if interaction.handled_by else None
     return _support_payload(interaction, client, handler)
 
 
@@ -763,15 +869,23 @@ async def update_support_interaction(
 ):
     interaction = await db.get(SupportInteraction, interaction_id)
     if not interaction or interaction.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Support interaction not found")
+        raise HTTPException(status_code=404, detail="Interacción de soporte no encontrada")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+
+    if "handled_by" in payload:
+        handler = await _get_support_handler(db, ctx.tenant_id, payload["handled_by"])
+        if payload["handled_by"] and handler is None:
+            raise HTTPException(status_code=404, detail="Responsable no encontrado")
+    else:
+        handler = await _get_support_handler(db, ctx.tenant_id, interaction.handled_by)
+
+    for field, value in payload.items():
         setattr(interaction, field, value)
 
     await db.flush()
     await db.refresh(interaction)
-    client = await db.get(User, interaction.user_id) if interaction.user_id else None
-    handler = await db.get(User, interaction.handled_by) if interaction.handled_by else None
+    client = await _get_support_client(db, ctx.tenant_id, interaction.user_id)
     return _support_payload(interaction, client, handler)
 
 
@@ -881,11 +995,12 @@ async def create_program(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "trainer")),
 ):
+    trainer_id = data.trainer_id or await _get_default_program_trainer_id(db, ctx.tenant_id)
     program = TrainingProgram(
         tenant_id=ctx.tenant_id,
         name=data.name,
         description=data.description,
-        trainer_id=data.trainer_id,
+        trainer_id=trainer_id,
         program_type=data.program_type,
         duration_weeks=data.duration_weeks,
         schedule_json=json.dumps(data.schedule),
@@ -908,7 +1023,7 @@ async def update_program(
 ):
     program = await db.get(TrainingProgram, program_id)
     if not program or program.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Program not found")
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
 
     payload = data.model_dump(exclude_unset=True)
     if "schedule" in payload:
@@ -925,14 +1040,14 @@ async def update_program(
 @settings_router.get("", response_model=TenantSettingsResponse)
 async def get_tenant_settings(
     tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
     _user=Depends(require_roles("owner", "admin")),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     features = _feature_map(tenant)
-    support_email = str(features.get("support_email", tenant.email))
-    support_phone = str(features.get("support_phone", tenant.phone or "")) or None
+    support_email, support_phone = await resolve_tenant_support_contacts(db, tenant)
     primary_color = coerce_brand_color(tenant.primary_color, DEFAULT_PRIMARY_COLOR)
     secondary_color = coerce_brand_color(tenant.secondary_color, DEFAULT_SECONDARY_COLOR)
     try:
@@ -983,7 +1098,7 @@ async def update_tenant_settings(
     _user=Depends(require_roles("owner", "admin")),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     payload = data.model_dump(exclude_unset=True)
     color_labels = {
@@ -1039,7 +1154,7 @@ async def update_tenant_settings(
         _save_feature_map(tenant, feature_updates)
 
     await db.flush()
-    return await get_tenant_settings(tenant=tenant)
+    return await get_tenant_settings(tenant=tenant, db=db)
 
 
 @reports_router.get("/overview", response_model=ReportsOverviewResponse)
@@ -1143,18 +1258,129 @@ async def get_reports_overview(
     )
 
 
+@reports_router.get("/attendance")
+async def get_attendance_report(
+    range_key: str = Query("30d", pattern=r"^(30d|90d|12m)$"),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Return class occupancy and instructor attendance rankings."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=365 if range_key == "12m" else 90 if range_key == "90d" else 30)
+    tid = ctx.tenant_id
+
+    # Load classes in range
+    classes = (await db.execute(
+        select(GymClass).where(
+            GymClass.tenant_id == tid,
+            GymClass.start_time >= since,
+            GymClass.status != ClassStatus.CANCELLED,
+        )
+    )).scalars().all()
+
+    if not classes:
+        return {"classes": [], "instructors": []}
+
+    class_ids = [c.id for c in classes]
+
+    # Count confirmed reservations per class
+    res_counts_result = await db.execute(
+        select(Reservation.gym_class_id, func.count().label("count"))
+        .where(
+            Reservation.tenant_id == tid,
+            Reservation.gym_class_id.in_(class_ids),
+            Reservation.status.in_(["confirmed", "attended"]),
+        )
+        .group_by(Reservation.gym_class_id)
+    )
+    res_by_class = {row.gym_class_id: row.count for row in res_counts_result}
+
+    # Count check-ins per class
+    checkin_counts_result = await db.execute(
+        select(CheckIn.gym_class_id, func.count().label("count"))
+        .where(
+            CheckIn.tenant_id == tid,
+            CheckIn.gym_class_id.in_(class_ids),
+        )
+        .group_by(CheckIn.gym_class_id)
+    )
+    checkin_by_class = {row.gym_class_id: row.count for row in checkin_counts_result}
+
+    # Aggregate by class name (since same class recurs)
+    class_stats: dict[str, dict] = {}
+    for c in classes:
+        key = c.name
+        if key not in class_stats:
+            class_stats[key] = {"name": key, "sessions": 0, "total_capacity": 0, "total_reservations": 0, "total_checkins": 0}
+        class_stats[key]["sessions"] += 1
+        class_stats[key]["total_capacity"] += c.max_capacity or 0
+        class_stats[key]["total_reservations"] += res_by_class.get(c.id, 0)
+        class_stats[key]["total_checkins"] += checkin_by_class.get(c.id, 0)
+
+    class_rows = []
+    for stat in class_stats.values():
+        occupancy_pct = round(stat["total_reservations"] / stat["total_capacity"] * 100, 1) if stat["total_capacity"] else 0
+        attendance_pct = round(stat["total_checkins"] / stat["total_reservations"] * 100, 1) if stat["total_reservations"] else 0
+        class_rows.append({
+            "name": stat["name"],
+            "sessions": stat["sessions"],
+            "avg_occupancy_pct": occupancy_pct,
+            "avg_attendance_pct": attendance_pct,
+            "total_reservations": stat["total_reservations"],
+            "total_checkins": stat["total_checkins"],
+        })
+    class_rows.sort(key=lambda x: x["avg_occupancy_pct"], reverse=True)
+
+    # Instructor rankings
+    instructor_ids = list({c.instructor_id for c in classes if c.instructor_id})
+    instructor_stats: dict = {}
+    for c in classes:
+        if not c.instructor_id:
+            continue
+        iid = str(c.instructor_id)
+        if iid not in instructor_stats:
+            instructor_stats[iid] = {"instructor_id": iid, "name": None, "sessions": 0, "total_reservations": 0, "total_checkins": 0}
+        instructor_stats[iid]["sessions"] += 1
+        instructor_stats[iid]["total_reservations"] += res_by_class.get(c.id, 0)
+        instructor_stats[iid]["total_checkins"] += checkin_by_class.get(c.id, 0)
+
+    if instructor_ids:
+        users = (await db.execute(select(User).where(User.id.in_(instructor_ids)))).scalars().all()
+        for u in users:
+            iid = str(u.id)
+            if iid in instructor_stats:
+                instructor_stats[iid]["name"] = f"{u.first_name} {u.last_name}"
+
+    instructor_rows = sorted(instructor_stats.values(), key=lambda x: x["total_checkins"], reverse=True)
+
+    return {"classes": class_rows[:20], "instructors": instructor_rows[:10]}
+
+
 @notifications_router.get("", response_model=list[NotificationResponse])
 async def list_notifications(
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    limit: int = Query(100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser mayor que la fecha final")
+
+    query = (
         select(Notification)
         .where(Notification.tenant_id == ctx.tenant_id, Notification.user_id == current_user.id)
         .order_by(Notification.created_at.desc())
-        .limit(20)
     )
+
+    if date_from:
+        query = query.where(Notification.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
+    if date_to:
+        query = query.where(Notification.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
+
+    result = await db.execute(query.limit(limit))
     return [_notification_payload(notification) for notification in result.scalars().all()]
 
 
@@ -1167,7 +1393,7 @@ async def create_notification(
 ):
     recipient = await db.get(User, data.user_id)
     if not recipient or recipient.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     result = await create_and_dispatch_notification(
         db,
@@ -1219,7 +1445,7 @@ async def broadcast_notifications(
     if data.campaign_id:
         campaign = await db.get(Campaign, data.campaign_id)
         if not campaign or campaign.tenant_id != ctx.tenant_id:
-            raise HTTPException(status_code=404, detail="Campaign not found")
+            raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
     try:
         summary = await dispatch_campaign_broadcast(
@@ -1260,7 +1486,7 @@ async def update_notification(
 ):
     notification = await db.get(Notification, notification_id)
     if not notification or notification.tenant_id != ctx.tenant_id or notification.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Notification not found")
+        raise HTTPException(status_code=404, detail="Notificación no encontrada")
 
     notification = await record_notification_engagement(
         db,
@@ -1328,7 +1554,7 @@ async def update_payment_account(
 ):
     account = await db.get(TenantPaymentProviderAccount, account_id)
     if not account or account.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Payment account not found")
+        raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
 
     payload = data.model_dump(exclude_unset=True)
     if payload.get("is_default"):
@@ -1357,7 +1583,7 @@ async def get_mobile_wallet(
     current_user: User = Depends(get_current_user),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     membership = (
         await db.execute(
@@ -1381,6 +1607,40 @@ async def get_mobile_wallet(
         )
     ).scalars().first()
 
+    # Reservation quota: count confirmed reservations this week / this month
+    weekly_used: int | None = None
+    monthly_used: int | None = None
+    if plan and (plan.max_reservations_per_week or plan.max_reservations_per_month):
+        now = datetime.now(timezone.utc)
+        week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        if plan.max_reservations_per_week:
+            weekly_used = (
+                await db.execute(
+                    select(func.count()).select_from(Reservation)
+                    .join(GymClass, Reservation.gym_class_id == GymClass.id)
+                    .where(
+                        Reservation.user_id == current_user.id,
+                        Reservation.status == "confirmed",
+                        GymClass.start_time >= week_start,
+                    )
+                )
+            ).scalar() or 0
+
+        if plan.max_reservations_per_month:
+            monthly_used = (
+                await db.execute(
+                    select(func.count()).select_from(Reservation)
+                    .join(GymClass, Reservation.gym_class_id == GymClass.id)
+                    .where(
+                        Reservation.user_id == current_user.id,
+                        Reservation.status == "confirmed",
+                        GymClass.start_time >= month_start,
+                    )
+                )
+            ).scalar() or 0
+
     return MobileMembershipWalletResponse(
         tenant_slug=tenant.slug,
         tenant_name=tenant.name,
@@ -1401,6 +1661,61 @@ async def get_mobile_wallet(
             else None
         ),
         qr_payload=f"nexo:{tenant.slug}:{current_user.id}:{membership.id if membership else uuid4()}",
+        max_reservations_per_week=plan.max_reservations_per_week if plan else None,
+        max_reservations_per_month=plan.max_reservations_per_month if plan else None,
+        weekly_reservations_used=weekly_used,
+        monthly_reservations_used=monthly_used,
+    )
+
+
+@mobile_router.get("/calendar.ics")
+async def get_member_ical(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """Return an iCalendar (.ics) file with the member's confirmed upcoming reservations."""
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    now = datetime.now(timezone.utc)
+    until = now + timedelta(days=60)
+    reservations = (await db.execute(
+        select(Reservation)
+        .where(
+            Reservation.tenant_id == tenant.id,
+            Reservation.user_id == current_user.id,
+            Reservation.status.in_([ReservationStatus.CONFIRMED, ReservationStatus.WAITLISTED]),
+        )
+    )).scalars().all()
+
+    class_ids = [r.gym_class_id for r in reservations]
+    classes_by_id: dict = {}
+    if class_ids:
+        classes_by_id = {
+            c.id: c for c in (await db.execute(
+                select(GymClass)
+                .where(
+                    GymClass.id.in_(class_ids),
+                    GymClass.start_time >= now,
+                    GymClass.start_time <= until,
+                    GymClass.status != ClassStatus.CANCELLED,
+                )
+            )).scalars().all()
+        }
+
+    ical_content = build_member_calendar_ical(
+        tenant_name=tenant.name,
+        reservations=reservations,
+        classes_by_id=classes_by_id,
+        generated_at=now,
+    )
+
+    filename = f"nexofitness-{tenant.slug}-clases.ics"
+    return Response(
+        content=ical_content,
+        media_type="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -1412,7 +1727,7 @@ async def list_mobile_payments(
     current_user: User = Depends(get_current_user),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     payments = (
         await db.execute(
@@ -1450,6 +1765,75 @@ async def list_mobile_payments(
     ]
 
 
+@mobile_router.get("/support/interactions", response_model=list[SupportInteractionResponse])
+async def list_mobile_support_interactions(
+    limit: int = Query(12, ge=1, le=50),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+    if current_user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=403, detail="Solo los clientes pueden revisar este historial")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser mayor que la fecha final")
+
+    query = (
+        select(SupportInteraction)
+        .where(
+            SupportInteraction.tenant_id == tenant.id,
+            SupportInteraction.user_id == current_user.id,
+        )
+        .order_by(SupportInteraction.created_at.desc())
+    )
+
+    if date_from:
+        query = query.where(SupportInteraction.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
+    if date_to:
+        query = query.where(SupportInteraction.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
+
+    interactions = (
+        await db.execute(
+            query.limit(limit)
+        )
+    ).scalars().all()
+
+    related_users = await _get_support_related_users(db, interactions)
+    return [
+        _support_payload(item, related_users.get(item.user_id), related_users.get(item.handled_by))
+        for item in interactions
+    ]
+
+
+@mobile_router.post("/support/interactions", response_model=SupportInteractionResponse, status_code=201)
+async def create_mobile_support_interaction(
+    data: MobileSupportInteractionCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+    if current_user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=403, detail="Solo los clientes pueden crear solicitudes de ayuda")
+
+    interaction = SupportInteraction(
+        tenant_id=tenant.id,
+        user_id=current_user.id,
+        channel=data.channel,
+        subject=data.subject,
+        notes=(data.notes or data.subject).strip(),
+        resolved=False,
+    )
+    db.add(interaction)
+    await db.flush()
+    await db.refresh(interaction)
+    return _support_payload(interaction, current_user, None)
+
+
 @mobile_router.post("/push-preview", response_model=NotificationDispatchResponse, status_code=201)
 async def create_mobile_push_preview(
     data: MobilePushPreviewRequest,
@@ -1458,7 +1842,7 @@ async def create_mobile_push_preview(
     current_user: User = Depends(get_current_user),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     result = await create_and_dispatch_notification(
         db,
@@ -1480,7 +1864,7 @@ async def list_push_subscriptions(
     current_user: User = Depends(get_current_user),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
     result = await db.execute(
         select(PushSubscription)
         .where(PushSubscription.tenant_id == tenant.id, PushSubscription.user_id == current_user.id)
@@ -1495,7 +1879,7 @@ async def get_mobile_push_config(
     current_user: User = Depends(get_current_user),
 ):
     if tenant is None or current_user is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     public_key = settings.WEB_PUSH_VAPID_PUBLIC_KEY.strip()
     return WebPushConfigResponse(
@@ -1513,7 +1897,7 @@ async def create_push_subscription(
     current_user: User = Depends(get_current_user),
 ):
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     lookup_field = (
         PushSubscription.expo_push_token == data.expo_push_token
@@ -1577,7 +1961,7 @@ async def update_mobile_membership(
 ):
     """Allow a member to update their own membership settings (currently: auto_renew)."""
     if tenant is None:
-        raise HTTPException(status_code=400, detail="Tenant context is required")
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
     membership = (
         await db.execute(
@@ -1589,7 +1973,7 @@ async def update_mobile_membership(
     ).scalars().first()
 
     if not membership:
-        raise HTTPException(status_code=404, detail="No membership found for this member")
+        raise HTTPException(status_code=404, detail="No se encontró una membresía para este miembro")
 
     if data.auto_renew is not None:
         membership.auto_renew = data.auto_renew
@@ -1632,3 +2016,503 @@ async def update_mobile_membership(
         ),
         qr_payload=f"nexo:{tenant.slug}:{current_user.id}:{membership.id}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Promo Codes
+# ---------------------------------------------------------------------------
+
+def _promo_to_response(promo: PromoCode) -> PromoCodeResponse:
+    return PromoCodeResponse(
+        id=promo.id,
+        tenant_id=promo.tenant_id,
+        code=promo.code,
+        name=promo.name,
+        description=promo.description,
+        discount_type=promo.discount_type,
+        discount_value=promo.discount_value,
+        max_uses=promo.max_uses,
+        uses_count=promo.uses_count,
+        expires_at=promo.expires_at,
+        is_active=promo.is_active,
+        plan_ids=json.loads(promo.plan_ids) if promo.plan_ids else None,
+        created_at=promo.created_at,
+        updated_at=promo.updated_at,
+    )
+
+
+@promo_codes_router.get("", response_model=list[PromoCodeResponse])
+async def list_promo_codes(
+    tenant: Tenant = Depends(get_current_tenant),
+    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> list[PromoCodeResponse]:
+    result = await db.execute(
+        select(PromoCode)
+        .where(PromoCode.tenant_id == tenant.id)
+        .order_by(PromoCode.created_at.desc())
+    )
+    promos = result.scalars().all()
+    return [_promo_to_response(p) for p in promos]
+
+
+@promo_codes_router.post("", response_model=PromoCodeResponse, status_code=201)
+async def create_promo_code(
+    body: PromoCodeCreate,
+    tenant: Tenant = Depends(get_current_tenant),
+    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> PromoCodeResponse:
+    # Check uniqueness within tenant
+    existing = await db.execute(
+        select(PromoCode).where(
+            PromoCode.tenant_id == tenant.id,
+            PromoCode.code == body.code.upper(),
+        )
+    )
+    if existing.scalars().first():
+        raise HTTPException(status_code=409, detail="Ya existe un código promocional con ese código para este gimnasio.")
+
+    promo = PromoCode(
+        id=uuid4(),
+        tenant_id=tenant.id,
+        code=body.code.upper().strip(),
+        name=body.name,
+        description=body.description,
+        discount_type=body.discount_type,
+        discount_value=Decimal(str(body.discount_value)),
+        max_uses=body.max_uses,
+        uses_count=0,
+        expires_at=body.expires_at,
+        is_active=True,
+        plan_ids=json.dumps([str(p) for p in body.plan_ids]) if body.plan_ids else None,
+    )
+    db.add(promo)
+    await db.commit()
+    await db.refresh(promo)
+    return _promo_to_response(promo)
+
+
+@promo_codes_router.patch("/{promo_id}", response_model=PromoCodeResponse)
+async def update_promo_code(
+    promo_id: UUID,
+    body: PromoCodeUpdate,
+    tenant: Tenant = Depends(get_current_tenant),
+    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> PromoCodeResponse:
+    result = await db.execute(
+        select(PromoCode).where(PromoCode.id == promo_id, PromoCode.tenant_id == tenant.id)
+    )
+    promo = result.scalars().first()
+    if not promo:
+        raise HTTPException(status_code=404, detail="Código promocional no encontrado.")
+
+    if body.name is not None:
+        promo.name = body.name
+    if body.description is not None:
+        promo.description = body.description
+    if body.discount_type is not None:
+        promo.discount_type = body.discount_type
+    if body.discount_value is not None:
+        promo.discount_value = Decimal(str(body.discount_value))
+    if body.max_uses is not None:
+        promo.max_uses = body.max_uses
+    if body.expires_at is not None:
+        promo.expires_at = body.expires_at
+    if body.is_active is not None:
+        promo.is_active = body.is_active
+    if body.plan_ids is not None:
+        promo.plan_ids = json.dumps([str(p) for p in body.plan_ids]) if body.plan_ids else None
+
+    promo.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(promo)
+    return _promo_to_response(promo)
+
+
+@promo_codes_router.delete("/{promo_id}", status_code=204)
+async def delete_promo_code(
+    promo_id: UUID,
+    tenant: Tenant = Depends(get_current_tenant),
+    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await db.execute(
+        select(PromoCode).where(PromoCode.id == promo_id, PromoCode.tenant_id == tenant.id)
+    )
+    promo = result.scalars().first()
+    if not promo:
+        raise HTTPException(status_code=404, detail="Código promocional no encontrado.")
+    await db.delete(promo)
+    await db.commit()
+
+
+@promo_codes_router.post("/validate", response_model=PromoCodeValidateResponse)
+async def validate_promo_code(
+    body: PromoCodeValidateRequest,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PromoCodeValidateResponse:
+    """Validate a promo code for a given plan. Returns discount info if valid."""
+    result = await db.execute(
+        select(PromoCode).where(
+            PromoCode.tenant_id == tenant.id,
+            PromoCode.code == body.code.upper().strip(),
+            PromoCode.is_active.is_(True),
+        )
+    )
+    promo = result.scalars().first()
+
+    def _invalid(reason: str) -> PromoCodeValidateResponse:
+        return PromoCodeValidateResponse(valid=False, reason=reason)
+
+    if not promo:
+        return _invalid("Código no válido o inactivo.")
+
+    now = datetime.now(timezone.utc)
+    if promo.expires_at and promo.expires_at < now:
+        return _invalid("El código ha expirado.")
+
+    if promo.max_uses is not None and promo.uses_count >= promo.max_uses:
+        return _invalid("El código ha alcanzado su límite de usos.")
+
+    # Check plan restriction
+    if promo.plan_ids:
+        allowed_ids = json.loads(promo.plan_ids)
+        if str(body.plan_id) not in allowed_ids:
+            return _invalid("Este código no aplica para el plan seleccionado.")
+
+    # Fetch plan price to compute discounted amount
+    plan_result = await db.execute(
+        select(Plan).where(Plan.id == body.plan_id, Plan.tenant_id == tenant.id)
+    )
+    plan = plan_result.scalars().first()
+    if not plan:
+        return _invalid("Plan no encontrado.")
+
+    base_price = float(plan.price)
+    if promo.discount_type == "percent":
+        discount_amount = round(base_price * float(promo.discount_value) / 100, 2)
+    else:
+        discount_amount = min(round(float(promo.discount_value), 2), base_price)
+    final_price = round(base_price - discount_amount, 2)
+
+    return PromoCodeValidateResponse(
+        valid=True,
+        promo_code_id=promo.id,
+        discount_type=promo.discount_type,
+        discount_value=float(promo.discount_value),
+        discount_amount=discount_amount,
+        final_price=final_price,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Progress — body measurements (member self-service + owner view)
+# ---------------------------------------------------------------------------
+
+def _measurement_to_response(m: BodyMeasurement) -> BodyMeasurementResponse:
+    return BodyMeasurementResponse(
+        id=m.id,
+        user_id=m.user_id,
+        tenant_id=m.tenant_id,
+        recorded_at=m.recorded_at,
+        weight_kg=m.weight_kg,
+        body_fat_pct=m.body_fat_pct,
+        muscle_mass_kg=m.muscle_mass_kg,
+        chest_cm=m.chest_cm,
+        waist_cm=m.waist_cm,
+        hip_cm=m.hip_cm,
+        arm_cm=m.arm_cm,
+        thigh_cm=m.thigh_cm,
+        notes=m.notes,
+        created_at=m.created_at,
+    )
+
+
+# Member: own measurements via /mobile/progress
+@mobile_router.get("/progress", response_model=list[BodyMeasurementResponse])
+async def mobile_list_measurements(
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[BodyMeasurementResponse]:
+    result = await db.execute(
+        select(BodyMeasurement)
+        .where(BodyMeasurement.user_id == current_user.id, BodyMeasurement.tenant_id == tenant.id)
+        .order_by(BodyMeasurement.recorded_at.desc())
+    )
+    return [_measurement_to_response(m) for m in result.scalars().all()]
+
+
+@mobile_router.post("/progress", response_model=BodyMeasurementResponse, status_code=201)
+async def mobile_create_measurement(
+    body: BodyMeasurementCreate,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BodyMeasurementResponse:
+    m = BodyMeasurement(
+        id=uuid4(),
+        user_id=current_user.id,
+        tenant_id=tenant.id,
+        recorded_at=body.recorded_at,
+        weight_kg=body.weight_kg,
+        body_fat_pct=body.body_fat_pct,
+        muscle_mass_kg=body.muscle_mass_kg,
+        chest_cm=body.chest_cm,
+        waist_cm=body.waist_cm,
+        hip_cm=body.hip_cm,
+        arm_cm=body.arm_cm,
+        thigh_cm=body.thigh_cm,
+        notes=body.notes,
+    )
+    db.add(m)
+    await db.commit()
+    await db.refresh(m)
+    return _measurement_to_response(m)
+
+
+@mobile_router.delete("/progress/{measurement_id}", status_code=204)
+async def mobile_delete_measurement(
+    measurement_id: UUID,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await db.execute(
+        select(BodyMeasurement).where(
+            BodyMeasurement.id == measurement_id,
+            BodyMeasurement.user_id == current_user.id,
+            BodyMeasurement.tenant_id == tenant.id,
+        )
+    )
+    m = result.scalars().first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Medición no encontrada.")
+    await db.delete(m)
+    await db.commit()
+
+
+# Owner: view any client's measurements
+@progress_router.get("/{user_id}", response_model=list[BodyMeasurementResponse])
+async def owner_list_measurements(
+    user_id: UUID,
+    tenant: Tenant = Depends(get_current_tenant),
+    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN, UserRole.TRAINER)),
+    db: AsyncSession = Depends(get_db),
+) -> list[BodyMeasurementResponse]:
+    result = await db.execute(
+        select(BodyMeasurement)
+        .where(BodyMeasurement.user_id == user_id, BodyMeasurement.tenant_id == tenant.id)
+        .order_by(BodyMeasurement.recorded_at.desc())
+    )
+    return [_measurement_to_response(m) for m in result.scalars().all()]
+
+
+# ─── Personal Records ─────────────────────────────────────────────────────────
+
+def _pr_to_response(pr: PersonalRecord) -> PersonalRecordResponse:
+    return PersonalRecordResponse(
+        id=pr.id,
+        user_id=pr.user_id,
+        tenant_id=pr.tenant_id,
+        exercise_name=pr.exercise_name,
+        record_value=pr.record_value,
+        unit=pr.unit,
+        recorded_at=pr.recorded_at,
+        notes=pr.notes,
+        created_at=pr.created_at,
+    )
+
+
+# Member: list own PRs
+@mobile_router.get("/personal-records", response_model=list[PersonalRecordResponse])
+async def list_personal_records(
+    exercise: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> list[PersonalRecordResponse]:
+    q = (
+        select(PersonalRecord)
+        .where(PersonalRecord.user_id == current_user.id, PersonalRecord.tenant_id == tenant.id)
+        .order_by(PersonalRecord.recorded_at.desc())
+    )
+    if exercise:
+        q = q.where(PersonalRecord.exercise_name.ilike(f"%{exercise}%"))
+    result = await db.execute(q)
+    return [_pr_to_response(pr) for pr in result.scalars().all()]
+
+
+# Member: create own PR
+@mobile_router.post("/personal-records", response_model=PersonalRecordResponse, status_code=201)
+async def create_personal_record(
+    body: PersonalRecordCreate,
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> PersonalRecordResponse:
+    pr = PersonalRecord(
+        id=uuid4(),
+        user_id=current_user.id,
+        tenant_id=tenant.id,
+        exercise_name=body.exercise_name.strip(),
+        record_value=body.record_value,
+        unit=body.unit.strip(),
+        recorded_at=body.recorded_at,
+        notes=body.notes,
+    )
+    db.add(pr)
+    await db.commit()
+    await db.refresh(pr)
+    return _pr_to_response(pr)
+
+
+# Member: delete own PR
+@mobile_router.delete("/personal-records/{record_id}", status_code=204)
+async def delete_personal_record(
+    record_id: UUID,
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    pr = (await db.execute(
+        select(PersonalRecord).where(
+            PersonalRecord.id == record_id,
+            PersonalRecord.user_id == current_user.id,
+            PersonalRecord.tenant_id == tenant.id,
+        )
+    )).scalars().first()
+    if not pr:
+        raise HTTPException(status_code=404, detail="Récord no encontrado.")
+    await db.delete(pr)
+    await db.commit()
+
+
+# Owner: list any client's PRs
+@personal_records_router.get("/{user_id}", response_model=list[PersonalRecordResponse])
+async def owner_list_personal_records(
+    user_id: UUID,
+    tenant: Tenant = Depends(get_current_tenant),
+    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN, UserRole.TRAINER)),
+    db: AsyncSession = Depends(get_db),
+) -> list[PersonalRecordResponse]:
+    result = await db.execute(
+        select(PersonalRecord)
+        .where(PersonalRecord.user_id == user_id, PersonalRecord.tenant_id == tenant.id)
+        .order_by(PersonalRecord.recorded_at.desc())
+    )
+    return [_pr_to_response(pr) for pr in result.scalars().all()]
+
+
+# ─── Progress Photos ──────────────────────────────────────────────────────────
+
+_MAX_PHOTO_BYTES = 10 * 1024 * 1024  # 10 MB
+_PHOTO_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _photo_to_response(p: ProgressPhoto, request: Request) -> ProgressPhotoResponse:
+    base_url = str(request.base_url).rstrip("/")
+    photo_url = f"{base_url}{p.file_path}"
+    return ProgressPhotoResponse(
+        id=p.id,
+        user_id=p.user_id,
+        tenant_id=p.tenant_id,
+        recorded_at=p.recorded_at,
+        photo_url=photo_url,
+        notes=p.notes,
+        created_at=p.created_at,
+    )
+
+
+# Member: list own progress photos
+@mobile_router.get("/progress/photos", response_model=list[ProgressPhotoResponse])
+async def list_progress_photos(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> list[ProgressPhotoResponse]:
+    result = await db.execute(
+        select(ProgressPhoto)
+        .where(ProgressPhoto.user_id == current_user.id, ProgressPhoto.tenant_id == tenant.id)
+        .order_by(ProgressPhoto.recorded_at.desc())
+    )
+    return [_photo_to_response(p, request) for p in result.scalars().all()]
+
+
+# Member: upload progress photo
+@mobile_router.post("/progress/photos", response_model=ProgressPhotoResponse, status_code=201)
+async def upload_progress_photo(
+    request: Request,
+    file: UploadFile = File(...),
+    recorded_at: Optional[str] = None,
+    notes: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> ProgressPhotoResponse:
+    content_type = file.content_type or ""
+    if content_type not in _PHOTO_ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Solo se aceptan imágenes JPEG, PNG o WebP.")
+
+    data = await file.read()
+    if len(data) > _MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el tamaño máximo de 10 MB.")
+
+    ext = content_type.split("/")[-1].replace("jpeg", "jpg")
+    photo_dir = _UPLOADS_ROOT / "progress_photos" / str(tenant.id) / str(current_user.id)
+    photo_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid4().hex}.{ext}"
+    (photo_dir / filename).write_bytes(data)
+    file_path = f"/uploads/progress_photos/{tenant.id}/{current_user.id}/{filename}"
+
+    rec_at = datetime.now(timezone.utc)
+    if recorded_at:
+        try:
+            rec_at = datetime.fromisoformat(recorded_at)
+        except ValueError:
+            pass
+
+    photo = ProgressPhoto(
+        id=uuid4(),
+        user_id=current_user.id,
+        tenant_id=tenant.id,
+        recorded_at=rec_at,
+        file_path=file_path,
+        notes=notes,
+    )
+    db.add(photo)
+    await db.commit()
+    await db.refresh(photo)
+    return _photo_to_response(photo, request)
+
+
+# Member: delete progress photo
+@mobile_router.delete("/progress/photos/{photo_id}", status_code=204)
+async def delete_progress_photo(
+    photo_id: UUID,
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    photo = (await db.execute(
+        select(ProgressPhoto).where(
+            ProgressPhoto.id == photo_id,
+            ProgressPhoto.user_id == current_user.id,
+            ProgressPhoto.tenant_id == tenant.id,
+        )
+    )).scalars().first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Foto no encontrada.")
+    # Delete from disk
+    try:
+        disk_path = _UPLOADS_ROOT / photo.file_path.lstrip("/uploads/")
+        disk_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    await db.delete(photo)
+    await db.commit()

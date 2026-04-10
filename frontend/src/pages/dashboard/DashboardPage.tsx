@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   DollarSign, Users, CalendarDays, ClipboardCheck, AlertTriangle, TrendingUp, UserCheck, ArrowUpRight,
+  Cake, Clock, CreditCard, User,
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
@@ -11,8 +12,8 @@ import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
 import { dashboardApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
-import { formatCurrency, getApiError, parseApiNumber } from '@/utils';
-import type { DashboardMetrics } from '@/types';
+import { cn, formatCurrency, getApiError, parseApiNumber } from '@/utils';
+import type { DashboardMetrics, DayPanel } from '@/types';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -34,6 +35,12 @@ export default function DashboardPage() {
   const dashboardError = isError
     ? getApiError(error, 'No pudimos cargar el dashboard. Revisa el backend o vuelve a iniciar sesión.')
     : null;
+
+  const { data: todayData } = useQuery<DayPanel>({
+    queryKey: ['dashboard-today'],
+    queryFn: async () => (await dashboardApi.getToday()).data,
+    refetchInterval: 60_000,
+  });
 
   const revenueData = useMemo(() => ([
     { label: 'Hoy', value: parseApiNumber(data?.revenue_today) },
@@ -184,7 +191,9 @@ export default function DashboardPage() {
             <div className="space-y-3">
               {data.recent_checkins.map((checkin) => (
                 <div key={checkin.id} className="rounded-xl bg-surface-50 px-4 py-3 text-sm dark:bg-surface-800/40">
-                  <p className="font-medium text-surface-900 dark:text-white">Usuario {checkin.user_id.slice(0, 8)}</p>
+                  <p className="font-medium text-surface-900 dark:text-white">
+                    {checkin.user_name || `Usuario ${checkin.user_id.slice(0, 8)}`}
+                  </p>
                   <p className="text-surface-500">{new Date(checkin.checked_in_at).toLocaleString('es-CL')}</p>
                 </div>
               ))}
@@ -239,6 +248,123 @@ export default function DashboardPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* Panel del Día */}
+      {todayData && (
+        <motion.div variants={fadeInUp}>
+          <h2 className="mb-4 text-lg font-bold font-display text-surface-900 dark:text-white flex items-center gap-2">
+            <Clock size={20} className="text-brand-500" />
+            Panel del Día
+          </h2>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            {/* Classes today */}
+            <motion.div
+              variants={fadeInUp}
+              className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900"
+            >
+              <h3 className="mb-4 text-sm font-semibold text-surface-900 dark:text-white flex items-center gap-2">
+                <CalendarDays size={16} className="text-violet-500" />
+                Clases de hoy ({todayData.classes.length})
+              </h3>
+              {todayData.classes.length ? (
+                <div className="space-y-2">
+                  {todayData.classes.map((cls) => {
+                    const occupancy = cls.max_capacity ? Math.round((cls.current_bookings / cls.max_capacity) * 100) : 0;
+                    return (
+                      <div key={cls.id} className="rounded-xl bg-surface-50 px-3 py-2.5 dark:bg-surface-800/40">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-surface-900 dark:text-white truncate">{cls.name}</p>
+                          <span className={cn(
+                            'shrink-0 text-xs font-medium px-1.5 py-0.5 rounded-full',
+                            occupancy >= 80 ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
+                          )}>
+                            {cls.current_bookings}/{cls.max_capacity}
+                          </span>
+                        </div>
+                        <p className="text-xs text-surface-500 mt-0.5">
+                          {new Date(cls.start_time).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+                          {cls.instructor_name && ` · ${cls.instructor_name}`}
+                        </p>
+                        <div className="mt-1.5 h-1 rounded-full bg-surface-200 dark:bg-surface-700">
+                          <div className={cn('h-full rounded-full', occupancy >= 80 ? 'bg-red-400' : 'bg-emerald-400')} style={{ width: `${occupancy}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-surface-500">Sin clases programadas para hoy</p>
+              )}
+            </motion.div>
+
+            {/* Payments today */}
+            <motion.div
+              variants={fadeInUp}
+              className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900"
+            >
+              <h3 className="mb-1 text-sm font-semibold text-surface-900 dark:text-white flex items-center gap-2">
+                <CreditCard size={16} className="text-emerald-500" />
+                Pagos de hoy ({todayData.payments.length})
+              </h3>
+              <p className="text-xs text-surface-500 mb-4">{formatCurrency(todayData.revenue_today)} recaudado</p>
+              {todayData.payments.length ? (
+                <div className="space-y-2">
+                  {todayData.payments.slice(0, 8).map((pay) => (
+                    <div key={pay.id} className="flex items-center justify-between rounded-xl bg-surface-50 px-3 py-2 dark:bg-surface-800/40">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-surface-900 dark:text-white truncate">
+                          {pay.user_name || 'Cliente'}
+                        </p>
+                        <p className="text-xs text-surface-500">{pay.method}</p>
+                      </div>
+                      <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
+                        {formatCurrency(pay.amount)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-surface-500">Sin pagos registrados hoy</p>
+              )}
+            </motion.div>
+
+            {/* Birthdays + stats */}
+            <motion.div
+              variants={fadeInUp}
+              className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900 space-y-5"
+            >
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-surface-900 dark:text-white flex items-center gap-2">
+                  <Cake size={16} className="text-pink-500" />
+                  Cumpleaños hoy ({todayData.birthdays.length})
+                </h3>
+                {todayData.birthdays.length ? (
+                  <div className="space-y-2">
+                    {todayData.birthdays.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2 rounded-xl bg-pink-50 px-3 py-2 dark:bg-pink-900/20">
+                        <User size={14} className="text-pink-500 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-surface-900 dark:text-white truncate">{b.full_name}</p>
+                          <p className="text-xs text-surface-500 truncate">{b.email}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-surface-500">Sin cumpleaños hoy</p>
+                )}
+              </div>
+              <div className="border-t border-surface-100 dark:border-surface-800 pt-4">
+                <h3 className="mb-3 text-sm font-semibold text-surface-900 dark:text-white flex items-center gap-2">
+                  <UserCheck size={16} className="text-brand-500" />
+                  Check-ins hoy
+                </h3>
+                <p className="text-3xl font-bold font-display text-surface-900 dark:text-white">{todayData.checkins_count}</p>
+              </div>
+            </motion.div>
+          </div>
+        </motion.div>
+      )}
     </motion.div>
   );
 }

@@ -43,7 +43,7 @@ function urlBase64ToUint8Array(base64String: string) {
 
 function inferWebPushDeviceName() {
   if (typeof navigator === 'undefined') {
-    return 'Member PWA';
+    return 'App de miembros';
   }
 
   const userAgent = navigator.userAgent;
@@ -51,5 +51,5 @@ function inferWebPushDeviceName() {
   if (/iphone|ipad|ipod/i.test(userAgent)) return 'iOS PWA';
   if (/windows/i.test(userAgent)) return 'Windows PWA';
   if (/macintosh|mac os x/i.test(userAgent)) return 'macOS PWA';
-  return 'Member PWA';
+  return 'App de miembros';
 }

@@ -33,11 +33,11 @@ export default function TermsPage() {
           Te comprometemos a notificarnos de inmediato ante cualquier uso no autorizado de tu cuenta.
         </p>
 
-        <h2>4. Plan de Prueba (Trial)</h2>
+        <h2>4. Plan de Prueba</h2>
         <p>
           Los nuevos usuarios tienen acceso a un período de prueba gratuita de 14 días. Transcurrido
           ese período, el acceso se suspende hasta que se active una suscripción paga. Los datos
-          almacenados durante el trial se conservan por un período adicional de 30 días tras la
+          almacenados durante la prueba se conservan por un período adicional de 30 días tras la
           expiración.
         </p>
 

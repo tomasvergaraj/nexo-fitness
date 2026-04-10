@@ -2,19 +2,23 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Plus, Check, Star, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Check, Star, Edit2, ToggleLeft, ToggleRight, Tag } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import Tooltip from '@/components/ui/Tooltip';
 import { plansApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
-import { cn, formatCurrency, formatDurationLabel, parseApiNumber , getApiError } from '@/utils';
+import { cn, formatCurrency, formatDurationLabel, parseApiNumber, getApiError } from '@/utils';
 import type { PaginatedResponse, Plan } from '@/types';
+
+type DurationPreset = 'monthly' | 'quarterly' | 'semiannual' | 'annual' | 'perpetual' | 'custom';
 
 type PlanFormState = {
   id?: string;
   name: string;
   description: string;
   price: string;
-  duration_type: 'monthly' | 'annual' | 'perpetual' | 'custom';
+  discount_pct: string;
+  duration_preset: DurationPreset;
   duration_days: string;
   max_reservations_per_week: string;
   is_featured: boolean;
@@ -22,12 +26,118 @@ type PlanFormState = {
   is_active: boolean;
 };
 
+function applyDiscount(price: number, discountPct: number | null | undefined): number {
+  if (!discountPct) return price;
+  return Math.round(price * (1 - discountPct / 100));
+}
+
+const durationPresetOptions: Array<{
+  value: Exclude<DurationPreset, 'custom'>;
+  label: string;
+  description: string;
+}> = [
+  { value: 'monthly', label: 'Mensual', description: 'Cobro y renovación cada 30 días.' },
+  { value: 'quarterly', label: 'Trimestral', description: 'Compromiso de 3 meses.' },
+  { value: 'semiannual', label: 'Semestral', description: 'Plan de 6 meses.' },
+  { value: 'annual', label: 'Anual', description: 'Ideal para fidelización de largo plazo.' },
+  { value: 'perpetual', label: 'Perpetuo', description: 'Sin vencimiento ni renovación.' },
+];
+
+const resolveDurationPreset = (durationType: Plan['duration_type'], durationDays?: number | null): DurationPreset => {
+  if (durationType === 'monthly') return 'monthly';
+  if (durationType === 'annual') return 'annual';
+  if (durationType === 'perpetual') return 'perpetual';
+  if (durationDays === 90) return 'quarterly';
+  if (durationDays === 180) return 'semiannual';
+  return 'custom';
+};
+
+const resolveDurationPayload = (form: PlanFormState) => {
+  switch (form.duration_preset) {
+    case 'monthly':
+      return { duration_type: 'monthly' as const, duration_days: 30, auto_renew: form.auto_renew };
+    case 'quarterly':
+      return { duration_type: 'custom' as const, duration_days: 90, auto_renew: form.auto_renew };
+    case 'semiannual':
+      return { duration_type: 'custom' as const, duration_days: 180, auto_renew: form.auto_renew };
+    case 'annual':
+      return { duration_type: 'annual' as const, duration_days: 365, auto_renew: form.auto_renew };
+    case 'perpetual':
+      return { duration_type: 'perpetual' as const, duration_days: null, auto_renew: false };
+    case 'custom':
+      return {
+        duration_type: 'custom' as const,
+        duration_days: form.duration_days ? Number(form.duration_days) : null,
+        auto_renew: form.auto_renew,
+      };
+  }
+};
+
+function SettingToggleCard({
+  title,
+  description,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (nextValue: boolean) => void;
+}) {
+  return (
+    <label
+      className={cn(
+        'block h-full rounded-2xl border px-4 py-4 transition-all',
+        disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer',
+        checked
+          ? 'border-brand-300 bg-brand-50/80 shadow-sm dark:border-brand-700 dark:bg-brand-950/20'
+          : 'border-surface-200 bg-white dark:border-surface-800 dark:bg-surface-950/30',
+      )}
+    >
+      <input
+        type="checkbox"
+        className="sr-only"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => {
+          if (disabled) {
+            return;
+          }
+          onChange(event.target.checked);
+        }}
+      />
+      <div className="flex min-h-[5.25rem] items-center justify-between gap-4">
+        <div className="min-w-0 pr-2">
+          <p className="text-sm font-semibold text-surface-900 dark:text-white">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">{description}</p>
+        </div>
+        <span
+          className={cn(
+            'relative inline-flex h-6 w-11 shrink-0 self-center rounded-full transition-colors duration-200',
+            checked ? 'bg-brand-500' : 'bg-surface-300 dark:bg-surface-700',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute left-0.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform duration-200',
+              checked ? 'translate-x-5' : 'translate-x-0',
+            )}
+          />
+        </span>
+      </div>
+    </label>
+  );
+}
+
 const emptyForm: PlanFormState = {
   name: '',
   description: '',
   price: '29990',
-  duration_type: 'monthly',
-  duration_days: '30',
+  discount_pct: '',
+  duration_preset: 'monthly',
+  duration_days: '',
   max_reservations_per_week: '',
   is_featured: false,
   auto_renew: true,
@@ -44,7 +154,8 @@ function toFormState(plan?: Plan): PlanFormState {
     name: plan.name,
     description: plan.description ?? '',
     price: String(parseApiNumber(plan.price)),
-    duration_type: plan.duration_type,
+    discount_pct: plan.discount_pct ? String(plan.discount_pct) : '',
+    duration_preset: resolveDurationPreset(plan.duration_type, plan.duration_days),
     duration_days: plan.duration_days ? String(plan.duration_days) : '',
     max_reservations_per_week: plan.max_reservations_per_week ? String(plan.max_reservations_per_week) : '',
     is_featured: plan.is_featured,
@@ -68,15 +179,17 @@ export default function PlansPage() {
 
   const createPlan = useMutation({
     mutationFn: async () => {
+      const duration = resolveDurationPayload(form);
       const response = await plansApi.create({
         name: form.name,
         description: form.description || null,
         price: Number(form.price),
-        duration_type: form.duration_type,
-        duration_days: form.duration_days ? Number(form.duration_days) : null,
+        discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
+        duration_type: duration.duration_type,
+        duration_days: duration.duration_days,
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
         is_featured: form.is_featured,
-        auto_renew: form.auto_renew,
+        auto_renew: duration.auto_renew,
       });
       return response.data;
     },
@@ -94,16 +207,18 @@ export default function PlansPage() {
   const updatePlan = useMutation({
     mutationFn: async () => {
       if (!form.id) throw new Error('Plan sin identificador');
+      const duration = resolveDurationPayload(form);
 
       const response = await plansApi.update(form.id, {
         name: form.name,
         description: form.description || null,
         price: Number(form.price),
-        duration_type: form.duration_type,
-        duration_days: form.duration_days ? Number(form.duration_days) : null,
+        discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
+        duration_type: duration.duration_type,
+        duration_days: duration.duration_days,
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
         is_featured: form.is_featured,
-        auto_renew: form.auto_renew,
+        auto_renew: duration.auto_renew,
         is_active: form.is_active,
       });
       return response.data;
@@ -136,6 +251,7 @@ export default function PlansPage() {
   const isEditing = Boolean(form.id);
   const plans = data?.items ?? [];
   const featuredPlanId = useMemo(() => plans.find((plan) => plan.is_featured)?.id, [plans]);
+  const durationPreview = resolveDurationPayload(form);
 
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
@@ -161,7 +277,7 @@ export default function PlansPage() {
 
       {isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-          No pudimos cargar los planes del backend.
+          No pudimos cargar los planes.
         </div>
       ) : null}
 
@@ -207,11 +323,35 @@ export default function PlansPage() {
             </div>
 
             <div className="mb-5">
-              <div className="flex items-baseline gap-2">
-                <span className={cn('text-3xl font-extrabold font-display', plan.id !== featuredPlanId && 'text-surface-900 dark:text-white')}>
-                  {formatCurrency(parseApiNumber(plan.price), plan.currency)}
-                </span>
-              </div>
+              {plan.discount_pct ? (
+                <>
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold',
+                      plan.id === featuredPlanId
+                        ? 'bg-white/20 text-white'
+                        : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+                    )}>
+                      <Tag size={10} />
+                      {plan.discount_pct}% descuento
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className={cn('text-3xl font-extrabold font-display', plan.id !== featuredPlanId && 'text-surface-900 dark:text-white')}>
+                      {formatCurrency(applyDiscount(parseApiNumber(plan.price), plan.discount_pct), plan.currency)}
+                    </span>
+                    <span className={cn('text-sm line-through', plan.id === featuredPlanId ? 'text-white/50' : 'text-surface-400')}>
+                      {formatCurrency(parseApiNumber(plan.price), plan.currency)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-baseline gap-2">
+                  <span className={cn('text-3xl font-extrabold font-display', plan.id !== featuredPlanId && 'text-surface-900 dark:text-white')}>
+                    {formatCurrency(parseApiNumber(plan.price), plan.currency)}
+                  </span>
+                </div>
+              )}
               <p className={cn('mt-1 text-sm', plan.id === featuredPlanId ? 'text-white/65' : 'text-surface-400')}>
                 {formatDurationLabel(plan.duration_type, plan.duration_days)}
               </p>
@@ -220,10 +360,10 @@ export default function PlansPage() {
             <ul className="mb-6 space-y-2.5">
               {[
                 plan.max_reservations_per_week
-                  ? `${plan.max_reservations_per_week} reservas por semana`
-                  : 'Reservas ilimitadas',
+                  ? `Hasta ${plan.max_reservations_per_week} reservas por semana`
+                  : 'Sin límite semanal de reservas',
                 plan.auto_renew ? 'Renovación automática' : 'Renovación manual',
-                plan.is_featured ? 'Visible como recomendado' : 'Plan estándar',
+                plan.is_featured ? 'Destacado en la venta online' : 'Visible como plan estándar',
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2.5">
                   <div className={cn(
@@ -239,44 +379,36 @@ export default function PlansPage() {
               ))}
             </ul>
 
-            <div className={cn(
-              'mb-4 flex items-center justify-between border-t px-0 py-3',
-              plan.id === featuredPlanId ? 'border-white/20' : 'border-surface-100 dark:border-surface-800',
-            )}>
-              <span className={cn('text-sm', plan.id === featuredPlanId ? 'text-white/70' : 'text-surface-500')}>
-                Duración en días
-              </span>
-              <span className={cn('text-sm font-bold', plan.id !== featuredPlanId && 'text-surface-900 dark:text-white')}>
-                {plan.duration_days ?? 'N/A'}
-              </span>
-            </div>
-
             <div className="flex items-center gap-2">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => {
-                  setForm(toFormState(plan));
-                  setShowModal(true);
-                }}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-semibold transition-all duration-200',
-                  plan.id === featuredPlanId ? 'bg-white text-brand-700 hover:bg-white/90' : 'btn-secondary',
-                )}
-              >
-                <Edit2 size={14} /> Editar
-              </motion.button>
-              <button
-                type="button"
-                onClick={() => togglePlan.mutate({ planId: plan.id, isActive: !plan.is_active })}
-                className={cn(
-                  'rounded-xl p-2.5 transition-colors',
-                  plan.id === featuredPlanId ? 'bg-white/15 hover:bg-white/25' : 'bg-surface-100 hover:bg-surface-200 dark:bg-surface-800 dark:hover:bg-surface-700',
-                )}
-                aria-label={plan.is_active ? 'Desactivar plan' : 'Activar plan'}
-              >
-                {plan.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
-              </button>
+              <Tooltip content="Editar este plan" className="flex-1">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setForm(toFormState(plan));
+                    setShowModal(true);
+                  }}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-semibold transition-all duration-200',
+                    plan.id === featuredPlanId ? 'bg-white text-brand-700 hover:bg-white/90' : 'btn-secondary',
+                  )}
+                >
+                  <Edit2 size={14} /> Editar
+                </motion.button>
+              </Tooltip>
+              <Tooltip content={plan.is_active ? 'Desactivar este plan' : 'Activar este plan'}>
+                <button
+                  type="button"
+                  onClick={() => togglePlan.mutate({ planId: plan.id, isActive: !plan.is_active })}
+                  className={cn(
+                    'rounded-xl p-2.5 transition-colors',
+                    plan.id === featuredPlanId ? 'bg-white/15 hover:bg-white/25' : 'bg-surface-100 hover:bg-surface-200 dark:bg-surface-800 dark:hover:bg-surface-700',
+                  )}
+                  aria-label={plan.is_active ? 'Desactivar plan' : 'Activar plan'}
+                >
+                  {plan.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                </button>
+              </Tooltip>
             </div>
           </motion.div>
         )) : null}
@@ -285,12 +417,13 @@ export default function PlansPage() {
       <Modal
         open={showModal}
         title={isEditing ? 'Editar plan' : 'Nuevo plan'}
-        description="Estos cambios se guardan contra el backend y actualizan las tarjetas en cuanto termina la solicitud."
+        description="Configura la duración y el comportamiento del plan sin tener que tocar campos técnicos."
         onClose={() => {
           if (!createPlan.isPending && !updatePlan.isPending) {
             setShowModal(false);
           }
         }}
+        size="lg"
       >
         <form
           className="space-y-4"
@@ -313,18 +446,48 @@ export default function PlansPage() {
                 required
               />
             </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Precio</label>
-              <input
-                type="number"
-                min="0"
-                className="input"
-                value={form.price}
-                onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))}
-                required
-              />
+            <div className="grid grid-cols-[1fr_120px] gap-3">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Precio base</label>
+                <input
+                  type="number"
+                  min="0"
+                  className="input"
+                  value={form.price}
+                  onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  <Tag size={13} className="mr-1 inline-block text-emerald-500" />
+                  Descuento %
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.5"
+                  className="input"
+                  value={form.discount_pct}
+                  onChange={(event) => setForm((current) => ({ ...current, discount_pct: event.target.value }))}
+                  placeholder="0"
+                />
+              </div>
             </div>
           </div>
+
+          {form.discount_pct && Number(form.discount_pct) > 0 && Number(form.price) > 0 ? (
+            <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-900/40 dark:bg-emerald-950/20">
+              <Tag size={15} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-emerald-800 dark:text-emerald-200">
+                Precio con descuento:{' '}
+                <strong>{formatCurrency(applyDiscount(Number(form.price), Number(form.discount_pct)), 'CLP')}</strong>
+                {' '}— {form.discount_pct}% de descuento sobre{' '}
+                {formatCurrency(Number(form.price), 'CLP')}
+              </span>
+            </div>
+          ) : null}
 
           <div>
             <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Descripción</label>
@@ -335,35 +498,80 @@ export default function PlansPage() {
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="space-y-3 rounded-2xl border border-surface-200 bg-surface-50/70 p-4 dark:border-surface-800 dark:bg-surface-950/30">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duración</label>
-              <select
-                className="input"
-                value={form.duration_type}
-                onChange={(event) => setForm((current) => ({
+              <p className="text-sm font-semibold text-surface-900 dark:text-white">Duración del plan</p>
+              <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
+                Elige la duración que quieres ofrecer. Si necesitas otro plazo, puedes ingresarlo más abajo.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {durationPresetOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setForm((current) => ({
+                    ...current,
+                    duration_preset: option.value,
+                    duration_days: option.value === 'perpetual' ? '' : current.duration_days,
+                    auto_renew: option.value === 'perpetual' ? false : current.auto_renew,
+                  }))}
+                  className={cn(
+                    'rounded-2xl border px-4 py-4 text-left transition-all',
+                    form.duration_preset === option.value
+                      ? 'border-brand-300 bg-brand-50 shadow-sm dark:border-brand-700 dark:bg-brand-950/20'
+                      : 'border-surface-200 bg-white hover:border-surface-300 dark:border-surface-800 dark:bg-surface-900/70',
+                  )}
+                >
+                  <p className="text-sm font-semibold text-surface-900 dark:text-white">{option.label}</p>
+                  <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">{option.description}</p>
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-[0.18em] text-surface-400">
+                Opciones avanzadas
+              </span>
+              <button
+                type="button"
+                onClick={() => setForm((current) => ({
                   ...current,
-                  duration_type: event.target.value as PlanFormState['duration_type'],
+                  duration_preset: 'custom',
+                  duration_days: current.duration_days || '30',
                 }))}
+                className={cn(
+                  'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                  form.duration_preset === 'custom'
+                    ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                    : 'border-surface-200 text-surface-600 hover:border-surface-300 hover:text-surface-900 dark:border-surface-800 dark:text-surface-300 dark:hover:border-surface-700 dark:hover:text-white',
+                )}
               >
-                <option value="monthly">Mensual</option>
-                <option value="annual">Anual</option>
-                <option value="perpetual">Perpetuo</option>
-                <option value="custom">Personalizado</option>
-              </select>
+                Usar otro plazo
+              </button>
             </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Días</label>
-              <input
-                type="number"
-                min="0"
-                className="input"
-                value={form.duration_days}
-                onChange={(event) => setForm((current) => ({ ...current, duration_days: event.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Reservas / semana</label>
+            {form.duration_preset === 'custom' ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900/40 dark:bg-amber-950/10">
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duración personalizada en días</label>
+                <input
+                  type="number"
+                  min="1"
+                  className="input"
+                  value={form.duration_days}
+                  onChange={(event) => setForm((current) => ({ ...current, duration_days: event.target.value }))}
+                  required
+                />
+                <p className="mt-2 text-xs leading-5 text-surface-500 dark:text-surface-400">
+                  Solo úsalo si necesitas un plazo distinto a mensual, trimestral, semestral o anual.
+                </p>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Límite de reservas por semana (opcional)
+              </label>
               <input
                 type="number"
                 min="0"
@@ -373,35 +581,48 @@ export default function PlansPage() {
                   ...current,
                   max_reservations_per_week: event.target.value,
                 }))}
+                placeholder="Déjalo vacío para reservas ilimitadas"
               />
+              <p className="mt-2 text-xs leading-5 text-surface-500 dark:text-surface-400">
+                Define cuántas clases o reservas puede tomar un cliente cada semana con este plan. Si no quieres ese control, déjalo vacío.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
+              <p className="text-sm font-semibold text-surface-900 dark:text-white">Resumen rápido</p>
+              <div className="mt-3 space-y-2 text-sm text-surface-600 dark:text-surface-300">
+                <p>Duración: {formatDurationLabel(durationPreview.duration_type, durationPreview.duration_days)}</p>
+                <p>
+                  Reservas:{' '}
+                  {form.max_reservations_per_week
+                    ? `hasta ${form.max_reservations_per_week} por semana`
+                    : 'sin límite semanal'}
+                </p>
+                <p>Renovación: {durationPreview.auto_renew ? 'automática' : 'manual'}</p>
+              </div>
             </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
-              <input
-                type="checkbox"
-                checked={form.is_featured}
-                onChange={(event) => setForm((current) => ({ ...current, is_featured: event.target.checked }))}
-              />
-              <span className="text-sm text-surface-700 dark:text-surface-300">Destacado</span>
-            </label>
-            <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
-              <input
-                type="checkbox"
-                checked={form.auto_renew}
-                onChange={(event) => setForm((current) => ({ ...current, auto_renew: event.target.checked }))}
-              />
-              <span className="text-sm text-surface-700 dark:text-surface-300">Auto renovación</span>
-            </label>
-            <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
-              <input
-                type="checkbox"
-                checked={form.is_active}
-                onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))}
-              />
-              <span className="text-sm text-surface-700 dark:text-surface-300">Activo</span>
-            </label>
+            <SettingToggleCard
+              title="Destacar plan"
+              description="Se mostrará como recomendado frente a los demás planes."
+              checked={form.is_featured}
+              onChange={(nextValue) => setForm((current) => ({ ...current, is_featured: nextValue }))}
+            />
+            <SettingToggleCard
+              title="Renovación automática"
+              description={form.duration_preset === 'perpetual' ? 'No aplica a planes perpetuos.' : 'El plan se renueva automáticamente al vencer.'}
+              checked={durationPreview.auto_renew}
+              disabled={form.duration_preset === 'perpetual'}
+              onChange={(nextValue) => setForm((current) => ({ ...current, auto_renew: nextValue }))}
+            />
+            <SettingToggleCard
+              title="Plan activo"
+              description="Si lo desactivas, deja de ofrecerse para nuevas ventas."
+              checked={form.is_active}
+              onChange={(nextValue) => setForm((current) => ({ ...current, is_active: nextValue }))}
+            />
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

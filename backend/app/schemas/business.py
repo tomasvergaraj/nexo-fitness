@@ -48,6 +48,7 @@ class PlanCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = None
     price: Decimal = Field(ge=0)
+    discount_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     currency: str = "CLP"
     duration_type: str
     duration_days: Optional[int] = None
@@ -63,6 +64,7 @@ class PlanUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     price: Optional[Decimal] = None
+    discount_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     duration_type: Optional[str] = None
     duration_days: Optional[int] = None
     max_reservations_per_week: Optional[int] = None
@@ -76,6 +78,7 @@ class PlanResponse(BaseModel):
     name: str
     description: Optional[str] = None
     price: Decimal
+    discount_pct: Optional[Decimal] = None
     currency: str
     duration_type: str
     duration_days: Optional[int] = None
@@ -125,6 +128,7 @@ class GymClassResponse(BaseModel):
     modality: str
     status: str
     instructor_id: Optional[UUID] = None
+    instructor_name: Optional[str] = None
     branch_id: Optional[UUID] = None
     start_time: datetime
     end_time: datetime
@@ -149,6 +153,7 @@ class ReservationResponse(BaseModel):
     gym_class_id: UUID
     status: str
     waitlist_position: Optional[int] = None
+    cancel_reason: Optional[str] = None
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -161,9 +166,15 @@ class CheckInCreate(BaseModel):
     branch_id: Optional[UUID] = None
     check_type: str = "manual"
 
+class CheckInScanRequest(BaseModel):
+    qr_payload: str = Field(min_length=1, max_length=255)
+    gym_class_id: Optional[UUID] = None
+    branch_id: Optional[UUID] = None
+
 class CheckInResponse(BaseModel):
     id: UUID
     user_id: UUID
+    user_name: Optional[str] = None
     gym_class_id: Optional[UUID] = None
     check_type: str
     checked_in_at: datetime

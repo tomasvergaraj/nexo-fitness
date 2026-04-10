@@ -5,6 +5,7 @@ import {
   Zap, Clock, Ban, XCircle, Loader2, ArrowRight, LogOut, Mail,
   Check, Users, GitBranch,
 } from 'lucide-react';
+import NexoBrand from '@/components/branding/NexoBrand';
 import toast from 'react-hot-toast';
 import { billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -148,7 +149,7 @@ export default function BillingWallPage() {
         window.location.href = data.checkout_url;
       } else {
         setRedirecting(false);
-        toast.error('No hay checkout disponible para este plan. Contacta a soporte.');
+        toast.error('No hay pago online disponible para este plan. Contacta a soporte.');
       }
     } catch {
       setRedirecting(false);
@@ -206,14 +207,15 @@ export default function BillingWallPage() {
         className="w-full max-w-2xl relative"
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 mb-8 justify-center">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600
-                          flex items-center justify-center shadow-lg shadow-brand-500/30">
-            <Zap size={20} className="text-white" />
-          </div>
-          <h1 className="text-2xl font-bold font-display text-white">
-            Nexo<span className="text-brand-400">Fitness</span>
-          </h1>
+        <div className="mb-8">
+          <NexoBrand
+            className="justify-center"
+            align="center"
+            iconSize={40}
+            iconClassName="shadow-lg shadow-brand-500/25"
+            titleClassName="text-2xl"
+            accentClassName="text-brand-400"
+          />
         </div>
 
         <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl">

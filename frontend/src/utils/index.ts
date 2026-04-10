@@ -121,6 +121,58 @@ export function formatDateTime(date: string | Date): string {
   return `${formatDate(date)} ${formatTime(date)}`;
 }
 
+export function formatClassStatusLabel(status: string): string {
+  if (status === 'scheduled') return 'Programada';
+  if (status === 'in_progress') return 'En curso';
+  if (status === 'completed') return 'Finalizada';
+  if (status === 'cancelled') return 'Cancelada';
+  return status;
+}
+
+export function formatClassModalityLabel(modality: string): string {
+  if (modality === 'in_person') return 'Presencial';
+  if (modality === 'online') return 'Online';
+  if (modality === 'hybrid') return 'Híbrida';
+  return modality;
+}
+
+export function formatSupportChannelLabel(channel?: string | null): string {
+  if (!channel) return 'Sin canal';
+  if (channel === 'whatsapp') return 'WhatsApp';
+  if (channel === 'email') return 'Correo';
+  if (channel === 'phone') return 'Teléfono';
+  if (channel === 'in_person') return 'Presencial';
+  return channel;
+}
+
+export function formatClassCapacityLabel(currentBookings: number, maxCapacity: number): string {
+  return `${currentBookings}/${maxCapacity} cupos`;
+}
+
+export function formatMembershipStatusLabel(status?: string | null): string {
+  if (!status) return 'Pendiente';
+  if (status === 'active') return 'Activa';
+  if (status === 'expired') return 'Vencida';
+  if (status === 'cancelled') return 'Cancelada';
+  if (status === 'frozen') return 'Congelada';
+  if (status === 'pending') return 'Pendiente';
+  if (status === 'inactive') return 'Inactiva';
+  if (status === 'trial') return 'En prueba';
+  return status;
+}
+
+export function formatUserRoleLabel(role?: string | null): string {
+  if (!role) return 'Sin rol';
+  if (role === 'superadmin') return 'Superadministrador';
+  if (role === 'owner') return 'Propietario';
+  if (role === 'admin') return 'Administrador';
+  if (role === 'reception') return 'Recepción';
+  if (role === 'trainer') return 'Entrenador';
+  if (role === 'marketing') return 'Marketing';
+  if (role === 'client') return 'Cliente';
+  return role;
+}
+
 export function toDateInputValue(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
@@ -131,6 +183,9 @@ export function formatDurationLabel(durationType: string, durationDays?: number 
   if (durationType === 'annual') return 'Anual';
   if (durationType === 'monthly') return 'Mensual';
   if (durationType === 'perpetual') return 'Perpetuo';
+  if (durationType === 'custom' && durationDays === 90) return 'Trimestral';
+  if (durationType === 'custom' && durationDays === 180) return 'Semestral';
+  if (durationType === 'custom' && durationDays === 365) return 'Anual';
   if (durationDays) return `${durationDays} días`;
   return 'Personalizado';
 }
@@ -171,6 +226,7 @@ export function membershipStatusColor(status: string): string {
     cancelled: 'badge-danger',
     frozen: 'badge-warning',
     pending: 'badge-info',
+    inactive: 'badge-neutral',
   };
   return map[status] ?? 'badge-neutral';
 }
@@ -184,6 +240,16 @@ export function paymentStatusColor(status: string): string {
     cancelled: 'badge-neutral',
   };
   return map[status] ?? 'badge-neutral';
+}
+
+export function supportChannelBadgeColor(channel?: string | null): string {
+  const map: Record<string, string> = {
+    whatsapp: 'badge-success',
+    email: 'badge-info',
+    phone: 'badge-warning',
+    in_person: 'badge-neutral',
+  };
+  return channel ? map[channel] ?? 'badge-neutral' : 'badge-neutral';
 }
 
 export function occupancyColor(rate: number): string {

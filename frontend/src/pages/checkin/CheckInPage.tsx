@@ -1,12 +1,23 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { UserCheck, Search, QrCode, Clock, CheckCircle2, Zap } from 'lucide-react';
-import { checkinsApi, clientsApi, dashboardApi } from '@/services/api';
+import {
+  Camera,
+  CheckCircle2,
+  Clock,
+  Keyboard,
+  Loader2,
+  QrCode,
+  Search,
+  UserCheck,
+  Zap,
+} from 'lucide-react';
+import Modal from '@/components/ui/Modal';
+import { branchesApi, checkinsApi, clientsApi, dashboardApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
-import { cn, getInitials, formatRelative , getApiError } from '@/utils';
-import type { DashboardMetrics, PaginatedResponse, User } from '@/types';
+import { cn, formatRelative, getApiError, getInitials } from '@/utils';
+import type { Branch, CheckIn, DashboardMetrics, PaginatedResponse, User } from '@/types';
 
 type RecentCheckin = {
   id: string;
@@ -14,12 +25,194 @@ type RecentCheckin = {
   checkedInAt: string;
 };
 
+type BarcodeDetection = {
+  rawValue?: string;
+};
+
+type BarcodeDetectorInstance = {
+  detect: (source: ImageBitmapSource) => Promise<BarcodeDetection[]>;
+};
+
+type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
+
+type WindowWithBarcodeDetector = Window & {
+  BarcodeDetector?: BarcodeDetectorConstructor;
+};
+
+type WindowWithAudioContext = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
+const SCANNER_HINT = 'Apunta la cámara al QR del cliente para registrar su ingreso.';
+const SCANNER_COOLDOWN_MS = 2500;
+
+function getBarcodeDetectorCtor(): BarcodeDetectorConstructor | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return (window as WindowWithBarcodeDetector).BarcodeDetector ?? null;
+}
+
 export default function CheckInPage() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [checkedIn, setCheckedIn] = useState<string | null>(null);
   const [recentCheckins, setRecentCheckins] = useState<RecentCheckin[]>([]);
+  const [showScannerModal, setShowScannerModal] = useState(false);
+  const [manualQrValue, setManualQrValue] = useState('');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scannerHint, setScannerHint] = useState(SCANNER_HINT);
+  const [scannerCooldownRemaining, setScannerCooldownRemaining] = useState(0);
+  const [scannerSuccessName, setScannerSuccessName] = useState<string | null>(null);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
   const deferredSearch = useDeferredValue(searchQuery);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const scanLockRef = useRef(false);
+  const cooldownTimeoutRef = useRef<number | null>(null);
+  const cooldownIntervalRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  const scannerSupported = useMemo(() => (
+    typeof navigator !== 'undefined'
+    && Boolean(navigator.mediaDevices?.getUserMedia)
+    && Boolean(getBarcodeDetectorCtor())
+  ), []);
+
+  const clearScannerCooldown = () => {
+    if (cooldownTimeoutRef.current) {
+      window.clearTimeout(cooldownTimeoutRef.current);
+      cooldownTimeoutRef.current = null;
+    }
+    if (cooldownIntervalRef.current) {
+      window.clearInterval(cooldownIntervalRef.current);
+      cooldownIntervalRef.current = null;
+    }
+    setScannerCooldownRemaining(0);
+    setScannerSuccessName(null);
+  };
+
+  const warmupCheckinAudio = async () => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+
+    const AudioContextCtor = window.AudioContext ?? (window as WindowWithAudioContext).webkitAudioContext;
+    if (!AudioContextCtor) {
+      return null;
+    }
+
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContextCtor();
+    }
+
+    if (audioContextRef.current.state === 'suspended') {
+      try {
+        await audioContextRef.current.resume();
+      } catch {
+        return null;
+      }
+    }
+
+    return audioContextRef.current;
+  };
+
+  const playCheckinConfirmation = async () => {
+    const audioContext = await warmupCheckinAudio();
+    if (!audioContext) {
+      return;
+    }
+
+    const startedAt = audioContext.currentTime;
+    const gainNode = audioContext.createGain();
+    gainNode.connect(audioContext.destination);
+    gainNode.gain.setValueAtTime(0.0001, startedAt);
+    gainNode.gain.exponentialRampToValueAtTime(0.12, startedAt + 0.02);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.4);
+
+    const primaryOscillator = audioContext.createOscillator();
+    primaryOscillator.type = 'sine';
+    primaryOscillator.frequency.setValueAtTime(880, startedAt);
+    primaryOscillator.frequency.exponentialRampToValueAtTime(1320, startedAt + 0.16);
+    primaryOscillator.connect(gainNode);
+
+    const secondaryOscillator = audioContext.createOscillator();
+    secondaryOscillator.type = 'triangle';
+    secondaryOscillator.frequency.setValueAtTime(660, startedAt + 0.05);
+    secondaryOscillator.frequency.exponentialRampToValueAtTime(990, startedAt + 0.22);
+    secondaryOscillator.connect(gainNode);
+
+    primaryOscillator.start(startedAt);
+    primaryOscillator.stop(startedAt + 0.22);
+    secondaryOscillator.start(startedAt + 0.05);
+    secondaryOscillator.stop(startedAt + 0.4);
+  };
+
+  const startScannerCooldown = (name: string) => {
+    clearScannerCooldown();
+    scanLockRef.current = true;
+    setScannerSuccessName(name);
+    setScannerCooldownRemaining(Math.ceil(SCANNER_COOLDOWN_MS / 1000));
+    setScannerHint(`Check-in generado para ${name}. Espera un momento antes del próximo escaneo.`);
+
+    const cooldownEndsAt = Date.now() + SCANNER_COOLDOWN_MS;
+
+    cooldownIntervalRef.current = window.setInterval(() => {
+      const remainingMs = Math.max(cooldownEndsAt - Date.now(), 0);
+      setScannerCooldownRemaining(Math.max(Math.ceil(remainingMs / 1000), 0));
+    }, 200);
+
+    cooldownTimeoutRef.current = window.setTimeout(() => {
+      clearScannerCooldown();
+      scanLockRef.current = false;
+      setManualQrValue('');
+      setScannerHint(SCANNER_HINT);
+    }, SCANNER_COOLDOWN_MS);
+  };
+
+  const stopScanner = () => {
+    if (frameRef.current) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraReady(false);
+  };
+
+  const registerCheckinSuccess = (response: CheckIn, name: string) => {
+    setCheckedIn(name);
+    setRecentCheckins((current) => [
+      { id: response.id, name, checkedInAt: response.checked_in_at },
+      ...current,
+    ].slice(0, 6));
+    setSearchQuery('');
+    queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
+    toast.success(`Check-in registrado para ${name}`);
+    void playCheckinConfirmation();
+    window.setTimeout(() => setCheckedIn(null), 3000);
+  };
+
+  const closeScannerModal = (force = false) => {
+    if (!force && scanCheckin.isPending) {
+      return;
+    }
+    clearScannerCooldown();
+    scanLockRef.current = false;
+    stopScanner();
+    setShowScannerModal(false);
+    setManualQrValue('');
+    setCameraError(null);
+    setScannerHint(SCANNER_HINT);
+  };
 
   const { data: metrics } = useQuery<DashboardMetrics>({
     queryKey: ['dashboard-metrics'],
@@ -28,6 +221,15 @@ export default function CheckInPage() {
       return response.data;
     },
   });
+
+  const { data: branchesData } = useQuery<Branch[]>({
+    queryKey: ['branches'],
+    queryFn: async () => {
+      const response = await branchesApi.list();
+      return (response.data?.items ?? response.data ?? []).filter((b: Branch) => b.is_active);
+    },
+  });
+  const activeBranches = branchesData ?? [];
 
   const { data: candidates, isLoading } = useQuery<PaginatedResponse<User>>({
     queryKey: ['clients-checkin-search', deferredSearch],
@@ -46,25 +248,143 @@ export default function CheckInPage() {
       const response = await checkinsApi.create({
         user_id: user.id,
         check_type: 'manual',
+        ...(selectedBranchId ? { branch_id: selectedBranchId } : {}),
       });
-      return { response: response.data, user };
+      return { response: response.data as CheckIn, user };
     },
     onSuccess: ({ response, user }) => {
-      const name = `${user.first_name} ${user.last_name}`;
-      setCheckedIn(name);
-      setRecentCheckins((current) => [
-        { id: response.id, name, checkedInAt: response.checked_in_at },
-        ...current,
-      ].slice(0, 6));
-      setSearchQuery('');
-      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
-      toast.success(`Check-in registrado para ${name}`);
-      window.setTimeout(() => setCheckedIn(null), 3000);
+      registerCheckinSuccess(response, `${user.first_name} ${user.last_name}`);
     },
     onError: (error: any) => {
       toast.error(getApiError(error, 'No se pudo registrar el check-in'));
     },
   });
+
+  const scanCheckin = useMutation({
+    mutationFn: async (qrPayload: string) => {
+      const response = await checkinsApi.scan({
+        qr_payload: qrPayload,
+        ...(selectedBranchId ? { branch_id: selectedBranchId } : {}),
+      });
+      return response.data as CheckIn;
+    },
+    onSuccess: (response) => {
+      const clientName = response.user_name || 'Cliente';
+      registerCheckinSuccess(response, clientName);
+      startScannerCooldown(clientName);
+    },
+    onError: (error: any) => {
+      scanLockRef.current = false;
+      setScannerHint(SCANNER_HINT);
+      toast.error(getApiError(error, 'No se pudo registrar el check-in con el código QR'));
+    },
+  });
+
+  useEffect(() => () => {
+    clearScannerCooldown();
+  }, []);
+
+  useEffect(() => {
+    if (!showScannerModal) {
+      stopScanner();
+      return undefined;
+    }
+
+    setCameraError(null);
+    setScannerHint(
+      scannerSupported
+        ? SCANNER_HINT
+        : 'Tu navegador no permite usar la cámara aquí. Puedes pegar el código manualmente.',
+    );
+
+    if (!scannerSupported) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const Detector = getBarcodeDetectorCtor();
+
+    const startScanner = async () => {
+      if (!Detector) {
+        setCameraError('Este navegador no permite usar la cámara para escanear QR.');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (!videoRef.current) {
+          setCameraError('No pudimos abrir la vista previa de la cámara.');
+          return;
+        }
+
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+
+        if (cancelled) {
+          return;
+        }
+
+        setCameraReady(true);
+        const detector = new Detector({ formats: ['qr_code'] });
+
+        const scanFrame = async () => {
+          if (cancelled || !videoRef.current) {
+            return;
+          }
+
+          if (
+            videoRef.current.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA
+            && !scanLockRef.current
+          ) {
+            try {
+              const matches = await detector.detect(videoRef.current);
+              const qrValue = matches.find((item) => item.rawValue?.trim())?.rawValue?.trim();
+
+              if (qrValue) {
+                scanLockRef.current = true;
+                setManualQrValue(qrValue);
+                setScannerHint('Código detectado. Validando ingreso...');
+                void scanCheckin.mutateAsync(qrValue);
+              }
+            } catch {
+              // Algunos navegadores lanzan errores intermitentes mientras la cámara se estabiliza.
+            }
+          }
+
+          frameRef.current = window.requestAnimationFrame(() => {
+            void scanFrame();
+          });
+        };
+
+        frameRef.current = window.requestAnimationFrame(() => {
+          void scanFrame();
+        });
+      } catch (error: any) {
+        const message = error?.name === 'NotAllowedError'
+          ? 'Necesitas permitir el acceso a la cámara para escanear el QR.'
+          : 'No pudimos acceder a la cámara. Puedes pegar el código manualmente.';
+        setCameraError(message);
+      }
+    };
+
+    void startScanner();
+
+    return () => {
+      cancelled = true;
+      stopScanner();
+    };
+  }, [scannerSupported, showScannerModal]);
 
   const clientResults = candidates?.items ?? [];
   const quickStats = useMemo(
@@ -79,8 +399,27 @@ export default function CheckInPage() {
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
       <motion.div variants={fadeInUp}>
-        <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Check-in</h1>
-        <p className="mt-1 text-sm text-surface-500">Busca un cliente real y registra su ingreso al gimnasio</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Check-in</h1>
+            <p className="mt-1 text-sm text-surface-500">Busca un cliente real, o escanea su QR, y registra su ingreso al gimnasio.</p>
+          </div>
+          {activeBranches.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-surface-500 whitespace-nowrap">Sucursal:</label>
+              <select
+                value={selectedBranchId}
+                onChange={(e) => setSelectedBranchId(e.target.value)}
+                className="rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-surface-800 dark:text-surface-100 text-sm px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Todas las sucursales</option>
+                {activeBranches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
       </motion.div>
 
       <motion.div
@@ -106,16 +445,27 @@ export default function CheckInPage() {
               autoFocus
             />
           </div>
-          <div className="mt-3 flex items-center gap-4 text-sm text-white/60">
+          <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-white/70">
             <button
               type="button"
-              onClick={() => toast('El escaneo QR todavía no está integrado')}
-              className="flex items-center gap-1.5 transition-colors hover:text-white/90"
+              onClick={() => {
+                void warmupCheckinAudio();
+                setShowScannerModal(true);
+              }}
+              className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 transition-colors hover:bg-white/15 hover:text-white"
             >
               <QrCode size={14} /> Escanear QR
             </button>
             <span>·</span>
             <span>{metrics?.checkins_today ?? recentCheckins.length} check-ins hoy</span>
+            {selectedBranchId && activeBranches.length > 1 && (
+              <>
+                <span>·</span>
+                <span className="text-white/90 font-medium">
+                  {activeBranches.find((b) => b.id === selectedBranchId)?.name}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </motion.div>
@@ -169,7 +519,10 @@ export default function CheckInPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => createCheckin.mutate({ user: client })}
+                  onClick={() => {
+                    void warmupCheckinAudio();
+                    createCheckin.mutate({ user: client });
+                  }}
                   disabled={createCheckin.isPending}
                   className="btn-primary px-3 py-2 text-sm"
                 >
@@ -220,7 +573,7 @@ export default function CheckInPage() {
               )) : (
                 <div className="rounded-xl border border-dashed border-surface-300 px-4 py-8 text-center dark:border-surface-700">
                   <p className="font-medium text-surface-700 dark:text-surface-200">Aún no hay check-ins en esta sesión</p>
-                  <p className="mt-1 text-sm text-surface-500">Usa el buscador superior para registrar el primero.</p>
+                  <p className="mt-1 text-sm text-surface-500">Usa el buscador superior o el lector QR para registrar el primero.</p>
                 </div>
               )}
             </div>
@@ -257,6 +610,110 @@ export default function CheckInPage() {
           ))}
         </div>
       </div>
+
+      <Modal
+        open={showScannerModal}
+        title="Escanear QR del cliente"
+        description="Usa la cámara del dispositivo o pega el código manualmente para registrar el ingreso."
+        onClose={closeScannerModal}
+        size="lg"
+      >
+        <div className="space-y-5">
+          <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-[1.75rem] border border-surface-200 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-950/30">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
+                <Camera size={16} />
+                Cámara
+              </div>
+              <div className="relative overflow-hidden rounded-[1.5rem] bg-surface-950">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="aspect-[4/3] w-full object-cover"
+                />
+                {scannerCooldownRemaining > 0 && scannerSuccessName ? (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-emerald-950/78 px-6 text-center text-white backdrop-blur-[2px]">
+                    <CheckCircle2 size={30} className="text-emerald-300" />
+                    <div className="space-y-1">
+                      <p className="text-base font-semibold">Check-in generado</p>
+                      <p className="text-sm leading-6 text-emerald-100">{scannerSuccessName}</p>
+                    </div>
+                    <div className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-white/90">
+                      Nuevo escaneo en {scannerCooldownRemaining}s
+                    </div>
+                  </div>
+                ) : null}
+                {!cameraReady && scannerSupported && !cameraError ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-950/70 text-white">
+                    <Loader2 size={24} className="animate-spin" />
+                    <p className="text-sm text-white/80">Preparando cámara...</p>
+                  </div>
+                ) : null}
+                {!scannerSupported ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-950/80 px-6 text-center text-white">
+                    <QrCode size={28} className="text-brand-300" />
+                    <p className="text-sm leading-6 text-white/80">
+                      Este navegador no permite escanear desde la cámara aquí. Puedes pegar el código en el formulario de la derecha.
+                    </p>
+                  </div>
+                ) : null}
+                {cameraError ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-950/80 px-6 text-center text-white">
+                    <QrCode size={28} className="text-amber-300" />
+                    <p className="text-sm leading-6 text-white/85">{cameraError}</p>
+                  </div>
+                ) : null}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-surface-500 dark:text-surface-400">
+                {scannerHint}
+              </p>
+            </div>
+
+            <form
+              className="space-y-4 rounded-[1.75rem] border border-surface-200 bg-white p-5 dark:border-surface-800 dark:bg-surface-950/30"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const payload = manualQrValue.trim();
+                if (!payload) {
+                  toast.error('Pega o escanea un código QR válido.');
+                  return;
+                }
+                void warmupCheckinAudio();
+                setScannerHint('Validando ingreso...');
+                scanCheckin.mutate(payload);
+              }}
+            >
+              <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
+                <Keyboard size={16} />
+                Código manual
+              </div>
+              <p className="text-sm leading-6 text-surface-500 dark:text-surface-400">
+                Esto también sirve si usas un lector externo que pega el código automáticamente.
+              </p>
+              <textarea
+                value={manualQrValue}
+                onChange={(event) => setManualQrValue(event.target.value)}
+                className="input min-h-36 resize-y font-mono text-sm"
+                placeholder="nexo:slug-del-gimnasio:id-del-cliente:id-de-la-membresía"
+                disabled={scanCheckin.isPending || scannerCooldownRemaining > 0}
+              />
+              <div className="rounded-2xl border border-brand-200 bg-brand-50/70 px-4 py-3 text-sm text-brand-700 dark:border-brand-900/40 dark:bg-brand-950/20 dark:text-brand-200">
+                Si el cliente muestra su QR en la app, también puedes escanearlo directamente con la cámara.
+              </div>
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-secondary" onClick={() => closeScannerModal()}>
+                  Cerrar
+                </button>
+                <button type="submit" className="btn-primary" disabled={scanCheckin.isPending || scannerCooldownRemaining > 0}>
+                  {scanCheckin.isPending ? 'Registrando...' : scannerCooldownRemaining > 0 ? `Listo en ${scannerCooldownRemaining}s` : 'Registrar ingreso'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </Modal>
     </motion.div>
   );
 }

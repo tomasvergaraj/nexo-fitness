@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from './Sidebar';
@@ -69,10 +69,32 @@ export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
+  const wasDesktopRef = useRef(typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const syncSidebarWithViewport = () => {
+      const isDesktop = window.innerWidth >= 1024;
+
+      if (isDesktop !== wasDesktopRef.current) {
+        setSidebarOpen(isDesktop);
+        wasDesktopRef.current = isDesktop;
+      }
+    };
+
+    window.addEventListener('resize', syncSidebarWithViewport);
+
+    return () => {
+      window.removeEventListener('resize', syncSidebarWithViewport);
+    };
+  }, []);
 
   useEffect(() => {
     // Solo verificar para roles de gimnasio (no superadmin ni clientes)

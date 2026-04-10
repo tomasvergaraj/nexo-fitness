@@ -106,6 +106,7 @@ export const billingApi = {
 
 export const dashboardApi = {
   getMetrics: () => api.get('/dashboard/metrics'),
+  getToday: () => api.get('/dashboard/today'),
 };
 
 export const classesApi = {
@@ -119,7 +120,8 @@ export const classesApi = {
 export const reservationsApi = {
   list: (params?: Record<string, unknown>) => api.get('/reservations', { params }),
   create: (data: { gym_class_id: string; user_id?: string }) => api.post('/reservations', data),
-  cancel: (id: string) => api.delete(`/reservations/${id}`),
+  cancel: (id: string, cancelReason?: string) =>
+    api.delete(`/reservations/${id}`, { params: cancelReason ? { cancel_reason: cancelReason } : undefined }),
 };
 
 export const clientsApi = {
@@ -128,6 +130,8 @@ export const clientsApi = {
   create: (data: Record<string, unknown>) => api.post('/clients', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/clients/${id}`, data),
   resetPassword: (id: string, newPassword: string) => api.post(`/clients/${id}/reset-password`, { new_password: newPassword }),
+  stats: (id: string) => api.get(`/clients/${id}/stats`),
+  membershipHistory: (id: string) => api.get(`/clients/${id}/membership-history`),
 };
 
 export const plansApi = {
@@ -143,6 +147,7 @@ export const paymentsApi = {
 
 export const checkinsApi = {
   create: (data: Record<string, unknown>) => api.post('/checkins', data),
+  scan: (data: Record<string, unknown>) => api.post('/checkins/scan', data),
 };
 
 export const staffApi = {
@@ -197,10 +202,11 @@ export const settingsApi = {
 
 export const reportsApi = {
   overview: (params?: Record<string, unknown>) => api.get('/reports/overview', { params }),
+  attendance: (params?: Record<string, unknown>) => api.get('/reports/attendance', { params }),
 };
 
 export const notificationsApi = {
-  list: () => api.get('/notifications'),
+  list: (params?: Record<string, unknown>) => api.get('/notifications', { params }),
   create: (data: Record<string, unknown>) => api.post('/notifications', data),
   getDispatch: (id: string, params?: Record<string, unknown>) => api.get(`/notifications/${id}/dispatch`, { params }),
   broadcast: (data: Record<string, unknown>) => api.post('/notifications/broadcast', data),
@@ -231,9 +237,38 @@ export const publicApi = {
 export const mobileApi = {
   wallet: () => api.get('/mobile/wallet'),
   listPayments: (params?: Record<string, unknown>) => api.get('/mobile/payments', { params }),
+  listSupportInteractions: (params?: Record<string, unknown>) => api.get('/mobile/support/interactions', { params }),
+  createSupportInteraction: (data: Record<string, unknown>) => api.post('/mobile/support/interactions', data),
   getPushConfig: () => api.get('/mobile/push-config'),
   pushPreview: (data: Record<string, unknown>) => api.post('/mobile/push-preview', data),
   listPushSubscriptions: () => api.get('/mobile/push-subscriptions'),
   registerPushSubscription: (data: Record<string, unknown>) => api.post('/mobile/push-subscriptions', data),
   updateMembership: (data: { auto_renew?: boolean }) => api.patch('/mobile/membership', data),
+  downloadCalendar: () => api.get('/mobile/calendar.ics', { responseType: 'blob' }),
+  listMeasurements: () => api.get('/mobile/progress'),
+  createMeasurement: (data: Record<string, unknown>) => api.post('/mobile/progress', data),
+  deleteMeasurement: (id: string) => api.delete(`/mobile/progress/${id}`),
+  listProgressPhotos: () => api.get('/mobile/progress/photos'),
+  uploadProgressPhoto: (formData: FormData) => api.post('/mobile/progress/photos', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  deleteProgressPhoto: (id: string) => api.delete(`/mobile/progress/photos/${id}`),
+  listPersonalRecords: (exercise?: string) => api.get('/mobile/personal-records', { params: exercise ? { exercise } : undefined }),
+  createPersonalRecord: (data: Record<string, unknown>) => api.post('/mobile/personal-records', data),
+  deletePersonalRecord: (id: string) => api.delete(`/mobile/personal-records/${id}`),
+};
+
+export const apiClientsApi = {
+  list: () => api.get('/api-clients'),
+  create: (data: Record<string, unknown>) => api.post('/api-clients', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/api-clients/${id}`, data),
+  delete: (id: string) => api.delete(`/api-clients/${id}`),
+};
+
+export const promoCodesApi = {
+  list: () => api.get('/promo-codes'),
+  create: (data: Record<string, unknown>) => api.post('/promo-codes', data),
+  update: (id: string, data: Record<string, unknown>) => api.patch(`/promo-codes/${id}`, data),
+  delete: (id: string) => api.delete(`/promo-codes/${id}`),
+  validate: (code: string, planId: string) => api.post('/promo-codes/validate', { code, plan_id: planId }),
 };

@@ -45,7 +45,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
         {
           id: 'tenants',
           title: 'Revisa el pipeline SaaS',
-          description: 'Monitorea trials, activaciones y tenants con riesgo.',
+          description: 'Monitorea pruebas, activaciones y cuentas con riesgo.',
           path: '/platform/tenants',
         },
       ]

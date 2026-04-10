@@ -254,7 +254,7 @@ async def enforce_tenant_access(
 
     await db.flush()
     raise ActionRequiredError(
-        access_state.detail or "This tenant is not active. Check your billing status or contact support.",
+        access_state.detail or "Esta cuenta no está activa. Revisa tu estado de facturación o contacta a soporte.",
         next_action=next_action,
         checkout_url=checkout_url,
         billing_status=tenant.status.value if isinstance(tenant.status, TenantStatus) else str(tenant.status),

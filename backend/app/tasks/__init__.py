@@ -14,6 +14,9 @@ celery = Celery(
         "app.tasks.campaigns",
         "app.tasks.push_receipts",
         "app.tasks.trial_warnings",
+        "app.tasks.membership_alerts",
+        "app.tasks.class_reminders",
+        "app.tasks.auto_renewal",
     ],
 )
 
@@ -35,6 +38,21 @@ celery.conf.update(
         # Avisos de trial: una vez al día a las 9am UTC (≈ 6am Chile)
         "send-trial-warning-emails": {
             "task": "app.tasks.trial_warnings.send_trial_warning_emails",
+            "schedule": 86400,  # cada 24 horas
+        },
+        # Alertas de membresía por vencer: una vez al día a las 10am UTC (≈ 7am Chile)
+        "send-membership-expiry-alerts": {
+            "task": "app.tasks.membership_alerts.send_membership_expiry_alerts",
+            "schedule": 86400,  # cada 24 horas
+        },
+        # Recordatorios de clase 2h antes: cada 15 minutos
+        "send-class-reminders": {
+            "task": "app.tasks.class_reminders.send_class_reminders",
+            "schedule": 900,  # cada 15 minutos
+        },
+        # Renovación automática de membresías: una vez al día a las 8am UTC (≈ 5am Chile)
+        "process-auto-renewals": {
+            "task": "app.tasks.auto_renewal.process_auto_renewals",
             "schedule": 86400,  # cada 24 horas
         },
     },

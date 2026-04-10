@@ -26,6 +26,7 @@ class SaaSPlan(Base):
     )
     currency: Mapped[str] = mapped_column(String(3), default="CLP")
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    discount_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
     billing_interval: Mapped[str] = mapped_column(String(20), default="month")
     trial_days: Mapped[int] = mapped_column(Integer, default=14)
     max_members: Mapped[int] = mapped_column(Integer, default=500)

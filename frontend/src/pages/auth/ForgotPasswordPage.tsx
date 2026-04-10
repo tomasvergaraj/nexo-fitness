@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Zap, ArrowLeft, Loader2, Mail } from 'lucide-react';
+import { ArrowLeft, Loader2, Mail } from 'lucide-react';
+import NexoBrand from '@/components/branding/NexoBrand';
 import { authApi } from '@/services/api';
 import { cn } from '@/utils';
 
@@ -40,14 +41,13 @@ export default function ForgotPasswordPage() {
         transition={{ duration: 0.5 }}
         className="relative w-full max-w-md px-6"
       >
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600
-                          flex items-center justify-center shadow-lg shadow-brand-500/30">
-            <Zap size={20} className="text-white" />
-          </div>
-          <h1 className="text-2xl font-bold font-display text-white">
-            Nexo<span className="text-brand-400">Fitness</span>
-          </h1>
+        <div className="mb-8">
+          <NexoBrand
+            iconSize={40}
+            iconClassName="shadow-lg shadow-brand-500/25"
+            titleClassName="text-2xl"
+            accentClassName="text-brand-400"
+          />
         </div>
 
         <div className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl">

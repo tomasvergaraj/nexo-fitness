@@ -39,6 +39,7 @@ class SaaSPlanDefinition:
     max_branches: int
     features: tuple[str, ...]
     stripe_price_id: str
+    discount_pct: Optional[Decimal] = None
     fintoc_enabled: bool = False
     highlighted: bool = False
     is_active: bool = True
@@ -47,6 +48,14 @@ class SaaSPlanDefinition:
     id: Optional[UUID] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    @property
+    def discounted_price(self) -> Decimal:
+        """Precio final tras aplicar discount_pct. Igual al precio base si no hay descuento."""
+        if not self.discount_pct:
+            return self.price
+        factor = (Decimal("100") - self.discount_pct) / Decimal("100")
+        return (self.price * factor).quantize(Decimal("0.01"))
 
     @property
     def checkout_enabled(self) -> bool:
@@ -71,6 +80,7 @@ class SaaSPlanDefinition:
             license_type=self.license_type.value,
             currency=self.currency,
             price=self.price,
+            discount_pct=self.discount_pct,
             billing_interval=self.billing_interval,
             trial_days=self.trial_days,
             max_members=self.max_members,
@@ -90,6 +100,7 @@ class SaaSPlanDefinition:
             license_type=self.license_type.value,
             currency=self.currency,
             price=self.price,
+            discount_pct=self.discount_pct,
             billing_interval=self.billing_interval,
             trial_days=self.trial_days,
             max_members=self.max_members,
@@ -219,6 +230,7 @@ def definition_from_record(record: SaaSPlan) -> SaaSPlanDefinition:
         description=record.description or "",
         license_type=record.license_type,
         price=_coerce_decimal(record.price),
+        discount_pct=_coerce_decimal(record.discount_pct, "0") if record.discount_pct is not None else None,
         currency=record.currency,
         billing_interval=record.billing_interval,
         trial_days=record.trial_days,
@@ -357,7 +369,7 @@ async def update_admin_saas_plan(
     await ensure_default_saas_plans(db)
     record = await db.get(SaaSPlan, plan_id)
     if not record:
-        raise ValueError("SaaS plan was not found")
+        raise ValueError("No se encontró el plan SaaS")
 
     payload = data.model_dump(exclude_unset=True)
     if payload.get("highlighted") is True:

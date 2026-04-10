@@ -13,7 +13,7 @@ import type { AdminTenantBilling, PaginatedResponse } from '@/types';
 
 const statusLabels: Record<string, string> = {
   active: 'Activo',
-  trial: 'Trial',
+  trial: 'En prueba',
   suspended: 'Suspendido',
   expired: 'Vencido',
   cancelled: 'Cancelado',
@@ -96,9 +96,9 @@ export default function PlatformTenantsPage() {
             <ShieldCheck size={14} />
             Plataforma SaaS
           </div>
-          <h1 className="mt-3 text-2xl font-bold font-display text-surface-900 dark:text-white">Tenants y ventas online</h1>
+          <h1 className="mt-3 text-2xl font-bold font-display text-surface-900 dark:text-white">Cuentas SaaS y ventas online</h1>
           <p className="mt-1 text-sm text-surface-500">
-            Vista operativa para seguir trials, activaciones, owners y capacidad del SaaS.
+            Vista operativa para seguir pruebas, activaciones, propietarios y capacidad del SaaS.
           </p>
         </div>
 
@@ -112,7 +112,7 @@ export default function PlatformTenantsPage() {
               type="text"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por gimnasio, owner, plan o slug"
+              placeholder="Buscar por gimnasio, propietario, plan o slug"
               className="input w-full pl-9"
             />
           </div>
@@ -124,14 +124,14 @@ export default function PlatformTenantsPage() {
 
       {isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-          No pudimos cargar los tenants SaaS. Revisa el backend o tu sesion de superadmin.
+          No pudimos cargar las cuentas SaaS. Revisa el backend o tu sesión de superadmin.
         </div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Tenants totales" value={tenants.length} icon={Building2} color="brand" />
-        <StatCard label="Tenants activos" value={summary.active} icon={CheckCircle2} color="emerald" />
-        <StatCard label="Trials en curso" value={summary.trial} icon={Clock3} color="blue" />
+        <StatCard label="Cuentas totales" value={tenants.length} icon={Building2} color="brand" />
+        <StatCard label="Cuentas activas" value={summary.active} icon={CheckCircle2} color="emerald" />
+        <StatCard label="Pruebas en curso" value={summary.trial} icon={Clock3} color="blue" />
         <StatCard label="Cobro online listo" value={summary.checkoutReady} icon={WalletCards} color="violet" />
       </div>
 
@@ -147,14 +147,14 @@ export default function PlatformTenantsPage() {
             </div>
           </div>
           <p className="mt-3 text-sm text-surface-500">
-            Tenants suspendidos, vencidos o cancelados que deberian entrar a seguimiento comercial.
+            Cuentas suspendidas, vencidas o canceladas que deberían entrar a seguimiento comercial.
           </p>
         </motion.div>
 
         <motion.div variants={fadeInUp} className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-surface-500">Owners registrados</p>
+              <p className="text-sm font-medium text-surface-500">Propietarios registrados</p>
               <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">
                 {tenants.filter((tenant) => tenant.owner_email).length}
               </p>
@@ -164,14 +164,14 @@ export default function PlatformTenantsPage() {
             </div>
           </div>
           <p className="mt-3 text-sm text-surface-500">
-            Cada tenant llega con owner creado para activar onboarding, trial y checkout online.
+            Cada cuenta llega con propietario creado para activar el alta, la prueba y el pago online.
           </p>
         </motion.div>
 
         <motion.div variants={fadeInUp} className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-surface-500">Trials / activos</p>
+              <p className="text-sm font-medium text-surface-500">Pruebas / activas</p>
               <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">
                 {summary.trial} / {summary.active}
               </p>
@@ -181,7 +181,7 @@ export default function PlatformTenantsPage() {
             </div>
           </div>
           <p className="mt-3 text-sm text-surface-500">
-            Balance rapido entre adquisicion y conversion del funnel actual del SaaS.
+            Balance rápido entre adquisición y conversión del embudo actual del SaaS.
           </p>
         </motion.div>
       </div>
@@ -189,13 +189,13 @@ export default function PlatformTenantsPage() {
       <motion.div variants={fadeInUp} className="overflow-hidden rounded-2xl border border-surface-200/50 bg-white dark:border-surface-800/50 dark:bg-surface-900">
         <div className="flex flex-col gap-2 border-b border-surface-100 px-5 py-4 dark:border-surface-800 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-surface-900 dark:text-white">Tenants SaaS</h2>
+            <h2 className="text-base font-semibold text-surface-900 dark:text-white">Cuentas SaaS</h2>
             <p className="text-sm text-surface-500">
-              {isLoading ? 'Cargando tenants...' : `${filteredTenants.length} visibles de ${tenants.length} tenants`}
+              {isLoading ? 'Cargando cuentas...' : `${filteredTenants.length} visibles de ${tenants.length} cuentas`}
             </p>
           </div>
           <div className="text-xs uppercase tracking-[0.18em] text-surface-400">
-            Ultima actualizacion: {formatDateTime(new Date())}
+            Última actualización: {formatDateTime(new Date())}
           </div>
         </div>
 
@@ -207,8 +207,8 @@ export default function PlatformTenantsPage() {
           </div>
         ) : filteredTenants.length === 0 ? (
           <div className="px-5 py-12 text-center">
-            <p className="text-base font-semibold text-surface-900 dark:text-white">No encontramos tenants con ese filtro</p>
-            <p className="mt-2 text-sm text-surface-500">Prueba buscando por slug, owner o estado.</p>
+            <p className="text-base font-semibold text-surface-900 dark:text-white">No encontramos cuentas con ese filtro</p>
+            <p className="mt-2 text-sm text-surface-500">Prueba buscando por slug, propietario o estado.</p>
           </div>
         ) : (
           <div className="divide-y divide-surface-100 dark:divide-surface-800">
@@ -227,8 +227,8 @@ export default function PlatformTenantsPage() {
                   <p className="mt-1 font-mono text-xs text-surface-500">{tenant.tenant_slug}</p>
                   <div className="mt-3 space-y-1 text-sm text-surface-500">
                     <p>
-                      <span className="font-medium text-surface-700 dark:text-surface-300">Owner:</span>{' '}
-                      {tenant.owner_name ? `${tenant.owner_name} - ${tenant.owner_email}` : tenant.owner_email ?? 'Sin owner'}
+                      <span className="font-medium text-surface-700 dark:text-surface-300">Propietario:</span>{' '}
+                      {tenant.owner_name ? `${tenant.owner_name} - ${tenant.owner_email}` : tenant.owner_email ?? 'Sin propietario'}
                     </p>
                     <p>
                       <span className="font-medium text-surface-700 dark:text-surface-300">Creado:</span>{' '}
@@ -246,16 +246,16 @@ export default function PlatformTenantsPage() {
 
                 <div className="space-y-2 text-sm text-surface-500">
                   <p className="font-semibold text-surface-900 dark:text-white">Ciclo</p>
-                  <p>Trial: {tenant.trial_ends_at ? formatDate(tenant.trial_ends_at) : 'No aplica'}</p>
+                  <p>Prueba: {tenant.trial_ends_at ? formatDate(tenant.trial_ends_at) : 'No aplica'}</p>
                   <p>Vence: {tenant.license_expires_at ? formatDate(tenant.license_expires_at) : 'Sin fecha'}</p>
                   <p>Acceso: {tenant.is_active ? 'Habilitado' : 'Bloqueado'}</p>
                 </div>
 
                 <div className="space-y-2 text-sm text-surface-500">
-                  <p className="font-semibold text-surface-900 dark:text-white">Facturacion</p>
-                  <p>{tenant.checkout_enabled ? 'Checkout online habilitado' : 'Checkout manual'}</p>
-                  <p>{tenant.stripe_customer_id ? `Customer: ${tenant.stripe_customer_id}` : 'Sin customer Stripe'}</p>
-                  <p>{tenant.stripe_subscription_id ? `Sub: ${tenant.stripe_subscription_id}` : 'Sin suscripcion Stripe'}</p>
+                  <p className="font-semibold text-surface-900 dark:text-white">Facturación</p>
+                  <p>{tenant.checkout_enabled ? 'Pago online habilitado' : 'Cobro manual'}</p>
+                  <p>{tenant.stripe_customer_id ? `Cliente Stripe: ${tenant.stripe_customer_id}` : 'Sin cliente Stripe'}</p>
+                  <p>{tenant.stripe_subscription_id ? `Suscripción Stripe: ${tenant.stripe_subscription_id}` : 'Sin suscripción Stripe'}</p>
                 </div>
 
                 {tenant.features.length ? (

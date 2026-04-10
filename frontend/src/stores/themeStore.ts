@@ -39,13 +39,14 @@ const getStoredDarkPreference = () => {
   try {
     const stored = window.localStorage.getItem('nexo-theme');
     if (!stored) {
-      return false;
+      // No stored preference: follow the OS preference
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
 
     const parsed = JSON.parse(stored) as { state?: { isDark?: boolean } };
     return Boolean(parsed.state?.isDark);
   } catch {
-    return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 };
 

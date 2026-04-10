@@ -127,6 +127,7 @@ class Plan(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    discount_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="CLP")
     duration_type: Mapped[PlanDuration] = mapped_column(SAEnum(PlanDuration, name="plan_duration_enum"))
     duration_days: Mapped[Optional[int]] = mapped_column(Integer)
@@ -164,6 +165,7 @@ class Membership(Base):
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255))
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     frozen_until: Mapped[Optional[date]] = mapped_column(Date)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -218,6 +220,7 @@ class Reservation(Base):
     status: Mapped[ReservationStatus] = mapped_column(SAEnum(ReservationStatus, name="reservation_status_enum"), default=ReservationStatus.CONFIRMED)
     waitlist_position: Mapped[Optional[int]] = mapped_column(Integer)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cancel_reason: Mapped[Optional[str]] = mapped_column(String(500))
     attended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -273,6 +276,28 @@ class Payment(Base):
 
     user = relationship("User", back_populates="payments")
     membership = relationship("Membership")
+
+
+# ─── PromoCode ────────────────────────────────────────────────────────────────
+
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    discount_type: Mapped[str] = mapped_column(String(10), nullable=False)  # "percent" | "fixed"
+    discount_value: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    max_uses: Mapped[Optional[int]] = mapped_column(Integer)
+    uses_count: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    plan_ids: Mapped[Optional[str]] = mapped_column(Text)  # JSON list of plan UUIDs, None = all plans
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 # ─── Campaign ─────────────────────────────────────────────────────────────────
@@ -378,3 +403,74 @@ class TrainingProgram(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+# ─── ApiClient ────────────────────────────────────────────────────────────────
+
+class ApiClient(Base):
+    """OAuth2 client-credentials client for third-party / wearable integrations."""
+    __tablename__ = "api_clients"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    client_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    client_secret_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    scopes: Mapped[str] = mapped_column(Text, default="measurements:read")
+    rate_limit_per_minute: Mapped[int] = mapped_column(Integer, default=60)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+# ─── PersonalRecord ───────────────────────────────────────────────────────────
+
+class PersonalRecord(Base):
+    __tablename__ = "personal_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    exercise_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    record_value: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# ─── ProgressPhoto ────────────────────────────────────────────────────────────
+
+class ProgressPhoto(Base):
+    __tablename__ = "progress_photos"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# ─── BodyMeasurement ──────────────────────────────────────────────────────────
+
+class BodyMeasurement(Base):
+    __tablename__ = "body_measurements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Body composition
+    weight_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    body_fat_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+    muscle_mass_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    # Circumferences (cm)
+    chest_cm: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    waist_cm: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    hip_cm: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    arm_cm: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    thigh_cm: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

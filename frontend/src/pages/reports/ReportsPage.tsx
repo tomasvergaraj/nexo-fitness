@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { Download, Filter, TrendingDown, TrendingUp, Wallet } from 'lucide-react';
+import { Download, Filter, TrendingDown, TrendingUp, User, Wallet } from 'lucide-react';
 import {
   AreaChart, Area, CartesianGrid, LineChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell,
 } from 'recharts';
 import { reportsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
-import { formatCurrency, parseApiNumber } from '@/utils';
+import { cn, formatCurrency, parseApiNumber } from '@/utils';
 import type { ReportsOverview } from '@/types';
 
 type RangeKey = '30d' | '90d' | '12m';
@@ -22,6 +22,24 @@ function exportCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(link.href);
 }
 
+type AttendanceReport = {
+  classes: Array<{
+    name: string;
+    sessions: number;
+    avg_occupancy_pct: number;
+    avg_attendance_pct: number;
+    total_reservations: number;
+    total_checkins: number;
+  }>;
+  instructors: Array<{
+    instructor_id: string;
+    name: string | null;
+    sessions: number;
+    total_reservations: number;
+    total_checkins: number;
+  }>;
+};
+
 export default function ReportsPage() {
   const [range, setRange] = useState<RangeKey>('12m');
 
@@ -29,6 +47,14 @@ export default function ReportsPage() {
     queryKey: ['reports-overview', range],
     queryFn: async () => {
       const response = await reportsApi.overview({ range_key: range });
+      return response.data;
+    },
+  });
+
+  const { data: attendanceData, isLoading: attendanceLoading } = useQuery<AttendanceReport>({
+    queryKey: ['reports-attendance', range],
+    queryFn: async () => {
+      const response = await reportsApi.attendance({ range_key: range });
       return response.data;
     },
   });
@@ -72,7 +98,7 @@ export default function ReportsPage() {
 
       {isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-          No pudimos cargar los reportes del tenant.
+          No pudimos cargar los reportes de la cuenta.
         </div>
       ) : null}
 
@@ -169,6 +195,70 @@ export default function ReportsPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Attendance ranking section */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.4fr_0.6fr]">
+        <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Ranking de clases por ocupación</h2>
+          <p className="mt-1 text-sm text-surface-500">Promedio de reservas vs. capacidad en el período</p>
+          <div className="mt-4 space-y-3">
+            {attendanceLoading ? (
+              Array.from({ length: 5 }).map((_, i) => <div key={i} className="shimmer h-14 rounded-2xl" />)
+            ) : (attendanceData?.classes ?? []).length === 0 ? (
+              <p className="py-6 text-center text-sm text-surface-400">Sin datos de clases para el período seleccionado.</p>
+            ) : (
+              (attendanceData?.classes ?? []).map((item, index) => (
+                <div key={item.name} className="rounded-2xl border border-surface-200/60 px-4 py-3 dark:border-surface-800/60">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-bold text-surface-400 w-5 text-right flex-shrink-0">#{index + 1}</span>
+                      <span className="truncate text-sm font-medium text-surface-900 dark:text-white">{item.name}</span>
+                      <span className="flex-shrink-0 text-xs text-surface-400">{item.sessions} ses.</span>
+                    </div>
+                    <div className="flex flex-shrink-0 items-center gap-3 text-xs text-surface-500">
+                      <span>{item.total_checkins} check-ins</span>
+                      <span className={cn('font-semibold', item.avg_occupancy_pct >= 70 ? 'text-emerald-600 dark:text-emerald-400' : item.avg_occupancy_pct >= 40 ? 'text-amber-500' : 'text-rose-500')}>
+                        {item.avg_occupancy_pct}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-100 dark:bg-surface-800">
+                    <div
+                      className={cn('h-full rounded-full', item.avg_occupancy_pct >= 70 ? 'bg-emerald-500' : item.avg_occupancy_pct >= 40 ? 'bg-amber-400' : 'bg-rose-400')}
+                      style={{ width: `${Math.min(item.avg_occupancy_pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </motion.div>
+
+        <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Ranking instructores</h2>
+          <p className="mt-1 text-sm text-surface-500">Check-ins generados en el período</p>
+          <div className="mt-4 space-y-3">
+            {attendanceLoading ? (
+              Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-14 rounded-2xl" />)
+            ) : (attendanceData?.instructors ?? []).length === 0 ? (
+              <p className="py-6 text-center text-sm text-surface-400">Sin instructores asignados en el período.</p>
+            ) : (
+              (attendanceData?.instructors ?? []).map((item, index) => (
+                <div key={item.instructor_id} className="flex items-center gap-3 rounded-2xl border border-surface-200/60 px-4 py-3 dark:border-surface-800/60">
+                  <span className="text-xs font-bold text-surface-400 w-4 text-right">{index + 1}</span>
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                    <User size={14} className="text-violet-600 dark:text-violet-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-surface-900 dark:text-white">{item.name ?? 'Sin nombre'}</p>
+                    <p className="text-xs text-surface-400">{item.sessions} clases · {item.total_checkins} check-ins</p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </motion.div>
       </div>

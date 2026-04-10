@@ -1,20 +1,20 @@
 """Clients, Plans, and Payments API endpoints."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, cast, Date, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles, get_current_user
 from app.core.security import hash_password, verify_password
 from app.models.user import User, UserRole
-from app.models.business import Plan, Membership, Payment, PaymentStatus
-from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserDetailResponse, ClientListResponse
+from app.models.business import Plan, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
+from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserClientResponse, UserDetailResponse, ClientListResponse
 from app.schemas.business import (
     PlanCreate, PlanUpdate, PlanResponse,
     PaymentCreate, PaymentResponse,
@@ -33,6 +33,8 @@ async def list_clients(
     search: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
     tag: Optional[str] = None,
+    birthday_month: bool = Query(False),
+    churn_risk: Optional[str] = Query(None, pattern="^(high|medium|low)$"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
@@ -57,13 +59,109 @@ async def list_clients(
         base = base.where(User.is_active == False)
         count_base = count_base.where(User.is_active == False)
 
+    if birthday_month:
+        current_month = datetime.now(timezone.utc).month
+        base = base.where(
+            User.date_of_birth != None,
+            extract("month", User.date_of_birth) == current_month,
+        )
+        count_base = count_base.where(
+            User.date_of_birth != None,
+            extract("month", User.date_of_birth) == current_month,
+        )
+
     total = (await db.execute(count_base)).scalar() or 0
     query = base.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(query)
     clients = result.scalars().all()
 
+    # Enrich each client with their most recent active membership
+    client_ids = [c.id for c in clients]
+    membership_rows = (
+        await db.execute(
+            select(Membership)
+            .where(
+                Membership.tenant_id == ctx.tenant_id,
+                Membership.user_id.in_(client_ids),
+                Membership.status.in_([MembershipStatus.ACTIVE, MembershipStatus.EXPIRED]),
+            )
+            .order_by(Membership.created_at.desc())
+        )
+    ).scalars().all()
+
+    # Keep only the most recent membership per client
+    latest_membership: dict = {}
+    for m in membership_rows:
+        if m.user_id not in latest_membership:
+            latest_membership[m.user_id] = m
+
+    # Load plan names for those memberships
+    plan_ids = list({m.plan_id for m in latest_membership.values() if m.plan_id})
+    plans_by_id = {
+        p.id: p
+        for p in (await db.execute(select(Plan).where(Plan.id.in_(plan_ids)))).scalars().all()
+    } if plan_ids else {}
+
+    # Batch-fetch last check-in date per client for churn scoring
+    last_checkin_rows = (
+        await db.execute(
+            select(CheckIn.user_id, func.max(CheckIn.checked_in_at).label("last_at"))
+            .where(CheckIn.tenant_id == ctx.tenant_id, CheckIn.user_id.in_(client_ids))
+            .group_by(CheckIn.user_id)
+        )
+    ).all()
+    last_checkin_by_user: dict = {row.user_id: row.last_at for row in last_checkin_rows}
+
+    def compute_churn_risk(membership: Optional[Membership], last_checkin_at) -> str:
+        now = datetime.now(timezone.utc)
+        # Expired or cancelled membership → high risk regardless of activity
+        if not membership or (
+            hasattr(membership.status, 'value') and membership.status.value in ("expired", "cancelled")
+        ):
+            return "high"
+        if last_checkin_at is None:
+            return "high"
+        # Normalise timezone
+        lc = last_checkin_at
+        if lc.tzinfo is None:
+            lc = lc.replace(tzinfo=timezone.utc)
+        days_since = (now - lc).days
+        if days_since >= 30:
+            return "high"
+        if days_since >= 14:
+            return "medium"
+        return "low"
+
+    items = []
+    for c in clients:
+        membership = latest_membership.get(c.id)
+        plan = plans_by_id.get(membership.plan_id) if membership and membership.plan_id else None
+        last_ci = last_checkin_by_user.get(c.id)
+        risk = compute_churn_risk(membership, last_ci)
+
+        # Apply churn_risk filter post-enrichment (avoids complex SQL join)
+        if churn_risk and risk != churn_risk:
+            continue
+
+        # date_of_birth may be a datetime — normalize to date
+        dob = c.date_of_birth
+        if hasattr(dob, 'date'):
+            dob = dob.date()
+        items.append(
+            UserClientResponse(
+                **UserResponse.model_validate(c).model_dump(),
+                date_of_birth=dob,
+                membership_id=membership.id if membership else None,
+                membership_status=membership.status.value if membership else None,
+                membership_expires_at=membership.expires_at if membership else None,
+                membership_notes=membership.notes if membership else None,
+                plan_name=plan.name if plan else None,
+                churn_risk=risk,
+            )
+        )
+
     return ClientListResponse(
-        items=[UserResponse.model_validate(c) for c in clients],
+        items=items,
         total=total,
         page=page,
         per_page=per_page,
@@ -117,6 +215,114 @@ async def get_client(
     if not client:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return UserDetailResponse.model_validate(client)
+
+
+@clients_router.get("/{client_id}/membership-history")
+async def get_client_membership_history(
+    client_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    """Return full membership history for a client."""
+    client = (await db.execute(
+        select(User).where(User.id == client_id, User.tenant_id == ctx.tenant_id)
+    )).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    memberships = (await db.execute(
+        select(Membership)
+        .where(Membership.tenant_id == ctx.tenant_id, Membership.user_id == client_id)
+        .order_by(Membership.created_at.desc())
+    )).scalars().all()
+
+    plan_ids = list({m.plan_id for m in memberships if m.plan_id})
+    plans_by_id = {}
+    if plan_ids:
+        plans_by_id = {
+            p.id: p for p in (await db.execute(select(Plan).where(Plan.id.in_(plan_ids)))).scalars().all()
+        }
+
+    return [
+        {
+            "id": str(m.id),
+            "plan_name": plans_by_id[m.plan_id].name if m.plan_id in plans_by_id else "Plan eliminado",
+            "status": m.status.value,
+            "starts_at": m.starts_at.isoformat() if m.starts_at else None,
+            "expires_at": m.expires_at.isoformat() if m.expires_at else None,
+            "frozen_until": m.frozen_until.isoformat() if m.frozen_until else None,
+            "notes": m.notes,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in memberships
+    ]
+
+
+@clients_router.get("/{client_id}/stats")
+async def get_client_stats(
+    client_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
+):
+    """Return attendance statistics for a single client."""
+    # Verify client belongs to tenant
+    client = (await db.execute(
+        select(User).where(User.id == client_id, User.tenant_id == ctx.tenant_id)
+    )).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    # Total reservations (any status)
+    total_reservations = (await db.execute(
+        select(func.count()).select_from(Reservation)
+        .where(Reservation.tenant_id == ctx.tenant_id, Reservation.user_id == client_id)
+    )).scalar() or 0
+
+    # Confirmed reservations (attended + confirmed)
+    confirmed_reservations = (await db.execute(
+        select(func.count()).select_from(Reservation)
+        .where(
+            Reservation.tenant_id == ctx.tenant_id,
+            Reservation.user_id == client_id,
+            Reservation.status.in_([ReservationStatus.CONFIRMED, ReservationStatus.ATTENDED]),
+        )
+    )).scalar() or 0
+
+    # Cancelled reservations
+    cancelled_reservations = (await db.execute(
+        select(func.count()).select_from(Reservation)
+        .where(
+            Reservation.tenant_id == ctx.tenant_id,
+            Reservation.user_id == client_id,
+            Reservation.status == ReservationStatus.CANCELLED,
+        )
+    )).scalar() or 0
+
+    # Total check-ins (actual attendance)
+    total_checkins = (await db.execute(
+        select(func.count()).select_from(CheckIn)
+        .where(CheckIn.tenant_id == ctx.tenant_id, CheckIn.user_id == client_id)
+    )).scalar() or 0
+
+    # Last visit
+    last_visit = (await db.execute(
+        select(func.max(CheckIn.checked_in_at))
+        .where(CheckIn.tenant_id == ctx.tenant_id, CheckIn.user_id == client_id)
+    )).scalar()
+
+    # Attendance rate: check-ins vs confirmed reservations
+    attendance_rate = round(total_checkins / confirmed_reservations * 100) if confirmed_reservations > 0 else 0
+
+    return {
+        "total_reservations": total_reservations,
+        "confirmed_reservations": confirmed_reservations,
+        "cancelled_reservations": cancelled_reservations,
+        "total_checkins": total_checkins,
+        "attendance_rate": attendance_rate,
+        "last_visit": last_visit.isoformat() if last_visit else None,
+    }
 
 
 @clients_router.patch("/{client_id}", response_model=UserResponse)

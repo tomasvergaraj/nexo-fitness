@@ -17,6 +17,7 @@ class SaaSPlanResponse(BaseModel):
     license_type: str
     currency: str
     price: Decimal = Field(ge=0)
+    discount_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     billing_interval: str
     trial_days: int = Field(ge=0)
     max_members: int = Field(ge=1)
@@ -45,6 +46,7 @@ class AdminSaaSPlanCreateRequest(BaseModel):
     license_type: str = Field(pattern=r"^(monthly|annual|perpetual)$")
     currency: str = Field(default="CLP", min_length=3, max_length=3)
     price: Decimal = Field(ge=0)
+    discount_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     billing_interval: str = Field(pattern=r"^(month|year|manual)$")
     trial_days: int = Field(default=14, ge=0)
     max_members: int = Field(default=500, ge=1)
@@ -64,6 +66,7 @@ class AdminSaaSPlanUpdateRequest(BaseModel):
     license_type: Optional[str] = Field(default=None, pattern=r"^(monthly|annual|perpetual)$")
     currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
     price: Optional[Decimal] = Field(default=None, ge=0)
+    discount_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     billing_interval: Optional[str] = Field(default=None, pattern=r"^(month|year|manual)$")
     trial_days: Optional[int] = Field(default=None, ge=0)
     max_members: Optional[int] = Field(default=None, ge=1)

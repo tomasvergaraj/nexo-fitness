@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { ArrowRight, CalendarCheck2, Building2, Store, Smartphone, Check, Zap } from 'lucide-react';
+import NexoBrand from '@/components/branding/NexoBrand';
 import { publicApi, billingApi } from '@/services/api';
 import { getApiError } from '@/utils';
 
@@ -22,9 +23,9 @@ const PLAN_FEATURES = [
   'Miembros y membresías con control de acceso',
   'Check-in con QR desde la app del miembro',
   'Pagos con Stripe y MercadoPago',
-  'Campañas de email y notificaciones push',
+  'Campañas de email y notificaciones a clientes',
   'Reportes y exportación de datos',
-  'PWA instalable para miembros',
+  'App para miembros desde el celular',
   'Soporte técnico por email',
 ];
 
@@ -61,12 +62,12 @@ export default function PublicLandingPage() {
       {/* Nav */}
       <nav className="sticky top-0 z-50 border-b border-white/5 bg-surface-950/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
-              <Zap size={16} className="text-white" />
-            </div>
-            <span className="font-bold font-display text-white">Nexo<span className="text-brand-400">Fitness</span></span>
-          </div>
+          <NexoBrand
+            iconSize={32}
+            iconClassName="shadow-lg shadow-brand-500/25"
+            titleClassName="text-base"
+            accentClassName="text-brand-400"
+          />
           <div className="flex items-center gap-6 text-sm">
             <a href="#precios" className="text-surface-400 hover:text-white transition-colors">Precios</a>
             <a href="/login" className="text-surface-400 hover:text-white transition-colors">Ingresar</a>
@@ -90,14 +91,14 @@ export default function PublicLandingPage() {
                 Vende tu gimnasio mejor y opera todo desde una sola plataforma.
               </h1>
               <p className="max-w-3xl text-base leading-7 text-surface-300">
-                Nexo Fitness une panel de owner, storefront publico, checkout de planes y app movil para clientes en una misma base SaaS multitenant.
+                Nexo Fitness reúne la gestión de tu gimnasio, la venta online de planes y la app para clientes en un solo lugar.
               </p>
 
               <div className="grid gap-4 sm:grid-cols-3">
                 {[
-                  { title: 'Operacion completa', description: 'Clientes, planes, check-in, clases y reportes en tiempo real', icon: Building2 },
-                  { title: 'Venta digital por gym', description: 'Storefront, checkout, links y QR para vender membresias', icon: Store },
-                  { title: 'App central para clientes', description: 'Reserva, pagos, QR de acceso y notificaciones push', icon: Smartphone },
+                  { title: 'Operación completa', description: 'Clientes, planes, check-in, clases y reportes en tiempo real', icon: Building2 },
+                  { title: 'Venta digital del gimnasio', description: 'Tienda online, pago seguro, links y QR para vender membresías', icon: Store },
+                  { title: 'App para clientes', description: 'Reservas, pagos, QR de acceso y avisos desde el celular', icon: Smartphone },
                 ].map((item) => (
                   <div key={item.title} className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl">
                     <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
@@ -121,15 +122,15 @@ export default function PublicLandingPage() {
             >
               <h2 className="text-2xl font-bold font-display">Agenda una demo</h2>
               <p className="mt-2 text-sm text-surface-300">
-                Dejanos tus datos y te contactamos para mostrarte el panel, el storefront y el flujo completo de ventas.
+                Déjanos tus datos y te contactamos para mostrarte el panel, la tienda online y el flujo completo de ventas.
               </p>
 
               <div className="mt-6 space-y-4">
                 <input className="input bg-white/5 text-white" value={form.owner_name} onChange={(event) => setForm((current) => ({ ...current, owner_name: event.target.value }))} placeholder="Tu nombre" required />
                 <input className="input bg-white/5 text-white" value={form.gym_name} onChange={(event) => setForm((current) => ({ ...current, gym_name: event.target.value }))} placeholder="Nombre del gimnasio" required />
                 <input type="email" className="input bg-white/5 text-white" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} placeholder="Email" required />
-                <input className="input bg-white/5 text-white" value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} placeholder="Telefono" />
-                <textarea className="input min-h-28 resize-y bg-white/5 text-white" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Cuantas sedes tienes, como vendes hoy y que quieres resolver" />
+                <input className="input bg-white/5 text-white" value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} placeholder="Teléfono" />
+                <textarea className="input min-h-28 resize-y bg-white/5 text-white" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Cuántas sedes tienes, cómo vendes hoy y qué quieres resolver" />
               </div>
 
               <button type="submit" className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-4 font-semibold text-white shadow-xl shadow-brand-500/25" disabled={mutation.isPending}>

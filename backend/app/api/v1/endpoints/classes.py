@@ -1,5 +1,6 @@
 """Classes and Reservations API endpoints."""
 
+import structlog
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -11,21 +12,106 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles, get_current_user
 from app.models.business import (
-    GymClass, ClassStatus, Reservation, ReservationStatus, CheckIn,
+    GymClass, ClassStatus, Reservation, ReservationStatus, CheckIn, Membership, MembershipStatus,
 )
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.business import (
     GymClassCreate, GymClassUpdate, GymClassResponse,
     ReservationCreate, ReservationResponse,
-    CheckInCreate, CheckInResponse,
+    CheckInCreate, CheckInResponse, CheckInScanRequest,
     PaginatedResponse,
 )
+
+logger = structlog.get_logger()
 
 router = APIRouter(tags=["Classes & Reservations"])
 
 
 def _role_value(user: User) -> str:
     return user.role.value if hasattr(user.role, "value") else str(user.role)
+
+
+def _build_checkin_response(checkin: CheckIn, user_name: Optional[str] = None) -> CheckInResponse:
+    return CheckInResponse(
+        id=checkin.id,
+        user_id=checkin.user_id,
+        user_name=user_name,
+        gym_class_id=checkin.gym_class_id,
+        check_type=checkin.check_type,
+        checked_in_at=checkin.checked_in_at,
+    )
+
+
+async def _get_checkin_client(
+    db: AsyncSession,
+    tenant_id: UUID,
+    user_id: UUID,
+) -> User:
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.tenant_id == tenant_id,
+            User.is_active == True,
+            User.role == UserRole.CLIENT,
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="No encontramos un cliente activo para registrar el ingreso")
+    return user
+
+
+async def _create_checkin_record(
+    db: AsyncSession,
+    tenant_id: UUID,
+    checked_in_by: UUID,
+    user_id: UUID,
+    gym_class_id: Optional[UUID],
+    branch_id: Optional[UUID],
+    check_type: str,
+) -> CheckIn:
+    checkin = CheckIn(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        gym_class_id=gym_class_id,
+        branch_id=branch_id,
+        check_type=check_type,
+        checked_in_by=checked_in_by,
+    )
+    db.add(checkin)
+
+    if gym_class_id:
+        res_result = await db.execute(
+            select(Reservation).where(
+                Reservation.user_id == user_id,
+                Reservation.gym_class_id == gym_class_id,
+                Reservation.status == ReservationStatus.CONFIRMED,
+            )
+        )
+        reservation = res_result.scalar_one_or_none()
+        if reservation:
+            reservation.status = ReservationStatus.ATTENDED
+            reservation.attended_at = datetime.now(timezone.utc)
+
+    await db.flush()
+    await db.refresh(checkin)
+    return checkin
+
+
+def _parse_qr_payload(qr_payload: str) -> tuple[str, UUID, UUID]:
+    payload = qr_payload.strip()
+    parts = payload.split(":")
+    if len(parts) != 4 or parts[0].lower() != "nexo":
+        raise HTTPException(status_code=400, detail="El código QR no es válido para registrar el ingreso")
+
+    tenant_slug = parts[1].strip().lower()
+    try:
+        user_id = UUID(parts[2].strip())
+        membership_id = UUID(parts[3].strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="El código QR no es válido para registrar el ingreso") from exc
+
+    return tenant_slug, user_id, membership_id
 
 
 # ─── Classes ──────────────────────────────────────────────────────────────────
@@ -63,8 +149,22 @@ async def list_classes(
     result = await db.execute(query)
     classes = result.scalars().all()
 
+    # Enrich with instructor names
+    instructor_ids = list({c.instructor_id for c in classes if c.instructor_id})
+    instructors_by_id = {}
+    if instructor_ids:
+        instr_result = await db.execute(select(User).where(User.id.in_(instructor_ids)))
+        for u in instr_result.scalars().all():
+            instructors_by_id[u.id] = f"{u.first_name} {u.last_name}"
+
+    items = []
+    for c in classes:
+        data = GymClassResponse.model_validate(c)
+        data.instructor_name = instructors_by_id.get(c.instructor_id) if c.instructor_id else None
+        items.append(data)
+
     return PaginatedResponse(
-        items=[GymClassResponse.model_validate(c) for c in classes],
+        items=items,
         total=total,
         page=page,
         per_page=per_page,
@@ -117,7 +217,7 @@ async def update_class(
     )
     gym_class = result.scalar_one_or_none()
     if not gym_class:
-        raise HTTPException(status_code=404, detail="Class not found")
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
 
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -140,7 +240,7 @@ async def cancel_class(
     )
     gym_class = result.scalar_one_or_none()
     if not gym_class:
-        raise HTTPException(status_code=404, detail="Class not found")
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
 
     gym_class.status = ClassStatus.CANCELLED
     # Cancel all reservations
@@ -172,7 +272,7 @@ async def create_reservation(
     )
     gym_class = result.scalar_one_or_none()
     if not gym_class:
-        raise HTTPException(status_code=404, detail="Class not found")
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
 
     if gym_class.status == ClassStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="La clase está cancelada")
@@ -288,6 +388,7 @@ async def list_reservations(
 @router.delete("/reservations/{reservation_id}", status_code=204)
 async def cancel_reservation(
     reservation_id: UUID,
+    cancel_reason: Optional[str] = Query(default=None, max_length=500),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     current_user: User = Depends(get_current_user),
@@ -309,6 +410,8 @@ async def cancel_reservation(
     was_confirmed = reservation.status == ReservationStatus.CONFIRMED
     reservation.status = ReservationStatus.CANCELLED
     reservation.cancelled_at = datetime.now(timezone.utc)
+    if cancel_reason:
+        reservation.cancel_reason = cancel_reason.strip()
 
     # If was confirmed, decrement bookings and promote from waitlist
     if was_confirmed:
@@ -329,6 +432,22 @@ async def cancel_reservation(
                 first_waiting.waitlist_position = None
                 gym_class.current_bookings += 1
 
+                # Notify the promoted member
+                try:
+                    from app.services.push_notification_service import create_and_dispatch_notification
+                    class_time = gym_class.start_time.strftime("%H:%M") if gym_class.start_time else ""
+                    await create_and_dispatch_notification(
+                        db,
+                        tenant_id=gym_class.tenant_id,
+                        user_id=first_waiting.user_id,
+                        title="¡Tienes lugar en la clase!",
+                        message=f"Pasaste de la lista de espera a confirmado en {gym_class.name}{f' a las {class_time}' if class_time else ''}. ¡Te esperamos!",
+                        type="success",
+                        action_url="?tab=agenda",
+                    )
+                except Exception as exc:
+                    logger.warning("waitlist_push_failed", exc_info=exc)
+
     await db.flush()
 
 
@@ -342,30 +461,56 @@ async def create_checkin(
     current_user: User = Depends(get_current_user),
     _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
 ):
-    checkin = CheckIn(
+    client = await _get_checkin_client(db, ctx.tenant_id, data.user_id)
+    checkin = await _create_checkin_record(
+        db=db,
         tenant_id=ctx.tenant_id,
-        user_id=data.user_id,
+        checked_in_by=current_user.id,
+        user_id=client.id,
         gym_class_id=data.gym_class_id,
         branch_id=data.branch_id,
         check_type=data.check_type,
-        checked_in_by=current_user.id,
     )
-    db.add(checkin)
+    return _build_checkin_response(checkin, user_name=client.full_name)
 
-    # If class check-in, update reservation status
-    if data.gym_class_id:
-        res_result = await db.execute(
-            select(Reservation).where(
-                Reservation.user_id == data.user_id,
-                Reservation.gym_class_id == data.gym_class_id,
-                Reservation.status == ReservationStatus.CONFIRMED,
+
+@router.post("/checkins/scan", response_model=CheckInResponse, status_code=201)
+async def create_checkin_from_qr(
+    data: CheckInScanRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user: User = Depends(get_current_user),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
+):
+    if ctx.tenant is None:
+        raise HTTPException(status_code=400, detail="No encontramos la cuenta actual para validar el código")
+
+    tenant_slug, user_id, membership_id = _parse_qr_payload(data.qr_payload)
+    if tenant_slug != ctx.tenant.slug.lower():
+        raise HTTPException(status_code=400, detail="Este código QR no pertenece a este gimnasio")
+
+    client = await _get_checkin_client(db, ctx.tenant_id, user_id)
+
+    membership = (
+        await db.execute(
+            select(Membership).where(
+                Membership.id == membership_id,
+                Membership.tenant_id == ctx.tenant_id,
+                Membership.user_id == client.id,
+                Membership.status == MembershipStatus.ACTIVE,
             )
         )
-        reservation = res_result.scalar_one_or_none()
-        if reservation:
-            reservation.status = ReservationStatus.ATTENDED
-            reservation.attended_at = datetime.now(timezone.utc)
+    ).scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=400, detail="El código QR no corresponde a una membresía activa")
 
-    await db.flush()
-    await db.refresh(checkin)
-    return CheckInResponse.model_validate(checkin)
+    checkin = await _create_checkin_record(
+        db=db,
+        tenant_id=ctx.tenant_id,
+        checked_in_by=current_user.id,
+        user_id=client.id,
+        gym_class_id=data.gym_class_id,
+        branch_id=data.branch_id,
+        check_type="qr",
+    )
+    return _build_checkin_response(checkin, user_name=client.full_name)

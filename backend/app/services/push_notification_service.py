@@ -1,4 +1,4 @@
-"""Push notification helpers backed by Expo Push Service."""
+"""Push notification helpers for Expo and Web Push providers."""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 try:
+    import pywebpush as pywebpush_module
     from pywebpush import WebPushException, webpush
 except ImportError:  # pragma: no cover - optional dependency in local dev
+    pywebpush_module = None
     WebPushException = Exception
     webpush = None
 
@@ -26,6 +28,7 @@ from app.models.platform import PushDelivery, PushSubscription
 settings = get_settings()
 
 EXPO_PUSH_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$")
+_PYWEBPUSH_CURVE_COMPAT_PATCHED = False
 
 
 @dataclass
@@ -66,6 +69,120 @@ def _subscription_target(subscription: PushSubscription) -> str:
 
 def _is_web_push_subscription(subscription: PushSubscription) -> bool:
     return bool(subscription.web_endpoint and subscription.web_p256dh_key and subscription.web_auth_key)
+
+
+def _needs_pywebpush_curve_compatibility(exc: Exception) -> bool:
+    return isinstance(exc, TypeError) and "curve must be an EllipticCurve instance" in str(exc)
+
+
+def _patch_pywebpush_curve_compatibility() -> bool:
+    global _PYWEBPUSH_CURVE_COMPAT_PATCHED
+
+    if _PYWEBPUSH_CURVE_COMPAT_PATCHED or pywebpush_module is None:
+        return False
+
+    web_pusher = getattr(pywebpush_module, "WebPusher", None)
+    if web_pusher is None:
+        return False
+
+    def _encode_with_curve_instance(self, data, content_encoding="aes128gcm"):
+        if not data:
+            self.verb("No data found...")
+            return None
+        if not self.auth_key or not self.receiver_key:
+            raise WebPushException("No keys specified in subscription info")
+
+        self.verb("Encoding data...")
+        salt = None
+        if content_encoding not in self.valid_encodings:
+            raise WebPushException(
+                "Invalid content encoding specified. Select from "
+                + json.dumps(self.valid_encodings)
+            )
+        if content_encoding == "aesgcm":
+            self.verb("Generating salt for aesgcm...")
+            salt = pywebpush_module.os.urandom(16)
+
+        # pywebpush<=1.14 passes the curve class instead of an instance here,
+        # which breaks with newer cryptography releases.
+        server_key = pywebpush_module.ec.generate_private_key(
+            pywebpush_module.ec.SECP256R1(),
+            pywebpush_module.default_backend(),
+        )
+        crypto_key = server_key.public_key().public_bytes(
+            encoding=pywebpush_module.serialization.Encoding.X962,
+            format=pywebpush_module.serialization.PublicFormat.UncompressedPoint,
+        )
+
+        if isinstance(data, pywebpush_module.six.text_type):
+            data = bytes(data.encode("utf8"))
+
+        if content_encoding == "aes128gcm":
+            self.verb("Encrypting to aes128gcm...")
+            encrypted = pywebpush_module.http_ece.encrypt(
+                data,
+                salt=salt,
+                private_key=server_key,
+                dh=self.receiver_key,
+                auth_secret=self.auth_key,
+                version=content_encoding,
+            )
+            return pywebpush_module.CaseInsensitiveDict({"body": encrypted})
+
+        self.verb("Encrypting to aesgcm...")
+        crypto_key = pywebpush_module.base64.urlsafe_b64encode(crypto_key).strip(b"=")
+        encrypted = pywebpush_module.http_ece.encrypt(
+            data,
+            salt=salt,
+            private_key=server_key,
+            keyid=crypto_key.decode(),
+            dh=self.receiver_key,
+            auth_secret=self.auth_key,
+            version=content_encoding,
+        )
+        reply = pywebpush_module.CaseInsensitiveDict(
+            {
+                "crypto_key": crypto_key,
+                "body": encrypted,
+            }
+        )
+        if salt:
+            reply["salt"] = pywebpush_module.base64.urlsafe_b64encode(salt).strip(b"=")
+        return reply
+
+    web_pusher.encode = _encode_with_curve_instance
+    _PYWEBPUSH_CURVE_COMPAT_PATCHED = True
+    return True
+
+
+def _dispatch_webpush_request(
+    *,
+    subscription_info: dict[str, Any],
+    payload: str,
+    vapid_claims: dict[str, Any],
+):
+    if webpush is None:
+        raise RuntimeError("webpush no esta disponible")
+
+    try:
+        return webpush(
+            subscription_info=subscription_info,
+            data=payload,
+            vapid_private_key=settings.WEB_PUSH_VAPID_PRIVATE_KEY.strip(),
+            vapid_claims=vapid_claims,
+            ttl=60,
+        )
+    except TypeError as exc:
+        if not _needs_pywebpush_curve_compatibility(exc) or not _patch_pywebpush_curve_compatibility():
+            raise
+
+        return webpush(
+            subscription_info=subscription_info,
+            data=payload,
+            vapid_private_key=settings.WEB_PUSH_VAPID_PRIVATE_KEY.strip(),
+            vapid_claims=vapid_claims,
+            ttl=60,
+        )
 
 
 def _build_expo_message(notification: Notification, subscription: PushSubscription) -> dict[str, Any]:
@@ -503,7 +620,7 @@ async def send_notification_via_webpush(
             continue
 
         try:
-            response = webpush(
+            response = _dispatch_webpush_request(
                 subscription_info={
                     "endpoint": subscription.web_endpoint,
                     "keys": {
@@ -511,10 +628,8 @@ async def send_notification_via_webpush(
                         "auth": subscription.web_auth_key,
                     },
                 },
-                data=payload,
-                vapid_private_key=settings.WEB_PUSH_VAPID_PRIVATE_KEY.strip(),
+                payload=payload,
                 vapid_claims=vapid_claims,
-                ttl=60,
             )
             status_code = getattr(response, "status_code", 201)
             if status_code in (404, 410):
@@ -655,7 +770,7 @@ async def get_notification_dispatch_result(
 ) -> NotificationDispatchResult:
     notification = await db.get(Notification, notification_id)
     if notification is None or notification.tenant_id != tenant_id:
-        raise LookupError("Notification not found")
+        raise LookupError("Notificación no encontrada")
 
     deliveries = await list_push_deliveries_for_notification(
         db,

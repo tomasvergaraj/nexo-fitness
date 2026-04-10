@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Check, Eye, EyeOff, Plus, Settings2, Sparkles, Star, ToggleLeft, ToggleRight, WalletCards } from 'lucide-react';
+import { Check, Eye, EyeOff, Plus, Settings2, Sparkles, Star, Tag, ToggleLeft, ToggleRight, WalletCards } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { billingApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
@@ -17,6 +17,7 @@ type PlatformPlanFormState = {
   license_type: 'monthly' | 'annual' | 'perpetual';
   currency: string;
   price: string;
+  discount_pct: string;
   billing_interval: 'month' | 'year' | 'manual';
   trial_days: string;
   max_members: string;
@@ -30,6 +31,11 @@ type PlatformPlanFormState = {
   sort_order: string;
 };
 
+function applyDiscount(price: number, discountPct: number | null | undefined): number {
+  if (!discountPct) return price;
+  return Math.round(price * (1 - discountPct / 100));
+}
+
 const emptyForm: PlatformPlanFormState = {
   key: '',
   name: '',
@@ -37,13 +43,14 @@ const emptyForm: PlatformPlanFormState = {
   license_type: 'monthly',
   currency: 'CLP',
   price: '29990',
+  discount_pct: '',
   billing_interval: 'month',
   trial_days: '14',
   max_members: '500',
   max_branches: '3',
   stripe_price_id: '',
   fintoc_enabled: false,
-  features: 'Dashboard operativo multitenant\nClientes, clases y check-in',
+  features: 'Panel operativo multicuenta\nClientes, clases y check-in',
   highlighted: false,
   is_active: true,
   is_public: true,
@@ -63,6 +70,7 @@ function toFormState(plan?: AdminSaaSPlan): PlatformPlanFormState {
     license_type: plan.license_type,
     currency: plan.currency,
     price: String(parseApiNumber(plan.price)),
+    discount_pct: plan.discount_pct ? String(plan.discount_pct) : '',
     billing_interval: plan.billing_interval,
     trial_days: String(plan.trial_days),
     max_members: String(plan.max_members),
@@ -92,6 +100,7 @@ function toCreatePayload(form: PlatformPlanFormState): AdminSaaSPlanCreateReques
     license_type: form.license_type,
     currency: form.currency.trim().toUpperCase(),
     price: Number(form.price),
+    discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
     billing_interval: form.billing_interval,
     trial_days: Number(form.trial_days),
     max_members: Number(form.max_members),
@@ -113,6 +122,7 @@ function toUpdatePayload(form: PlatformPlanFormState): AdminSaaSPlanUpdateReques
     license_type: form.license_type,
     currency: form.currency.trim().toUpperCase(),
     price: Number(form.price),
+    discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
     billing_interval: form.billing_interval,
     trial_days: Number(form.trial_days),
     max_members: Number(form.max_members),
@@ -226,7 +236,7 @@ export default function PlatformPlansPage() {
 
       {isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
-          No pudimos cargar el catalogo de planes SaaS.
+          No pudimos cargar el catálogo de planes SaaS.
         </div>
       ) : null}
 
@@ -244,7 +254,7 @@ export default function PlatformPlansPage() {
           <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{summary.public}</p>
         </div>
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
-          <p className="text-sm text-surface-500">Checkout listo</p>
+          <p className="text-sm text-surface-500">Cobro listo</p>
           <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{summary.checkoutReady}</p>
         </div>
       </div>
@@ -302,15 +312,34 @@ export default function PlatformPlansPage() {
 
             <div className="mt-5 flex items-end justify-between gap-3">
               <div>
-                <p className={cn('text-3xl font-bold font-display', !plan.highlighted && 'text-surface-900 dark:text-white')}>
-                  {formatCurrency(parseApiNumber(plan.price), plan.currency)}
-                </p>
+                {plan.discount_pct ? (
+                  <>
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <Tag size={11} className={plan.highlighted ? 'text-white' : 'text-emerald-500'} />
+                      <span className={cn('text-xs font-bold', plan.highlighted ? 'text-white' : 'text-emerald-700 dark:text-emerald-300')}>
+                        {plan.discount_pct}% descuento
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <p className={cn('text-3xl font-bold font-display', !plan.highlighted && 'text-surface-900 dark:text-white')}>
+                        {formatCurrency(applyDiscount(parseApiNumber(plan.price), plan.discount_pct), plan.currency)}
+                      </p>
+                      <p className={cn('text-sm line-through', plan.highlighted ? 'text-white/50' : 'text-surface-400')}>
+                        {formatCurrency(parseApiNumber(plan.price), plan.currency)}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <p className={cn('text-3xl font-bold font-display', !plan.highlighted && 'text-surface-900 dark:text-white')}>
+                    {formatCurrency(parseApiNumber(plan.price), plan.currency)}
+                  </p>
+                )}
                 <p className={cn('mt-1 text-xs uppercase tracking-[0.18em]', plan.highlighted ? 'text-white/70' : 'text-surface-500')}>
                   {plan.billing_interval === 'year' ? 'Cobro anual' : plan.billing_interval === 'manual' ? 'Manual' : 'Cobro mensual'}
                 </p>
               </div>
               <div className={cn('text-right text-xs', plan.highlighted ? 'text-white/80' : 'text-surface-500')}>
-                <p>{plan.trial_days} dias trial</p>
+                <p>{plan.trial_days} días de prueba</p>
                 <p>{plan.max_members} miembros</p>
                 <p>{plan.max_branches} sedes</p>
               </div>
@@ -321,12 +350,12 @@ export default function PlatformPlansPage() {
                 {plan.is_active ? 'Activo' : 'Inactivo'}
               </span>
               <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', plan.highlighted ? 'bg-white/15 text-white' : 'bg-surface-100 text-surface-700 dark:bg-surface-800 dark:text-surface-300')}>
-                {plan.is_public ? 'Publico' : 'Interno'}
+                {plan.is_public ? 'Público' : 'Interno'}
               </span>
               <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', plan.highlighted ? 'bg-white/15 text-white' : 'bg-surface-100 text-surface-700 dark:bg-surface-800 dark:text-surface-300')}>
                 {plan.checkout_enabled
-                  ? `Checkout: ${plan.checkout_provider === 'fintoc' ? 'Fintoc' : 'Stripe'}`
-                  : 'Checkout pendiente'}
+                  ? `Cobro: ${plan.checkout_provider === 'fintoc' ? 'Fintoc' : 'Stripe'}`
+                  : 'Cobro pendiente'}
               </span>
             </div>
 
@@ -382,7 +411,7 @@ export default function PlatformPlansPage() {
               >
                 <div className="flex items-center justify-center gap-2">
                   {plan.is_public ? <Eye size={15} /> : <EyeOff size={15} />}
-                  {plan.is_public ? 'Publico' : 'Oculto'}
+                  {plan.is_public ? 'Público' : 'Oculto'}
                 </div>
               </button>
               <button
@@ -403,7 +432,7 @@ export default function PlatformPlansPage() {
       <Modal
         open={showModal}
         title={isEditing ? 'Editar plan SaaS' : 'Nuevo plan SaaS'}
-        description="Este catalogo alimenta el registro publico de gimnasios y el checkout online."
+        description="Este catálogo alimenta el registro público de gimnasios y el pago online."
         onClose={() => {
           if (!createPlan.isPending && !updatePlan.isPending) {
             setShowModal(false);
@@ -453,10 +482,26 @@ export default function PlatformPlansPage() {
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-5">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Precio</label>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Precio base</label>
               <input type="number" min="0" className="input" value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))} required />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                <Tag size={12} className="mr-1 inline-block text-emerald-500" />
+                Descuento %
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                className="input"
+                value={form.discount_pct}
+                onChange={(event) => setForm((current) => ({ ...current, discount_pct: event.target.value }))}
+                placeholder="0"
+              />
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Moneda</label>
@@ -480,9 +525,23 @@ export default function PlatformPlansPage() {
             </div>
           </div>
 
+          {form.discount_pct && Number(form.discount_pct) > 0 && Number(form.price) > 0 ? (
+            <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-900/40 dark:bg-emerald-950/20">
+              <Tag size={15} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-emerald-800 dark:text-emerald-200">
+                Precio con descuento:{' '}
+                <strong>
+                  {formatCurrency(applyDiscount(Number(form.price), Number(form.discount_pct)), form.currency || 'CLP')}
+                </strong>
+                {' '}— {form.discount_pct}% de descuento sobre{' '}
+                {formatCurrency(Number(form.price), form.currency || 'CLP')}
+              </span>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 sm:grid-cols-4">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Trial</label>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Prueba</label>
               <input type="number" min="0" className="input" value={form.trial_days} onChange={(event) => setForm((current) => ({ ...current, trial_days: event.target.value }))} required />
             </div>
             <div>
@@ -544,10 +603,10 @@ export default function PlatformPlansPage() {
             }`}>
               <WalletCards size={14} />
               {form.fintoc_enabled
-                ? 'Checkout activo via Fintoc'
+                ? 'Cobro activo vía Fintoc'
                 : form.stripe_price_id.trim()
-                  ? 'Checkout activo via Stripe'
-                  : 'Sin checkout configurado — solo trial'}
+                  ? 'Cobro activo vía Stripe'
+                  : 'Sin cobro configurado, solo prueba'}
             </div>
           </div>
 
@@ -572,12 +631,12 @@ export default function PlatformPlansPage() {
             </label>
             <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
               <input type="checkbox" checked={form.is_public} onChange={(event) => setForm((current) => ({ ...current, is_public: event.target.checked }))} />
-              <span className="text-sm text-surface-700 dark:text-surface-300">Publico</span>
+              <span className="text-sm text-surface-700 dark:text-surface-300">Público</span>
             </label>
             <div className="rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
               <div className="flex items-center gap-2 text-sm text-surface-500 dark:text-surface-400">
                 <WalletCards size={16} />
-                {form.stripe_price_id.trim() ? 'Checkout posible' : 'Checkout pendiente'}
+                {form.stripe_price_id.trim() ? 'Cobro posible' : 'Cobro pendiente'}
               </div>
             </div>
           </div>
@@ -586,7 +645,7 @@ export default function PlatformPlansPage() {
             <div className="flex items-start gap-2">
               <Sparkles size={16} className="mt-0.5 text-brand-500" />
               <p>
-                El `key` queda fijo despues de crear el plan. Si este plan se publica, aparecera en la pagina de registro del gimnasio y podra ser usado por nuevos tenants.
+                El `key` queda fijo después de crear el plan. Si este plan se publica, aparecerá en la página de registro del gimnasio y podrá ser usado por nuevas cuentas.
               </p>
             </div>
           </div>

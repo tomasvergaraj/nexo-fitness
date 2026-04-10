@@ -19,7 +19,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import engine
 from app.core.exceptions import ActionRequiredError
-from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, operations, public
+from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, external, operations, public
 from app.middleware.tenant import TenantMiddleware
 
 settings = get_settings()
@@ -183,6 +183,12 @@ app.include_router(operations.reports_router, prefix=prefix)
 app.include_router(operations.notifications_router, prefix=prefix)
 app.include_router(operations.payment_accounts_router, prefix=prefix)
 app.include_router(operations.mobile_router, prefix=prefix)
+app.include_router(operations.promo_codes_router, prefix=prefix)
+app.include_router(operations.progress_router, prefix=prefix)
+app.include_router(operations.personal_records_router, prefix=prefix)
+app.include_router(external.oauth_router, prefix=prefix)
+app.include_router(external.api_clients_router, prefix=prefix)
+app.include_router(external.external_router, prefix=prefix)
 app.include_router(public.public_router, prefix=prefix)
 app.include_router(public.platform_router, prefix=prefix)
 

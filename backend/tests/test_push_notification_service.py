@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -219,6 +220,38 @@ async def test_send_notification_via_push_reports_missing_webpush_library(monkey
     assert deliveries[0].provider == "webpush"
     assert deliveries[0].status == "error"
     assert deliveries[0].error == "WebPushLibraryMissing"
+
+
+@pytest.mark.asyncio
+async def test_send_notification_via_push_retries_webpush_after_curve_compat_patch(monkeypatch) -> None:
+    notification = make_notification()
+    subscription = make_subscription(
+        "",
+        provider="webpush",
+        device_type="pwa",
+        device_name="Chrome PWA",
+        web_endpoint="https://push.example.test/subscription/123",
+        web_p256dh_key="p256dh-key",
+        web_auth_key="auth-key",
+    )
+    attempts = {"count": 0}
+
+    def fake_webpush(**_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise TypeError("curve must be an EllipticCurve instance")
+        return SimpleNamespace(status_code=201)
+
+    monkeypatch.setattr(push_notification_service, "webpush", fake_webpush)
+    monkeypatch.setattr(push_notification_service, "_patch_pywebpush_curve_compatibility", lambda: True)
+
+    deliveries = await send_notification_via_push(notification, [subscription])
+
+    assert attempts["count"] == 2
+    assert len(deliveries) == 1
+    assert deliveries[0].provider == "webpush"
+    assert deliveries[0].status == "ok"
+    assert deliveries[0].error is None
 
 
 @pytest.mark.asyncio

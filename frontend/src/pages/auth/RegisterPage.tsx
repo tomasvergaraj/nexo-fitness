@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ArrowRight, Check, Loader2, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2 } from 'lucide-react';
+import { NexoBrandIcon } from '@/components/branding/NexoBrand';
 import { billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { SaaSPlan } from '@/types';
@@ -105,7 +106,7 @@ export default function RegisterPage() {
         return;
       }
 
-      toast.success(data.message || 'Cuenta creada con trial activo.');
+      toast.success(data.message || 'Cuenta creada con la prueba activa.');
       navigate('/dashboard');
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'No se pudo registrar el gimnasio');
@@ -129,7 +130,7 @@ export default function RegisterPage() {
           className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-surface-300 transition-colors hover:bg-white/10"
         >
           <ArrowLeft size={16} />
-          Volver al login
+          Volver al inicio de sesión
         </button>
 
         <div className="grid gap-8 xl:grid-cols-[0.92fr_1.08fr]">
@@ -141,25 +142,23 @@ export default function RegisterPage() {
             <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-brand-500 via-cyan-500 to-sky-700 p-8 text-white shadow-2xl shadow-brand-500/20">
               <div className="flex items-center justify-between gap-4">
                 <div className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/80">
-                  Onboarding SaaS
+                  Registro SaaS
                 </div>
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15">
-                  <Zap size={26} />
-                </div>
+                <NexoBrandIcon size={56} className="shadow-2xl shadow-surface-950/25" />
               </div>
 
               <h1 className="mt-8 max-w-lg text-4xl font-bold font-display leading-tight">
-                Registra tu gimnasio con una distribucion mucho mas clara
+                Registra tu gimnasio con una estructura mucho más clara
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-6 text-white/82">
-                Primero eliges el plan, despues completas los datos del gimnasio y del owner. Todo queda listo para activar trial o pasar directo al checkout online.
+                Primero eliges el plan, después completas los datos del gimnasio y del propietario. Todo queda listo para activar la prueba o pasar directo al pago online.
               </p>
 
               <div className="mt-8 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
                 {[
                   { label: 'Setup inicial', value: '5 min' },
-                  { label: 'Owner creado', value: 'Automatico' },
-                  { label: 'Trial', value: `${activePlan?.trial_days ?? 14} dias` },
+                  { label: 'Propietario creado', value: 'Automático' },
+                  { label: 'Prueba', value: `${activePlan?.trial_days ?? 14} días` },
                 ].map((item) => (
                   <div key={item.label} className="rounded-2xl bg-white/12 px-4 py-4 backdrop-blur-sm">
                     <p className="text-xs uppercase tracking-[0.2em] text-white/55">{item.label}</p>
@@ -176,7 +175,7 @@ export default function RegisterPage() {
                   <p className="mt-1 text-sm text-surface-400">Elige el paquete antes de completar el onboarding.</p>
                 </div>
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-surface-400">
-                  {plansLoading ? 'Cargando' : activePlan?.checkout_enabled ? 'Checkout online' : 'Trial'}
+                  {plansLoading ? 'Cargando' : activePlan?.checkout_enabled ? 'Pago online' : 'Prueba'}
                 </span>
               </div>
 
@@ -214,11 +213,11 @@ export default function RegisterPage() {
                         <div>
                           <p className="text-3xl font-bold text-white">{formatPrice(plan)}</p>
                           <p className="mt-1 text-xs uppercase tracking-[0.18em] text-surface-500">
-                            por {plan.billing_interval === 'year' ? 'ano' : 'mes'}
+                            por {plan.billing_interval === 'year' ? 'año' : 'mes'}
                           </p>
                         </div>
                         <div className="text-right text-xs text-surface-400">
-                          <p>{plan.trial_days} dias de trial</p>
+                          <p>{plan.trial_days} días de prueba</p>
                           <p>{plan.max_members} miembros</p>
                         </div>
                       </div>
@@ -235,8 +234,8 @@ export default function RegisterPage() {
                     <p className="text-sm font-semibold text-white">Resumen de {activePlan.name}</p>
                     <p className="mt-1 max-w-lg text-sm leading-6 text-surface-400">
                       {activePlan.checkout_enabled
-                        ? 'El owner entra al dashboard y puede continuar el pago online de inmediato.'
-                        : 'El gimnasio parte con trial activo y el checkout quedara listo cuando configures Stripe.'}
+                        ? 'El propietario entra al panel y puede continuar el pago online de inmediato.'
+                        : 'El gimnasio parte con una prueba activa y el cobro online quedará listo cuando completes la configuración.'}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-right">
@@ -260,9 +259,9 @@ export default function RegisterPage() {
                     <p className="mt-2 text-sm text-white">{activePlan.max_members} miembros y {activePlan.max_branches} sedes</p>
                   </div>
                   <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Activacion</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Activación</p>
                     <p className="mt-2 text-sm text-white">
-                      {activePlan.checkout_enabled ? 'Pago online inmediato disponible' : 'Trial primero, cobro despues'}
+                      {activePlan.checkout_enabled ? 'Pago online inmediato disponible' : 'Prueba primero, cobro después'}
                     </p>
                   </div>
                 </div>
@@ -279,17 +278,17 @@ export default function RegisterPage() {
             <div className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-2xl">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-3xl font-bold font-display text-white">Onboarding del gimnasio</h2>
+                  <h2 className="text-3xl font-bold font-display text-white">Alta del gimnasio</h2>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-400">
-                    Completa los datos operativos en un bloque y los datos del owner en otro. Asi el formulario respira mejor y cada paso se entiende de inmediato.
+                    Completa los datos operativos en un bloque y los del propietario en otro. Así el formulario respira mejor y cada paso se entiende de inmediato.
                   </p>
                 </div>
                 <div className="grid gap-2 text-right text-xs text-surface-400">
                   <span className="rounded-full border border-white/10 bg-black/10 px-3 py-1 uppercase tracking-[0.18em]">
-                    {activePlan?.trial_days ?? 14} dias de trial
+                    {activePlan?.trial_days ?? 14} días de prueba
                   </span>
                   <span className="rounded-full border border-white/10 bg-black/10 px-3 py-1 uppercase tracking-[0.18em]">
-                    {activePlan?.checkout_enabled ? 'Stripe listo' : 'Stripe opcional'}
+                    {activePlan?.checkout_enabled ? 'Cobro online listo' : 'Cobro online opcional'}
                   </span>
                 </div>
               </div>
@@ -303,7 +302,7 @@ export default function RegisterPage() {
                     <h3 className="mt-2 text-2xl font-bold font-display text-white">Datos del negocio</h3>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-2 text-xs text-surface-400">
-                    Tenant + sucursal principal
+                    Cuenta + sucursal principal
                   </div>
                 </div>
 
@@ -315,7 +314,7 @@ export default function RegisterPage() {
                   <div className="sm:col-span-2">
                     <label className="mb-2 block text-sm font-medium text-surface-300">Slug</label>
                     <input className="input bg-white/5 text-white" value={form.slug} onChange={(event) => updateField('slug', event.target.value.toLowerCase().replace(/\s+/g, '-'))} required />
-                    <p className="mt-2 text-xs text-surface-500">Se usa en la URL interna del tenant. Conviene corto, claro y sin espacios.</p>
+                    <p className="mt-2 text-xs text-surface-500">Se usa en la URL interna de la cuenta. Conviene corto, claro y sin espacios.</p>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="mb-2 block text-sm font-medium text-surface-300">Email del gimnasio</label>
@@ -326,7 +325,7 @@ export default function RegisterPage() {
                     <input className="input bg-white/5 text-white" value={form.city} onChange={(event) => updateField('city', event.target.value)} />
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Pais</label>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">País</label>
                     <input className="input bg-white/5 text-white" value={form.country} onChange={(event) => updateField('country', event.target.value)} />
                   </div>
                   <div>
@@ -343,7 +342,7 @@ export default function RegisterPage() {
               <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
                 <div className="mb-6 flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Owner</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Propietario</p>
                     <h3 className="mt-2 text-2xl font-bold font-display text-white">Cuenta principal</h3>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-2 text-xs text-surface-400">
@@ -353,21 +352,21 @@ export default function RegisterPage() {
 
                 <div className="grid gap-5 sm:grid-cols-2">
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Nombre owner</label>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Nombre del propietario</label>
                     <input className="input bg-white/5 text-white" value={form.owner_first_name} onChange={(event) => updateField('owner_first_name', event.target.value)} required />
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Apellido owner</label>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Apellido del propietario</label>
                     <input className="input bg-white/5 text-white" value={form.owner_last_name} onChange={(event) => updateField('owner_last_name', event.target.value)} required />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Email owner</label>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Email del propietario</label>
                     <input type="email" className="input bg-white/5 text-white" value={form.owner_email} onChange={(event) => updateField('owner_email', event.target.value)} required />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Contrasena owner</label>
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Contraseña del propietario</label>
                     <input type="password" className="input bg-white/5 text-white" value={form.owner_password} onChange={(event) => updateField('owner_password', event.target.value)} required />
-                    <p className="mt-2 text-xs text-surface-500">Este usuario queda listo para entrar al dashboard apenas se cree la cuenta.</p>
+                    <p className="mt-2 text-xs text-surface-500">Este usuario queda listo para entrar al panel apenas se cree la cuenta.</p>
                   </div>
                 </div>
 
@@ -376,15 +375,15 @@ export default function RegisterPage() {
                   <div className="mt-3 space-y-3 text-sm text-surface-300">
                     <div className="flex items-center gap-2">
                       <Check size={16} className="text-brand-300" />
-                      <span>Se crea el tenant y la sede principal.</span>
+                      <span>Se crea la cuenta y la sede principal.</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Check size={16} className="text-brand-300" />
-                      <span>Se genera el owner con acceso inmediato.</span>
+                      <span>Se genera el propietario con acceso inmediato.</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Check size={16} className="text-brand-300" />
-                      <span>Se activa trial o checkout segun el plan elegido.</span>
+                      <span>Se activa la prueba o el pago online según el plan elegido.</span>
                     </div>
                   </div>
                 </div>
@@ -402,7 +401,7 @@ export default function RegisterPage() {
                 <div>
                   <p className="text-sm font-semibold text-white">Listo para crear el gimnasio</p>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-400">
-                    El registro deja al owner autenticado y lo redirige al dashboard o al checkout, segun la configuracion del plan.
+                    El registro deja al propietario autenticado y lo redirige al panel o al pago, según la configuración del plan.
                   </p>
                 </div>
 
@@ -420,7 +419,7 @@ export default function RegisterPage() {
                     <Loader2 size={20} className="animate-spin" />
                   ) : (
                     <>
-                      {activePlan?.checkout_enabled ? 'Crear gimnasio e ir a pagar' : 'Crear gimnasio y activar trial'}
+                      {activePlan?.checkout_enabled ? 'Crear gimnasio e ir a pagar' : 'Crear gimnasio y activar prueba'}
                       <ArrowRight size={18} />
                     </>
                   )}

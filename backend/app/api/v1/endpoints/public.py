@@ -26,6 +26,7 @@ from app.models.business import (
     PaymentStatus,
     Plan,
     PlanDuration,
+    PromoCode,
 )
 from app.models.platform import PlatformLead, TenantPaymentProviderAccount
 from app.models.tenant import Tenant
@@ -46,6 +47,7 @@ from app.services.custom_domain_service import extract_hostname, normalize_custo
 from app.services.public_checkout_service import build_public_checkout_urls, build_storefront_return_urls
 from app.services.billing_service import activate_tenant_subscription
 from app.services.saas_plan_service import definition_from_record, default_saas_plan_definitions
+from app.services.support_contact_service import resolve_tenant_support_contacts
 from app.models.platform import SaaSPlan
 
 public_router = APIRouter(prefix="/public", tags=["Public"])
@@ -179,6 +181,15 @@ def _split_customer_name(full_name: str) -> tuple[str, str]:
     return first_name, last_name
 
 
+def _parse_optional_date(raw_value: str | None) -> date | None:
+    if not raw_value:
+        return None
+    try:
+        return date.fromisoformat(raw_value)
+    except ValueError:
+        return None
+
+
 def _event_data_object(event: dict) -> dict:
     data = event.get("data", {})
     nested_object = data.get("object") if isinstance(data, dict) else None
@@ -226,6 +237,7 @@ async def _build_tenant_public_profile_response(
     tenant: Tenant,
 ) -> TenantPublicProfileResponse:
     features = _loads_dict(tenant.features)
+    support_email, support_phone = await resolve_tenant_support_contacts(db, tenant)
     try:
         custom_domain = normalize_custom_domain(tenant.custom_domain)
     except ValueError:
@@ -270,8 +282,8 @@ async def _build_tenant_public_profile_response(
             "primary_color": primary_color,
             "secondary_color": secondary_color,
             "custom_domain": custom_domain,
-            "support_email": str(features.get("support_email", tenant.email)),
-            "support_phone": str(features.get("support_phone", tenant.phone or "")) or None,
+            "support_email": support_email,
+            "support_phone": support_phone,
             "marketplace_headline": str(features.get("marketplace_headline", f"Compra tu plan en {tenant.name}")),
             "marketplace_description": str(features.get("marketplace_description", "Reserva clases, compra tu plan y administra tu acceso desde un solo lugar.")),
         },
@@ -295,6 +307,7 @@ async def _build_tenant_public_profile_response(
                 "duration_type": plan.duration_type.value if hasattr(plan.duration_type, "value") else str(plan.duration_type),
                 "duration_days": plan.duration_days,
                 "is_featured": plan.is_featured,
+                "discount_pct": float(plan.discount_pct) if plan.discount_pct is not None else None,
             }
             for plan in plans
         ],
@@ -321,6 +334,8 @@ async def _find_or_create_checkout_user(
     customer_email: str,
     customer_name: str,
     customer_phone: str | None,
+    customer_date_of_birth: date | None = None,
+    customer_password: str | None = None,
 ) -> tuple[User, bool]:
     result = await db.execute(select(User).where(User.email == customer_email))
     user = result.scalar_one_or_none()
@@ -333,6 +348,8 @@ async def _find_or_create_checkout_user(
             user.tenant_id = tenant.id
         if customer_phone and not user.phone:
             user.phone = customer_phone
+        if customer_date_of_birth and not user.date_of_birth:
+            user.date_of_birth = customer_date_of_birth
         if user.first_name in {"", "Cliente"} and first_name:
             user.first_name = first_name
         if user.last_name in {"", "Nexo", "Cliente"} and last_name:
@@ -343,14 +360,15 @@ async def _find_or_create_checkout_user(
         return user, False
 
     first_name, last_name = _split_customer_name(customer_name)
-    temporary_password = f"Nexo{uuid4().hex}Aa1"
+    initial_password = customer_password or f"Nexo{uuid4().hex}Aa1"
     user = User(
         tenant_id=tenant.id,
         email=customer_email,
-        hashed_password=hash_password(temporary_password),
+        hashed_password=hash_password(initial_password),
         first_name=first_name,
         last_name=last_name,
         phone=customer_phone,
+        date_of_birth=customer_date_of_birth,
         role=UserRole.CLIENT,
         is_active=True,
         is_verified=True,
@@ -368,12 +386,14 @@ async def _activate_checkout_purchase(
     customer_email: str,
     customer_name: str,
     customer_phone: str | None,
+    customer_date_of_birth: date | None,
     external_payment_id: str,
     session_reference: str | None,
     checkout_session_id: str | None,
     amount: int | str | Decimal | None,
     currency: str | None,
     metadata: dict,
+    promo_code_id: str | None = None,
 ) -> dict:
     tenant = await db.get(Tenant, UUID(tenant_id))
     if not tenant:
@@ -410,6 +430,8 @@ async def _activate_checkout_purchase(
         customer_email=customer_email,
         customer_name=customer_name,
         customer_phone=customer_phone,
+        customer_date_of_birth=customer_date_of_birth,
+        customer_password=None,
     )
 
     membership = (
@@ -484,6 +506,17 @@ async def _activate_checkout_purchase(
 
     await db.flush()
 
+    # Increment promo code uses_count if a promo was applied
+    if promo_code_id:
+        try:
+            promo = (await db.execute(
+                select(PromoCode).where(PromoCode.id == UUID(promo_code_id))
+            )).scalars().first()
+            if promo:
+                promo.uses_count = (promo.uses_count or 0) + 1
+        except Exception:
+            pass  # Don't fail the checkout on promo tracking error
+
     if is_new_user and settings.SENDGRID_API_KEY.strip():
         await email_service.send_password_reset(customer_email, _build_checkout_reset_url(user.id))
 
@@ -543,7 +576,22 @@ async def list_tenant_public_classes(
             .limit(limit)
         )
     ).scalars().all()
-    return [GymClassResponse.model_validate(item) for item in classes]
+
+    # Enrich with instructor names
+    instructor_ids = list({c.instructor_id for c in classes if c.instructor_id})
+    instructors_by_id = {}
+    if instructor_ids:
+        from app.models.user import User
+        instr_result = await db.execute(select(User).where(User.id.in_(instructor_ids)))
+        for u in instr_result.scalars().all():
+            instructors_by_id[u.id] = f"{u.first_name} {u.last_name}"
+
+    items = []
+    for c in classes:
+        item = GymClassResponse.model_validate(c)
+        item.instructor_name = instructors_by_id.get(c.instructor_id) if c.instructor_id else None
+        items.append(item)
+    return items
 
 
 @public_router.post("/tenants/{slug}/checkout-session", response_model=PublicCheckoutSessionResponse)
@@ -582,6 +630,17 @@ async def _create_public_checkout_session_for_tenant(
 
     await _ensure_checkout_email_can_purchase(db, tenant, data.customer_email)
 
+    if data.customer_password:
+        await _find_or_create_checkout_user(
+            db,
+            tenant=tenant,
+            customer_email=data.customer_email,
+            customer_name=data.customer_name,
+            customer_phone=data.customer_phone,
+            customer_date_of_birth=data.customer_date_of_birth,
+            customer_password=data.customer_password,
+        )
+
     session_reference = f"{tenant.slug}-{plan.id}-{uuid4().hex[:10]}"
     success_url, cancel_url = build_storefront_return_urls(
         settings.public_app_url,
@@ -607,6 +666,8 @@ async def _create_public_checkout_session_for_tenant(
                     "customer_name": data.customer_name or "",
                     "customer_email": data.customer_email,
                     "customer_phone": data.customer_phone or "",
+                    "customer_date_of_birth": data.customer_date_of_birth.isoformat() if data.customer_date_of_birth else "",
+                    "promo_code_id": str(data.promo_code_id) if data.promo_code_id else "",
                 },
             )
             return PublicCheckoutSessionResponse(
@@ -742,12 +803,14 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                         customer_email=str(customer.get("email") or metadata.get("customer_email") or ""),
                         customer_name=str(customer.get("name") or metadata.get("customer_name") or ""),
                         customer_phone=str(metadata.get("customer_phone") or "") or None,
+                        customer_date_of_birth=_parse_optional_date(str(metadata.get("customer_date_of_birth") or "") or None),
                         external_payment_id=str(payment_intent.get("id") or ""),
                         session_reference=str(metadata.get("session_reference") or ""),
                         checkout_session_id=str(event_data.get("id") or ""),
                         amount=payment_intent.get("amount"),
                         currency=payment_intent.get("currency"),
                         metadata=metadata,
+                        promo_code_id=str(metadata.get("promo_code_id") or "") or None,
                     )
                 except RuntimeError as exc:
                     logger.error("fintoc_checkout_activation_failed", metadata=metadata, error=str(exc))
@@ -772,12 +835,14 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                     customer_email=str(event_data.get("customer_email") or metadata.get("customer_email") or ""),
                     customer_name=str(metadata.get("customer_name") or ""),
                     customer_phone=str(metadata.get("customer_phone") or "") or None,
+                    customer_date_of_birth=_parse_optional_date(str(metadata.get("customer_date_of_birth") or "") or None),
                     external_payment_id=str(event_data.get("id") or ""),
                     session_reference=str(metadata.get("session_reference") or ""),
                     checkout_session_id=str(metadata.get("checkout_session_id") or ""),
                     amount=event_data.get("amount"),
                     currency=event_data.get("currency"),
                     metadata=metadata,
+                    promo_code_id=str(metadata.get("promo_code_id") or "") or None,
                 )
             except RuntimeError as exc:
                 logger.error("fintoc_checkout_activation_failed", metadata=metadata, error=str(exc))

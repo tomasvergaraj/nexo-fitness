@@ -8,6 +8,45 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
+class ApiClientCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    scopes: List[str] = Field(default=["measurements:read"])
+    rate_limit_per_minute: int = Field(default=60, ge=1, le=1000)
+
+
+class ApiClientUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    scopes: Optional[List[str]] = None
+    rate_limit_per_minute: Optional[int] = Field(default=None, ge=1, le=1000)
+    is_active: Optional[bool] = None
+
+
+class ApiClientResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    name: str
+    client_id: str
+    scopes: List[str]
+    rate_limit_per_minute: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ApiClientWithSecret(ApiClientResponse):
+    """Returned only on creation — includes the plain-text secret."""
+    client_secret: str
+
+
+class OAuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    scope: str
+
+
 class MembershipCreateRequest(BaseModel):
     user_id: UUID
     plan_id: UUID
@@ -23,6 +62,7 @@ class MembershipUpdateRequest(BaseModel):
     expires_at: Optional[date] = None
     auto_renew: Optional[bool] = None
     frozen_until: Optional[date] = None
+    notes: Optional[str] = None
 
 
 class MembershipResponse(BaseModel):
@@ -34,10 +74,133 @@ class MembershipResponse(BaseModel):
     expires_at: Optional[date] = None
     auto_renew: bool
     frozen_until: Optional[date] = None
+    notes: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
     created_at: datetime
     user_name: Optional[str] = None
     plan_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PromoCodeCreate(BaseModel):
+    code: str = Field(min_length=2, max_length=50, pattern=r"^[A-Za-z0-9_\-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = None
+    discount_type: str = Field(pattern=r"^(percent|fixed)$")
+    discount_value: Decimal = Field(gt=0)
+    max_uses: Optional[int] = Field(default=None, ge=1)
+    expires_at: Optional[datetime] = None
+    plan_ids: Optional[List[UUID]] = None  # None = all plans
+
+
+class PromoCodeUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = None
+    discount_type: Optional[str] = Field(default=None, pattern=r"^(percent|fixed)$")
+    discount_value: Optional[Decimal] = Field(default=None, gt=0)
+    max_uses: Optional[int] = Field(default=None, ge=1)
+    expires_at: Optional[datetime] = None
+    is_active: Optional[bool] = None
+    plan_ids: Optional[List[UUID]] = None
+
+
+class PromoCodeResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    code: str
+    name: str
+    description: Optional[str] = None
+    discount_type: str
+    discount_value: Decimal
+    max_uses: Optional[int] = None
+    uses_count: int
+    expires_at: Optional[datetime] = None
+    is_active: bool
+    plan_ids: Optional[List[UUID]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PromoCodeValidateRequest(BaseModel):
+    code: str
+    plan_id: UUID
+
+
+class PromoCodeValidateResponse(BaseModel):
+    valid: bool
+    reason: Optional[str] = None
+    promo_code_id: Optional[UUID] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[float] = None
+    discount_amount: Optional[float] = None
+    final_price: Optional[float] = None
+
+
+class BodyMeasurementCreate(BaseModel):
+    recorded_at: datetime
+    weight_kg: Optional[Decimal] = None
+    body_fat_pct: Optional[Decimal] = None
+    muscle_mass_kg: Optional[Decimal] = None
+    chest_cm: Optional[Decimal] = None
+    waist_cm: Optional[Decimal] = None
+    hip_cm: Optional[Decimal] = None
+    arm_cm: Optional[Decimal] = None
+    thigh_cm: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class BodyMeasurementResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    tenant_id: UUID
+    recorded_at: datetime
+    weight_kg: Optional[Decimal] = None
+    body_fat_pct: Optional[Decimal] = None
+    muscle_mass_kg: Optional[Decimal] = None
+    chest_cm: Optional[Decimal] = None
+    waist_cm: Optional[Decimal] = None
+    hip_cm: Optional[Decimal] = None
+    arm_cm: Optional[Decimal] = None
+    thigh_cm: Optional[Decimal] = None
+    notes: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PersonalRecordCreate(BaseModel):
+    exercise_name: str = Field(min_length=1, max_length=200)
+    record_value: Decimal
+    unit: str = Field(min_length=1, max_length=50)
+    recorded_at: datetime
+    notes: Optional[str] = None
+
+
+class PersonalRecordResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    tenant_id: UUID
+    exercise_name: str
+    record_value: Decimal
+    unit: str
+    recorded_at: datetime
+    notes: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProgressPhotoResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    tenant_id: UUID
+    recorded_at: datetime
+    photo_url: str
+    notes: Optional[str] = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -81,6 +244,7 @@ class SupportInteractionCreateRequest(BaseModel):
     subject: str = Field(min_length=1, max_length=300)
     notes: Optional[str] = None
     handled_by: Optional[UUID] = None
+    resolved: bool = False
 
 
 class SupportInteractionUpdateRequest(BaseModel):
@@ -104,6 +268,12 @@ class SupportInteractionResponse(BaseModel):
     handler_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class MobileSupportInteractionCreateRequest(BaseModel):
+    channel: str = Field(default="whatsapp", pattern=r"^(whatsapp|email|phone|in_person)$")
+    subject: str = Field(min_length=1, max_length=300)
+    notes: Optional[str] = None
 
 
 class TrainingProgramCreateRequest(BaseModel):
@@ -368,8 +538,11 @@ class PublicCheckoutSessionRequest(BaseModel):
     customer_name: str = Field(min_length=2, max_length=200)
     customer_email: EmailStr
     customer_phone: Optional[str] = None
+    customer_date_of_birth: Optional[date] = None
+    customer_password: Optional[str] = Field(default=None, min_length=8, max_length=128)
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
+    promo_code_id: Optional[UUID] = None
 
 
 class PublicCheckoutSessionResponse(BaseModel):
@@ -494,3 +667,8 @@ class MobileMembershipWalletResponse(BaseModel):
     auto_renew: Optional[bool] = None
     next_class: Optional[dict[str, Any]] = None
     qr_payload: Optional[str] = None
+    # Reservation quota tracking
+    max_reservations_per_week: Optional[int] = None
+    max_reservations_per_month: Optional[int] = None
+    weekly_reservations_used: Optional[int] = None
+    monthly_reservations_used: Optional[int] = None

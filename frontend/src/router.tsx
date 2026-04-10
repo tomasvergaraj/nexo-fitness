@@ -10,6 +10,8 @@ import DashboardPage from '@/pages/dashboard/DashboardPage';
 import ClassesPage from '@/pages/classes/ClassesPage';
 import ClientsPage from '@/pages/clients/ClientsPage';
 import PlansPage from '@/pages/plans/PlansPage';
+import PromoCodesPage from '@/pages/promo/PromoCodesPage';
+import ApiClientsPage from '@/pages/developer/ApiClientsPage';
 import CheckInPage from '@/pages/checkin/CheckInPage';
 import ProgramsPage from '@/pages/programs/ProgramsPage';
 import MarketingPage from '@/pages/marketing/MarketingPage';
@@ -93,6 +95,15 @@ export const router = createBrowserRouter([
       { path: 'classes', element: <ClassesPage /> },
       { path: 'clients', element: <ClientsPage /> },
       { path: 'plans', element: <PlansPage /> },
+      { path: 'promo-codes', element: <PromoCodesPage /> },
+      {
+        path: 'api-clients',
+        element: (
+          <AuthGuard roles={['owner', 'admin']}>
+            <ApiClientsPage />
+          </AuthGuard>
+        ),
+      },
       { path: 'checkin', element: <CheckInPage /> },
       { path: 'programs', element: <ProgramsPage /> },
       { path: 'marketing', element: <MarketingPage /> },
