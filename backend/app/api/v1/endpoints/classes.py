@@ -1,9 +1,9 @@
 """Classes and Reservations API endpoints."""
 
 import structlog
-from datetime import datetime, timezone
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -18,6 +18,7 @@ from app.models.user import User, UserRole
 from app.schemas.business import (
     GymClassCreate, GymClassUpdate, GymClassResponse,
     ReservationCreate, ReservationResponse,
+    ClassReservationDetailResponse,
     CheckInCreate, CheckInResponse, CheckInScanRequest,
     PaginatedResponse,
 )
@@ -39,6 +40,25 @@ def _build_checkin_response(checkin: CheckIn, user_name: Optional[str] = None) -
         gym_class_id=checkin.gym_class_id,
         check_type=checkin.check_type,
         checked_in_at=checkin.checked_in_at,
+    )
+
+
+def _build_class_reservation_detail_response(
+    reservation: Reservation,
+    user: Optional[User] = None,
+) -> ClassReservationDetailResponse:
+    return ClassReservationDetailResponse(
+        id=reservation.id,
+        user_id=reservation.user_id,
+        user_name=user.full_name if user else None,
+        user_email=user.email if user else None,
+        user_phone=user.phone if user else None,
+        gym_class_id=reservation.gym_class_id,
+        status=reservation.status.value if isinstance(reservation.status, ReservationStatus) else str(reservation.status),
+        waitlist_position=reservation.waitlist_position,
+        cancel_reason=reservation.cancel_reason,
+        cancelled_at=reservation.cancelled_at,
+        created_at=reservation.created_at,
     )
 
 
@@ -172,6 +192,22 @@ async def list_classes(
     )
 
 
+def _next_occurrence(base: datetime, repeat_type: str, step: int) -> datetime:
+    """Return base shifted by `step` recurrence intervals."""
+    if repeat_type == "daily":
+        return base + timedelta(days=step)
+    if repeat_type == "weekly":
+        return base + timedelta(weeks=step)
+    if repeat_type == "monthly":
+        # Add months manually to avoid calendar edge cases
+        month = base.month - 1 + step
+        year = base.year + month // 12
+        month = month % 12 + 1
+        day = min(base.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
+        return base.replace(year=year, month=month, day=day)
+    raise ValueError(f"Unknown repeat_type: {repeat_type}")
+
+
 @router.post("/classes", response_model=GymClassResponse, status_code=201)
 async def create_class(
     data: GymClassCreate,
@@ -179,9 +215,55 @@ async def create_class(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "trainer")),
 ):
+    duration = data.end_time - data.start_time
+    base_fields = data.model_dump(exclude={"repeat_type", "repeat_until", "start_time", "end_time"})
+
+    if data.repeat_type != "none" and data.repeat_until:
+        group_id = uuid4()
+        first_class: Optional[GymClass] = None
+        step = 0
+        while True:
+            occ_start = _next_occurrence(data.start_time, data.repeat_type, step)
+            if occ_start.date() > data.repeat_until:
+                break
+            occ_end = occ_start + duration
+            gym_class = GymClass(
+                tenant_id=ctx.tenant_id,
+                start_time=occ_start,
+                end_time=occ_end,
+                repeat_type=data.repeat_type,
+                repeat_until=data.repeat_until,
+                recurrence_group_id=group_id,
+                **base_fields,
+            )
+            db.add(gym_class)
+            if step == 0:
+                first_class = gym_class
+            step += 1
+        await db.flush()
+        if first_class:
+            await db.refresh(first_class)
+            return GymClassResponse.model_validate(first_class)
+        # Fallback (no occurrences generated — repeat_until before start)
+        gym_class = GymClass(
+            tenant_id=ctx.tenant_id,
+            start_time=data.start_time,
+            end_time=data.end_time,
+            repeat_type="none",
+            **base_fields,
+        )
+        db.add(gym_class)
+        await db.flush()
+        await db.refresh(gym_class)
+        return GymClassResponse.model_validate(gym_class)
+
     gym_class = GymClass(
         tenant_id=ctx.tenant_id,
-        **data.model_dump(),
+        start_time=data.start_time,
+        end_time=data.end_time,
+        repeat_type=data.repeat_type,
+        repeat_until=data.repeat_until,
+        **base_fields,
     )
     db.add(gym_class)
     await db.flush()
@@ -202,6 +284,53 @@ async def get_class(
     if not gym_class:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
     return GymClassResponse.model_validate(gym_class)
+
+
+@router.get("/classes/{class_id}/reservations", response_model=list[ClassReservationDetailResponse])
+async def list_class_reservations(
+    class_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
+):
+    gym_class = (
+        await db.execute(
+            select(GymClass).where(GymClass.id == class_id, GymClass.tenant_id == ctx.tenant_id)
+        )
+    ).scalar_one_or_none()
+    if not gym_class:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+
+    rows = await db.execute(
+        select(Reservation, User)
+        .join(User, User.id == Reservation.user_id)
+        .where(
+            Reservation.tenant_id == ctx.tenant_id,
+            Reservation.gym_class_id == class_id,
+        )
+        .order_by(Reservation.created_at.asc())
+    )
+
+    status_order = {
+        ReservationStatus.CONFIRMED: 0,
+        ReservationStatus.ATTENDED: 1,
+        ReservationStatus.WAITLISTED: 2,
+        ReservationStatus.CANCELLED: 3,
+        ReservationStatus.NO_SHOW: 4,
+    }
+    reservation_rows = rows.all()
+    reservation_rows.sort(
+        key=lambda row: (
+            status_order.get(row[0].status, 99),
+            (row[1].first_name or "").lower(),
+            (row[1].last_name or "").lower(),
+            row[0].created_at,
+        )
+    )
+    return [
+        _build_class_reservation_detail_response(reservation, user)
+        for reservation, user in reservation_rows
+    ]
 
 
 @router.patch("/classes/{class_id}", response_model=GymClassResponse)
@@ -231,6 +360,8 @@ async def update_class(
 @router.delete("/classes/{class_id}", status_code=204)
 async def cancel_class(
     class_id: UUID,
+    cancel_reason: Optional[str] = Query(default=None, max_length=500),
+    series: bool = Query(default=False, description="Si es True cancela toda la serie de recurrencia"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin")),
@@ -242,17 +373,35 @@ async def cancel_class(
     if not gym_class:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
 
-    gym_class.status = ClassStatus.CANCELLED
-    # Cancel all reservations
-    reservations = await db.execute(
-        select(Reservation).where(
-            Reservation.gym_class_id == class_id,
-            Reservation.status == ReservationStatus.CONFIRMED,
+    # Collect classes to cancel (single or entire series)
+    if series and gym_class.recurrence_group_id:
+        series_result = await db.execute(
+            select(GymClass).where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.recurrence_group_id == gym_class.recurrence_group_id,
+                GymClass.status == ClassStatus.SCHEDULED,
+                GymClass.start_time >= datetime.now(timezone.utc),
+            )
         )
-    )
-    for r in reservations.scalars().all():
-        r.status = ReservationStatus.CANCELLED
-        r.cancelled_at = datetime.now(timezone.utc)
+        classes_to_cancel = series_result.scalars().all()
+    else:
+        classes_to_cancel = [gym_class]
+
+    for cls in classes_to_cancel:
+        cls.status = ClassStatus.CANCELLED
+        cls.current_bookings = 0
+        # Cancel all active reservations for this class
+        reservations = await db.execute(
+            select(Reservation).where(
+                Reservation.gym_class_id == cls.id,
+                Reservation.status.in_([ReservationStatus.CONFIRMED, ReservationStatus.WAITLISTED]),
+            )
+        )
+        for r in reservations.scalars().all():
+            r.status = ReservationStatus.CANCELLED
+            r.cancelled_at = datetime.now(timezone.utc)
+            if cancel_reason:
+                r.cancel_reason = cancel_reason.strip()
 
     await db.flush()
 

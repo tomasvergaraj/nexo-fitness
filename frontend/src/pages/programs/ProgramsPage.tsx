@@ -30,7 +30,7 @@ function createEmptyForm(trainerId = ''): ProgramForm {
     description: '',
     trainer_id: trainerId,
     program_type: 'fuerza',
-    duration_weeks: '4',
+    duration_weeks: '0',
     schedule: [
       { day: 'Lunes', focus: '' },
       { day: 'Miércoles', focus: '' },
@@ -49,7 +49,7 @@ function toForm(program?: TrainingProgram): ProgramForm {
     description: program.description ?? '',
     trainer_id: program.trainer_id ?? '',
     program_type: program.program_type ?? '',
-    duration_weeks: program.duration_weeks ? String(program.duration_weeks) : '',
+    duration_weeks: String(program.duration_weeks ?? 0),
     schedule: rawSchedule.length ? rawSchedule : createEmptyForm().schedule,
     is_active: program.is_active,
   };
@@ -222,7 +222,7 @@ export default function ProgramsPage() {
         description: form.description || null,
         trainer_id: form.trainer_id || null,
         program_type: form.program_type || null,
-        duration_weeks: form.duration_weeks ? Number(form.duration_weeks) : null,
+        duration_weeks: Number(form.duration_weeks) || 0,
         schedule: form.schedule,
         is_active: form.is_active,
       };
@@ -248,14 +248,16 @@ export default function ProgramsPage() {
 
   const programs = data?.items ?? [];
   const activePrograms = programs.filter((program) => program.is_active).length;
-  const totalWeeks = programs.reduce((sum, program) => sum + (program.duration_weeks ?? 0), 0);
+  const totalWeeks = programs.reduce((sum, program) => sum + (program.duration_weeks || 0), 0);
+  const indefinitePrograms = programs.filter((p) => !p.duration_weeks).length;
+  const totalEnrollments = programs.reduce((sum, program) => sum + (program.enrolled_count ?? 0), 0);
 
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
       <motion.div variants={fadeInUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Programas</h1>
-          <p className="mt-1 text-sm text-surface-500">Planes de entrenamiento persistentes para tus miembros</p>
+          <p className="mt-1 text-sm text-surface-500">Planes de entrenamiento persistentes que tus clientes ya pueden tomar desde la app member</p>
         </div>
         <button
           type="button"
@@ -276,18 +278,27 @@ export default function ProgramsPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <p className="text-sm text-surface-500">Programas activos</p>
           <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{activePrograms}</p>
         </div>
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <p className="text-sm text-surface-500">Semanas planificadas</p>
-          <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{totalWeeks}</p>
+          <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">
+            {totalWeeks || <span className="text-surface-400">—</span>}
+          </p>
+          {indefinitePrograms > 0 ? (
+            <p className="mt-1 text-xs text-surface-400">{indefinitePrograms} indefinido{indefinitePrograms !== 1 ? 's' : ''}</p>
+          ) : null}
         </div>
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
           <p className="text-sm text-surface-500">Total catálogo</p>
           <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{programs.length}</p>
+        </div>
+        <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+          <p className="text-sm text-surface-500">Inscripciones</p>
+          <p className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">{totalEnrollments}</p>
         </div>
       </div>
 
@@ -320,7 +331,9 @@ export default function ProgramsPage() {
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-2xl bg-surface-50 px-4 py-3 dark:bg-surface-950/60">
                 <div className="flex items-center gap-2 text-surface-500"><CalendarDays size={15} /> Duración</div>
-                <p className="mt-2 font-semibold text-surface-900 dark:text-white">{program.duration_weeks ?? 0} semanas</p>
+                <p className="mt-2 font-semibold text-surface-900 dark:text-white">
+                  {program.duration_weeks ? `${program.duration_weeks} semanas` : 'Sin límite'}
+                </p>
               </div>
               <div className="rounded-2xl bg-surface-50 px-4 py-3 dark:bg-surface-950/60">
                 <div className="flex items-center gap-2 text-surface-500"><Repeat2 size={15} /> Tipo</div>
@@ -334,6 +347,18 @@ export default function ProgramsPage() {
                 Trainer asignado
               </div>
               <p className="mt-2 text-sm font-medium text-surface-900 dark:text-white">{program.trainer_name || 'Sin asignar'}</p>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-surface-200/70 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/40">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-surface-900 dark:text-white">Clientes inscritos</p>
+                  <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                    Disponible para autoinscripción desde la app member.
+                  </p>
+                </div>
+                <span className="text-2xl font-bold font-display text-surface-900 dark:text-white">{program.enrolled_count}</span>
+              </div>
             </div>
           </motion.button>
         ))}
@@ -394,7 +419,12 @@ export default function ProgramsPage() {
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duración (semanas)</label>
-              <input type="number" min="1" className="input" value={form.duration_weeks} onChange={(event) => setForm((current) => ({ ...current, duration_weeks: event.target.value }))} />
+              <input type="number" min="0" className="input" value={form.duration_weeks} onChange={(event) => setForm((current) => ({ ...current, duration_weeks: event.target.value }))} />
+              <p className="mt-1 text-xs text-surface-400">
+                {form.duration_weeks === '0' || form.duration_weeks === ''
+                  ? '0 = Sin límite de duración (programa indefinido)'
+                  : `El programa dura ${form.duration_weeks} semanas`}
+              </p>
             </div>
           </div>
 

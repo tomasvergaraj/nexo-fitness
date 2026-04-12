@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ArrowRight, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2, Mail, ShieldCheck } from 'lucide-react';
 import { NexoBrandIcon } from '@/components/branding/NexoBrand';
-import { billingApi } from '@/services/api';
+import { authApi, billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { SaaSPlan } from '@/types';
 import { cn } from '@/utils';
@@ -24,6 +24,9 @@ const initialForm = {
   owner_password: '',
 };
 
+// Verification step: 'email' → send code, 'code' → enter OTP, 'done' → verified
+type VerifyStep = 'email' | 'code' | 'done';
+
 export default function RegisterPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
@@ -33,6 +36,14 @@ export default function RegisterPage() {
   const [plansLoading, setPlansLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Email verification state
+  const [verifyStep, setVerifyStep] = useState<VerifyStep>('email');
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyToken, setVerifyToken] = useState('');
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const codeInputRef = useRef<HTMLInputElement>(null);
 
   const updateField = (key: keyof typeof initialForm, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -80,6 +91,49 @@ export default function RegisterPage() {
       maximumFractionDigits: 0,
     }).format(plan.price);
 
+  const handleSendCode = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!verifyEmail) return;
+    setVerifyLoading(true);
+    setError('');
+    try {
+      const res = await authApi.sendEmailVerification(verifyEmail);
+      const data = res.data as { exists?: boolean; sent?: boolean };
+      if (data.exists) {
+        // Email already registered — redirect to login
+        toast('Este correo ya tiene una cuenta. Inicia sesión.', { icon: '⚠️' });
+        navigate(`/login?email=${encodeURIComponent(verifyEmail)}`);
+        return;
+      }
+      // Pre-fill owner_email so the form is ready
+      updateField('owner_email', verifyEmail);
+      setVerifyStep('code');
+      setTimeout(() => codeInputRef.current?.focus(), 100);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'No se pudo enviar el código. Inténtalo de nuevo.');
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
+  const handleConfirmCode = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!verifyCode) return;
+    setVerifyLoading(true);
+    setError('');
+    try {
+      const res = await authApi.confirmEmailVerification(verifyEmail, verifyCode);
+      const data = res.data as { verified_token: string };
+      setVerifyToken(data.verified_token);
+      setVerifyStep('done');
+      toast.success('Correo verificado. Completa el registro.');
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Código incorrecto. Inténtalo de nuevo.');
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!activePlan) {
@@ -95,6 +149,7 @@ export default function RegisterPage() {
         ...form,
         license_type: activePlan.license_type,
         plan_key: activePlan.key,
+        verification_token: verifyToken || undefined,
       });
       const data = response.data;
 
@@ -269,6 +324,96 @@ export default function RegisterPage() {
             ) : null}
           </motion.div>
 
+          {/* ── Step 0 & 1: Email verification ─────────────────────── */}
+          {verifyStep !== 'done' ? (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-start justify-center pt-8"
+            >
+              <div className="w-full max-w-md space-y-6">
+                <div className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-2xl">
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    {verifyStep === 'email' ? (
+                      <Mail size={36} className="text-brand-300" />
+                    ) : (
+                      <ShieldCheck size={36} className="text-brand-300" />
+                    )}
+                    <h2 className="text-2xl font-bold font-display text-white">
+                      {verifyStep === 'email' ? 'Verifica tu correo' : 'Ingresa el código'}
+                    </h2>
+                    <p className="text-sm text-surface-400">
+                      {verifyStep === 'email'
+                        ? 'Escribe el correo del propietario. Te enviaremos un código de 6 dígitos para confirmarlo.'
+                        : `Enviamos un código a ${verifyEmail}. Tienes 10 minutos para usarlo.`}
+                    </p>
+                  </div>
+
+                  {verifyStep === 'email' ? (
+                    <form onSubmit={handleSendCode} className="mt-6 space-y-4">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-surface-300">Correo del propietario</label>
+                        <input
+                          type="email"
+                          className="input bg-white/5 text-white"
+                          value={verifyEmail}
+                          onChange={(e) => setVerifyEmail(e.target.value)}
+                          placeholder="propietario@ejemplo.com"
+                          required
+                          autoFocus
+                        />
+                      </div>
+                      {error ? (
+                        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
+                      ) : null}
+                      <button
+                        type="submit"
+                        disabled={verifyLoading}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3 font-semibold text-white shadow-xl shadow-brand-500/25 disabled:cursor-not-allowed disabled:opacity-80"
+                      >
+                        {verifyLoading ? <Loader2 size={18} className="animate-spin" /> : <>Enviar código <ArrowRight size={16} /></>}
+                      </button>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleConfirmCode} className="mt-6 space-y-4">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-surface-300">Código de 6 dígitos</label>
+                        <input
+                          ref={codeInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]{6}"
+                          maxLength={6}
+                          className="input bg-white/5 text-center text-2xl font-mono tracking-[0.4em] text-white"
+                          value={verifyCode}
+                          onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                          placeholder="······"
+                          required
+                        />
+                      </div>
+                      {error ? (
+                        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
+                      ) : null}
+                      <button
+                        type="submit"
+                        disabled={verifyLoading || verifyCode.length !== 6}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3 font-semibold text-white shadow-xl shadow-brand-500/25 disabled:cursor-not-allowed disabled:opacity-80"
+                      >
+                        {verifyLoading ? <Loader2 size={18} className="animate-spin" /> : <>Verificar <Check size={16} /></>}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setVerifyStep('email'); setVerifyCode(''); setError(''); }}
+                        className="w-full text-center text-sm text-surface-400 hover:text-surface-200"
+                      >
+                        Cambiar correo o reenviar código
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          ) : (
           <motion.form
             onSubmit={handleSubmit}
             initial={{ opacity: 0, y: 20 }}
@@ -360,8 +505,22 @@ export default function RegisterPage() {
                     <input className="input bg-white/5 text-white" value={form.owner_last_name} onChange={(event) => updateField('owner_last_name', event.target.value)} required />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Email del propietario</label>
-                    <input type="email" className="input bg-white/5 text-white" value={form.owner_email} onChange={(event) => updateField('owner_email', event.target.value)} required />
+                    <label className="mb-2 block text-sm font-medium text-surface-300">
+                      Email del propietario
+                      {verifyStep === 'done' ? (
+                        <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-brand-300">
+                          <Check size={12} /> Verificado
+                        </span>
+                      ) : null}
+                    </label>
+                    <input
+                      type="email"
+                      className="input bg-white/5 text-white read-only:opacity-70"
+                      value={form.owner_email}
+                      onChange={(event) => updateField('owner_email', event.target.value)}
+                      readOnly={verifyStep === 'done'}
+                      required
+                    />
                   </div>
                   <div className="sm:col-span-2">
                     <label className="mb-2 block text-sm font-medium text-surface-300">Contraseña del propietario</label>
@@ -439,6 +598,7 @@ export default function RegisterPage() {
               </div>
             </div>
           </motion.form>
+          )}
         </div>
       </div>
     </div>

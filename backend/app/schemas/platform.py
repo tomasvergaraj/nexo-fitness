@@ -281,7 +281,7 @@ class TrainingProgramCreateRequest(BaseModel):
     description: Optional[str] = None
     trainer_id: Optional[UUID] = None
     program_type: Optional[str] = None
-    duration_weeks: Optional[int] = Field(default=None, ge=1)
+    duration_weeks: int = Field(default=0, ge=0)  # 0 = indefinido (sin límite)
     schedule: list[dict[str, Any]] = Field(default_factory=list)
     is_active: bool = True
 
@@ -291,7 +291,7 @@ class TrainingProgramUpdateRequest(BaseModel):
     description: Optional[str] = None
     trainer_id: Optional[UUID] = None
     program_type: Optional[str] = None
-    duration_weeks: Optional[int] = Field(default=None, ge=1)
+    duration_weeks: Optional[int] = Field(default=None, ge=0)  # 0 = indefinido (sin límite)
     schedule: Optional[list[dict[str, Any]]] = None
     is_active: Optional[bool] = None
 
@@ -308,6 +308,21 @@ class TrainingProgramResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     trainer_name: Optional[str] = None
+    enrolled_count: int = 0
+    is_enrolled: bool = False
+    enrollment_id: Optional[UUID] = None
+
+    model_config = {"from_attributes": True}
+
+
+class TrainingProgramEnrollmentResponse(BaseModel):
+    id: UUID
+    program_id: UUID
+    user_id: UUID
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_phone: Optional[str] = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -543,6 +558,7 @@ class PublicCheckoutSessionRequest(BaseModel):
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
     promo_code_id: Optional[UUID] = None
+    verification_token: Optional[str] = None
 
 
 class PublicCheckoutSessionResponse(BaseModel):
@@ -666,6 +682,7 @@ class MobileMembershipWalletResponse(BaseModel):
     expires_at: Optional[date] = None
     auto_renew: Optional[bool] = None
     next_class: Optional[dict[str, Any]] = None
+    next_program_class: Optional[dict[str, Any]] = None
     qr_payload: Optional[str] = None
     # Reservation quota tracking
     max_reservations_per_week: Optional[int] = None

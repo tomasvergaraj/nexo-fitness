@@ -106,6 +106,9 @@ class GymClassCreate(BaseModel):
     online_link: Optional[str] = None
     cancellation_deadline_hours: int = 2
     color: Optional[str] = None
+    program_id: Optional[UUID] = None
+    repeat_type: str = Field(default="none", pattern=r"^(none|daily|weekly|monthly)$")
+    repeat_until: Optional[date] = None
 
 class GymClassUpdate(BaseModel):
     name: Optional[str] = None
@@ -119,6 +122,7 @@ class GymClassUpdate(BaseModel):
     max_capacity: Optional[int] = None
     online_link: Optional[str] = None
     status: Optional[str] = None
+    program_id: Optional[UUID] = None
 
 class GymClassResponse(BaseModel):
     id: UUID
@@ -137,6 +141,10 @@ class GymClassResponse(BaseModel):
     waitlist_enabled: bool
     online_link: Optional[str] = None
     color: Optional[str] = None
+    program_id: Optional[UUID] = None
+    repeat_type: str = "none"
+    repeat_until: Optional[date] = None
+    recurrence_group_id: Optional[UUID] = None
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -154,7 +162,24 @@ class ReservationResponse(BaseModel):
     status: str
     waitlist_position: Optional[int] = None
     cancel_reason: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
     created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ClassReservationDetailResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_phone: Optional[str] = None
+    gym_class_id: UUID
+    status: str
+    waitlist_position: Optional[int] = None
+    cancel_reason: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
+    created_at: datetime
+
     model_config = {"from_attributes": True}
 
 

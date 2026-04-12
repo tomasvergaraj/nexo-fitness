@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   CalendarDays, Plus, Filter, Clock, Users, Video, ChevronLeft, ChevronRight,
-  Ban, ExternalLink, MapPin,
+  Ban, ExternalLink, MapPin, Repeat2,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
@@ -13,7 +13,7 @@ import { staggerContainer, fadeInUp } from '@/utils/animations';
 import {
   classStatusColor, cn, formatDateTime, formatTime, getApiError, occupancyColor,
 } from '@/utils';
-import type { GymClass, PaginatedResponse } from '@/types';
+import type { ClassReservationDetail, GymClass, PaginatedResponse } from '@/types';
 
 type ViewMode = 'cards' | 'list' | 'calendar';
 type StatusFilter = 'all' | 'scheduled' | 'cancelled';
@@ -27,6 +27,8 @@ type ClassFormState = {
   max_capacity: string;
   online_link: string;
   color: string;
+  repeat_type: 'none' | 'daily' | 'weekly' | 'monthly';
+  repeat_until: string;
 };
 
 const CLASS_TYPE_PRESETS = [
@@ -89,10 +91,7 @@ function applyClassTypeChange(
   nextClassType: string,
   preset?: (typeof CLASS_TYPE_PRESETS)[number],
 ): ClassFormState {
-  const nextState: ClassFormState = {
-    ...current,
-    class_type: nextClassType,
-  };
+  const nextState: ClassFormState = { ...current, class_type: nextClassType };
 
   if (shouldSyncClassName(current.name, current.class_type)) {
     nextState.name = getSuggestedClassName(nextClassType);
@@ -117,6 +116,8 @@ function createInitialForm(_date: Date): ClassFormState {
     max_capacity: '20',
     online_link: '',
     color: '#06b6d4',
+    repeat_type: 'none',
+    repeat_until: '',
   };
 }
 
@@ -146,12 +147,32 @@ function formatClassModalityLabel(modality: ClassFormState['modality'] | GymClas
   return 'Híbrida';
 }
 
+function formatReservationStatusLabel(status: ClassReservationDetail['status']) {
+  if (status === 'confirmed') return 'Confirmada';
+  if (status === 'waitlisted') return 'Lista de espera';
+  if (status === 'cancelled') return 'Cancelada';
+  if (status === 'attended') return 'Asistió';
+  if (status === 'no_show') return 'No asistió';
+  return status;
+}
+
+function reservationStatusBadgeClass(status: ClassReservationDetail['status']) {
+  if (status === 'confirmed') return 'badge-success';
+  if (status === 'waitlisted') return 'badge-warning';
+  if (status === 'cancelled') return 'badge-danger';
+  if (status === 'attended') return 'badge-info';
+  return 'badge-neutral';
+}
+
 export default function ClassesPage() {
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [selectedDay, setSelectedDay] = useState(0);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<GymClass | null>(null);
+  const [classToCancel, setClassToCancel] = useState<GymClass | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   const weekDates = useMemo(() => {
     const base = new Date();
@@ -205,6 +226,15 @@ export default function ClassesPage() {
     },
   });
 
+  const classReservationsQuery = useQuery<ClassReservationDetail[]>({
+    queryKey: ['class-reservations', selectedClass?.id],
+    queryFn: async () => {
+      const response = await classesApi.listReservations(selectedClass!.id);
+      return response.data;
+    },
+    enabled: Boolean(selectedClass),
+  });
+
   const createClass = useMutation({
     mutationFn: async () => {
       if (!form.start_time) {
@@ -226,6 +256,8 @@ export default function ClassesPage() {
         max_capacity: Number(form.max_capacity),
         online_link: form.modality === 'in_person' ? null : form.online_link || null,
         color: form.color,
+        repeat_type: form.repeat_type,
+        repeat_until: form.repeat_type !== 'none' && form.repeat_until ? form.repeat_until : null,
       });
       return response.data;
     },
@@ -242,12 +274,15 @@ export default function ClassesPage() {
   });
 
   const cancelClass = useMutation({
-    mutationFn: async (classId: string) => {
-      await classesApi.cancel(classId);
+    mutationFn: async ({ classId, reason }: { classId: string; reason?: string }) => {
+      await classesApi.cancel(classId, reason);
     },
     onSuccess: () => {
       toast.success('Clase cancelada');
+      setClassToCancel(null);
+      setCancelReason('');
       queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['class-reservations'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
     },
     onError: (error: any) => {
@@ -256,6 +291,10 @@ export default function ClassesPage() {
   });
 
   const classes = data?.items ?? [];
+  const classReservations = classReservationsQuery.data ?? [];
+  const confirmedReservations = classReservations.filter((item) => item.status === 'confirmed' || item.status === 'attended').length;
+  const waitlistedReservations = classReservations.filter((item) => item.status === 'waitlisted').length;
+  const cancelledReservations = classReservations.filter((item) => item.status === 'cancelled').length;
   const dayLabel = selectedDate.toLocaleDateString('es-CL', { weekday: 'short', day: '2-digit', month: 'short' });
 
   const cycleFilter = () => {
@@ -406,9 +445,14 @@ export default function ClassesPage() {
                       {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')}
                     </p>
                   </div>
-                  <span className={cn('badge', classStatusColor(gymClass.status))}>
-                    {formatClassStatusLabel(gymClass.status)}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className={cn('badge', classStatusColor(gymClass.status))}>
+                      {formatClassStatusLabel(gymClass.status)}
+                    </span>
+                    {gymClass.recurrence_group_id ? (
+                      <span className="badge badge-info flex items-center gap-1"><Repeat2 size={10} /> Serie</span>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-sm text-surface-500">
@@ -444,7 +488,14 @@ export default function ClassesPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-center gap-2">
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedClass(gymClass)}
+                    className="btn-secondary flex-1 text-sm"
+                  >
+                    <Users size={14} /> Inscritos
+                  </button>
                   {gymClass.online_link ? (
                     <Tooltip content="Abrir clase online" className="flex-1">
                       <a
@@ -460,7 +511,10 @@ export default function ClassesPage() {
                   <Tooltip content={isCancelled ? 'La clase ya está cancelada' : 'Cancelar esta clase'} className="flex-1">
                     <button
                       type="button"
-                      onClick={() => cancelClass.mutate(gymClass.id)}
+                      onClick={() => {
+                        setClassToCancel(gymClass);
+                        setCancelReason('');
+                      }}
                       disabled={isCancelled || cancelClass.isPending}
                       className="btn-danger flex-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -490,7 +544,14 @@ export default function ClassesPage() {
                   {formatDateTime(gymClass.start_time)} · {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')} · {gymClass.current_bookings}/{gymClass.max_capacity}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedClass(gymClass)}
+                  className="btn-secondary text-sm"
+                >
+                  <Users size={14} /> Inscritos
+                </button>
                 {gymClass.online_link ? (
                   <Tooltip content="Abrir clase online">
                     <a href={gymClass.online_link} target="_blank" rel="noreferrer" className="btn-secondary text-sm">
@@ -501,7 +562,10 @@ export default function ClassesPage() {
                 <Tooltip content={gymClass.status === 'cancelled' ? 'La clase ya está cancelada' : 'Cancelar esta clase'}>
                   <button
                     type="button"
-                    onClick={() => cancelClass.mutate(gymClass.id)}
+                    onClick={() => {
+                      setClassToCancel(gymClass);
+                      setCancelReason('');
+                    }}
                     disabled={gymClass.status === 'cancelled'}
                     className="btn-danger text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -534,6 +598,26 @@ export default function ClassesPage() {
                   <p className="mt-1 text-sm text-surface-500">
                     {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')} · {gymClass.current_bookings}/{gymClass.max_capacity} reservas
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedClass(gymClass)}
+                      className="btn-secondary text-sm"
+                    >
+                      <Users size={14} /> Ver inscritos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClassToCancel(gymClass);
+                        setCancelReason('');
+                      }}
+                      disabled={gymClass.status === 'cancelled'}
+                      className="btn-danger text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Ban size={14} /> Cancelar clase
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -770,12 +854,189 @@ export default function ClassesPage() {
             </div>
           ) : null}
 
+          {/* ─── Recurrencia ─── */}
+          <div className="rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-800 dark:bg-surface-950/20">
+            <label className="mb-3 flex items-center gap-2 text-sm font-medium text-surface-700 dark:text-surface-300">
+              <Repeat2 size={15} />
+              Repetición
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { value: 'none', label: 'Sin repetición' },
+                { value: 'daily', label: 'Diaria' },
+                { value: 'weekly', label: 'Semanal' },
+                { value: 'monthly', label: 'Mensual' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setForm((current) => ({ ...current, repeat_type: opt.value }))}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                    form.repeat_type === opt.value
+                      ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                      : 'border-surface-200 text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:text-surface-300',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {form.repeat_type !== 'none' ? (
+              <div className="mt-4">
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  Repetir hasta
+                </label>
+                <input
+                  type="date"
+                  className="input"
+                  value={form.repeat_until}
+                  min={selectedDate.toISOString().slice(0, 10)}
+                  onChange={(event) => setForm((current) => ({ ...current, repeat_until: event.target.value }))}
+                  required
+                />
+                <p className="mt-1.5 text-xs text-surface-400">
+                  Se crearán instancias desde hoy hasta esta fecha con frecuencia {form.repeat_type === 'daily' ? 'diaria' : form.repeat_type === 'weekly' ? 'semanal' : 'mensual'}.
+                </p>
+              </div>
+            ) : null}
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setShowCreateModal(false)}>
               Cancelar
             </button>
             <button type="submit" className="btn-primary" disabled={createClass.isPending}>
-              {createClass.isPending ? 'Creando...' : 'Crear clase'}
+              {createClass.isPending ? 'Creando...' : form.repeat_type !== 'none' ? 'Crear serie' : 'Crear clase'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(selectedClass)}
+        title={selectedClass ? `Inscritos en ${selectedClass.name}` : 'Inscritos'}
+        description={selectedClass ? `${formatDateTime(selectedClass.start_time)} · ${selectedClass.current_bookings}/${selectedClass.max_capacity} reservas activas` : ''}
+        onClose={() => setSelectedClass(null)}
+        size="lg"
+      >
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-surface-200/60 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/20">
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Confirmadas</p>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{confirmedReservations}</p>
+            </div>
+            <div className="rounded-2xl border border-surface-200/60 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/20">
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Espera</p>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{waitlistedReservations}</p>
+            </div>
+            <div className="rounded-2xl border border-surface-200/60 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/20">
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Canceladas</p>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{cancelledReservations}</p>
+            </div>
+          </div>
+
+          {classReservationsQuery.isLoading ? (
+            Array.from({ length: 4 }).map((_, index) => <div key={index} className="shimmer h-24 rounded-2xl" />)
+          ) : null}
+
+          {!classReservationsQuery.isLoading && classReservations.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-surface-300 bg-surface-50 px-6 py-10 text-center dark:border-surface-700 dark:bg-surface-900/30">
+              <Users size={28} className="mx-auto mb-3 text-surface-300 dark:text-surface-700" />
+              <p className="font-medium text-surface-700 dark:text-surface-200">Todavía no hay clientes inscritos</p>
+              <p className="mt-1 text-sm text-surface-500">Cuando alguien reserve esta clase aparecerá aquí con su estado y, si canceló, con el motivo.</p>
+            </div>
+          ) : null}
+
+          {!classReservationsQuery.isLoading ? (
+            <div className="space-y-3">
+              {classReservations.map((reservation) => (
+                <div
+                  key={reservation.id}
+                  className="rounded-2xl border border-surface-200/60 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/20"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-surface-900 dark:text-white">{reservation.user_name || 'Cliente'}</p>
+                        <span className={cn('badge', reservationStatusBadgeClass(reservation.status))}>
+                          {formatReservationStatusLabel(reservation.status)}
+                        </span>
+                        {reservation.status === 'waitlisted' && reservation.waitlist_position ? (
+                          <span className="badge badge-neutral">#{reservation.waitlist_position}</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-surface-500">
+                        <span>{reservation.user_email || 'Sin correo'}</span>
+                        <span>{reservation.user_phone || 'Sin teléfono'}</span>
+                        <span>Reservó {formatDateTime(reservation.created_at)}</span>
+                        {reservation.cancelled_at ? <span>Canceló {formatDateTime(reservation.cancelled_at)}</span> : null}
+                      </div>
+                      {reservation.cancel_reason ? (
+                        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+                          <span className="font-semibold">Motivo de cancelación:</span> {reservation.cancel_reason}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(classToCancel)}
+        title={classToCancel ? `Cancelar ${classToCancel.name}` : 'Cancelar clase'}
+        description="Puedes dejar un motivo opcional. Se guardará en las reservas canceladas para que el equipo pueda revisarlo después."
+        onClose={() => {
+          if (!cancelClass.isPending) {
+            setClassToCancel(null);
+            setCancelReason('');
+          }
+        }}
+      >
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!classToCancel) return;
+            cancelClass.mutate({
+              classId: classToCancel.id,
+              reason: cancelReason.trim() || undefined,
+            });
+          }}
+        >
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+            Esta acción cancelará la clase y también las reservas confirmadas o en lista de espera asociadas.
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Motivo de cancelación</label>
+            <textarea
+              className="input min-h-24 resize-y"
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              placeholder="Ej: cambio de instructor, mantención del salón, feriado, etc."
+              maxLength={500}
+            />
+            <p className="mt-2 text-xs text-surface-500">{cancelReason.length}/500 caracteres</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setClassToCancel(null);
+                setCancelReason('');
+              }}
+              disabled={cancelClass.isPending}
+            >
+              Volver
+            </button>
+            <button type="submit" className="btn-danger" disabled={cancelClass.isPending}>
+              {cancelClass.isPending ? 'Cancelando...' : 'Confirmar cancelación'}
             </button>
           </div>
         </form>

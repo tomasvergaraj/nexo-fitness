@@ -157,4 +157,30 @@ class EmailService:
         return await self.send(to_email, "Recuperar contraseña — Nexo Fitness", html)
 
 
+    async def send_email_verification(self, to_email: str, code: str) -> bool:
+        html = f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;background:#ffffff;">
+            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);padding:40px;text-align:center;border-radius:12px 12px 0 0;">
+                <h1 style="color:white;margin:0;font-size:26px;font-weight:700;">Verifica tu correo</h1>
+                <p style="color:rgba(255,255,255,0.85);margin:10px 0 0;font-size:15px;">Nexo Fitness</p>
+            </div>
+            <div style="padding:40px;background:#f9fafb;">
+                <p style="font-size:16px;color:#374151;">Usa el siguiente código para verificar tu correo electrónico:</p>
+                <div style="margin:28px 0;text-align:center;">
+                    <span style="display:inline-block;background:#ffffff;border:2px solid #0f766e;border-radius:16px;
+                                 padding:18px 40px;font-size:40px;font-weight:700;letter-spacing:12px;color:#0f766e;
+                                 font-family:'Courier New',monospace;">
+                        {code}
+                    </span>
+                </div>
+                <p style="color:#6b7280;font-size:14px;text-align:center;">
+                    Este código expira en <strong>10 minutos</strong>.<br>
+                    Si no solicitaste esto, ignora este correo.
+                </p>
+            </div>
+        </div>
+        """
+        return await self.send(to_email, "Código de verificación — Nexo Fitness", html)
+
+
 email_service = EmailService()

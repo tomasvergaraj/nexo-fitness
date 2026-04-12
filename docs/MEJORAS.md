@@ -1,6 +1,6 @@
 # Roadmap de Mejoras — NexoFitness
 
-> Generado: 2026-04-09 | Actualizado: 2026-04-10 | Estado: Sprint 6 completado (parcial)
+> Generado: 2026-04-09 | Actualizado: 2026-04-10 | Estado: Sprint 7 completado
 
 ---
 
@@ -186,11 +186,29 @@ Tabla `progress_photos` con `file_path`, `recorded_at` y `notes`. Subida via `PO
 **Archivos**: `backend/migrations/versions/20260410_1200_add_personal_records_and_progress_photos.py`, `backend/app/models/business.py` (`PersonalRecord`), `backend/app/schemas/platform.py` (`PersonalRecordCreate/Response`), `backend/app/api/v1/endpoints/operations.py` (mobile + `personal_records_router`), `backend/app/main.py`, `frontend/src/types/index.ts`, `frontend/src/services/api.ts`, `frontend/src/pages/member/MemberAppPage.tsx`
 Tabla `personal_records` con `exercise_name`, `record_value`, `unit` (kg/reps/seg/min/metros/km), `recorded_at` y `notes`. CRUD vía `/mobile/personal-records` (GET con filtro por ejercicio, POST, DELETE). Vista owner en `GET /personal-records/{user_id}`. Sub-tab "Récords" en la sección Progreso de la PWA: búsqueda por ejercicio, tarjetas con valor + unidad + trofeo dorado, modal para crear. El tab Progreso ahora tiene 3 sub-tabs: Medidas · Fotos · Récords.
 
-### 📋 Sprint 7+ (pendiente)
+### ✅ Sprint 7 — API Pública OAuth (completado — 2026-04-10)
 
-| # | Feature | Descripción |
-|---|---------|-------------|
-| S7-1 | API pública para integraciones | OAuth + rate limiting para wearables / apps externas |
+| # | Feature | Tipo | Estado |
+|---|---------|------|--------|
+| S7-1 | API pública OAuth2 para integraciones | Full-stack + DB | ✅ deployed |
+
+#### S7-1: API pública OAuth2
+**Archivos**: `backend/migrations/versions/20260410_1300_add_api_clients_table.py`, `backend/app/models/business.py` (`ApiClient`), `backend/app/schemas/platform.py` (`ApiClientCreate/Update/Response/WithSecret`, `OAuthTokenResponse`), `backend/app/api/v1/endpoints/external.py` (nuevo), `backend/app/main.py`, `frontend/src/types/index.ts`, `frontend/src/services/api.ts`, `frontend/src/pages/developer/ApiClientsPage.tsx` (nuevo), `frontend/src/router.tsx`, `frontend/src/components/layout/Sidebar.tsx`
+
+Tabla `api_clients` con `client_id` (prefijo `nxo_` + 20 chars aleatorios), `client_secret_hash` (bcrypt), `scopes` (space-separated), `rate_limit_per_minute` y `is_active`. Flujo OAuth2 `client_credentials`:
+
+- `POST /api/v1/oauth/token` (form-encoded) → JWT de 1h con `type=api_client`, `scopes[]` y `tenant_id`
+- Rate limiting via Redis INCR/EXPIRE por ventana de 60 segundos
+- Endpoints externos (requieren scope específico):
+  - `GET /external/members/{id}/measurements` → scope `measurements:read`
+  - `POST /external/members/{id}/measurements` → scope `measurements:write`
+  - `GET /external/members/{id}/personal-records` → scope `records:read`
+  - `POST /external/members/{id}/personal-records` → scope `records:write`
+- Panel admin "Integraciones API" en sidebar (owner/admin): tabla con client_id copiable, scopes, límite, toggle activo/inactivo, eliminar. Modal de creación muestra el `client_secret` en claro una única vez (con blur + botón ojo + copiar). Documentación inline del endpoint de autenticación.
+
+---
+
+## Decisiones técnicas
 
 ---
 

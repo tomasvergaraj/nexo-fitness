@@ -82,3 +82,24 @@ def decode_token(token: str) -> dict[str, Any]:
         return payload
     except JWTError:
         raise ValueError("Token inválido o vencido")
+
+
+def create_email_verified_token(email: str) -> str:
+    """Short-lived token (30 min) that proves the email was verified by OTP."""
+    expires = datetime.now(timezone.utc) + timedelta(minutes=30)
+    payload = {"sub": email.lower().strip(), "exp": expires, "type": "email_verified"}
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_email_verified_token(token: str) -> str:
+    """Returns the verified email or raises ValueError."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "email_verified":
+            raise ValueError("Tipo de token incorrecto")
+        email = payload.get("sub")
+        if not email:
+            raise ValueError("Token sin email")
+        return email
+    except JWTError:
+        raise ValueError("Token de verificación inválido o vencido")

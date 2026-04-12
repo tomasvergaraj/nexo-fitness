@@ -243,6 +243,10 @@ export interface GymClass {
   waitlist_enabled: boolean;
   online_link?: string;
   color?: string;
+  program_id?: string;
+  repeat_type: 'none' | 'daily' | 'weekly' | 'monthly';
+  repeat_until?: string;
+  recurrence_group_id?: string;
   created_at: string;
 }
 
@@ -254,6 +258,22 @@ export interface Reservation {
   gym_class_id: string;
   status: 'confirmed' | 'waitlisted' | 'cancelled' | 'no_show' | 'attended';
   waitlist_position?: number;
+  cancel_reason?: string;
+  cancelled_at?: string;
+  created_at: string;
+}
+
+export interface ClassReservationDetail {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  user_email?: string;
+  user_phone?: string;
+  gym_class_id: string;
+  status: 'confirmed' | 'waitlisted' | 'cancelled' | 'no_show' | 'attended';
+  waitlist_position?: number;
+  cancel_reason?: string;
+  cancelled_at?: string;
   created_at: string;
 }
 
@@ -419,9 +439,12 @@ export interface TrainingProgram {
   trainer_id?: string;
   trainer_name?: string;
   program_type?: string;
-  duration_weeks?: number;
+  duration_weeks: number; // 0 = indefinido (sin límite)
   schedule: Array<Record<string, unknown>>;
   is_active: boolean;
+  enrolled_count: number;
+  is_enrolled: boolean;
+  enrollment_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -632,6 +655,14 @@ export interface MobileWallet {
     name: string;
     start_time: string;
     modality: string;
+    program_id?: string | null;
+  };
+  next_program_class?: {
+    id: string;
+    name: string;
+    start_time: string;
+    modality: string;
+    program_id?: string | null;
   };
   qr_payload?: string;
   max_reservations_per_week?: number | null;

@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     MERCADOPAGO_ACCESS_TOKEN: str = ""
     FINTOC_SECRET_KEY: str = ""
     FINTOC_WEBHOOK_SECRET: str = ""
+    WEBPAY_ENVIRONMENT: str = "integration"
+    WEBPAY_COMMERCE_CODE: str = ""
+    WEBPAY_API_KEY: str = ""
 
     # Push Notifications
     EXPO_PUSH_API_URL: str = "https://exp.host/--/api/v2/push/send"

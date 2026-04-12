@@ -198,6 +198,12 @@ class GymClass(Base):
     is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
     recurrence_rule: Mapped[Optional[str]] = mapped_column(String(255))  # RRULE string
     color: Mapped[Optional[str]] = mapped_column(String(7))
+    # Program integration
+    program_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("training_programs.id", ondelete="SET NULL"), index=True)
+    # Recurrence
+    repeat_type: Mapped[str] = mapped_column(String(20), default="none")  # none | daily | weekly | monthly
+    repeat_until: Mapped[Optional[date]] = mapped_column(Date)
+    recurrence_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -398,11 +404,28 @@ class TrainingProgram(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     trainer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     program_type: Mapped[Optional[str]] = mapped_column(String(100))
-    duration_weeks: Mapped[Optional[int]] = mapped_column(Integer)
+    duration_weeks: Mapped[int] = mapped_column(Integer, default=0)
     schedule_json: Mapped[Optional[str]] = mapped_column(Text)  # JSON weekly schedule
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+# ─── Training Program Enrollment ─────────────────────────────────────────────
+
+class TrainingProgramEnrollment(Base):
+    __tablename__ = "training_program_enrollments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    program_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("training_programs.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("program_id", "user_id", name="uq_training_program_enrollment"),
+    )
 
 
 # ─── ApiClient ────────────────────────────────────────────────────────────────

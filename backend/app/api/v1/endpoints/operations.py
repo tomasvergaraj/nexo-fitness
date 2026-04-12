@@ -44,6 +44,7 @@ from app.models.business import (
     ReservationStatus,
     SupportInteraction,
     TrainingProgram,
+    TrainingProgramEnrollment,
 )
 from app.models.platform import PushDelivery, PushSubscription, TenantPaymentProviderAccount
 from app.models.tenant import Tenant
@@ -97,6 +98,7 @@ from app.schemas.platform import (
     TenantSettingsResponse,
     TenantSettingsUpdateRequest,
     TrainingProgramCreateRequest,
+    TrainingProgramEnrollmentResponse,
     TrainingProgramResponse,
     TrainingProgramUpdateRequest,
     WebPushConfigResponse,
@@ -319,7 +321,13 @@ def _membership_payload(membership: Membership, user: Optional[User], plan: Opti
     )
 
 
-def _program_payload(program: TrainingProgram, trainer: Optional[User]) -> TrainingProgramResponse:
+def _program_payload(
+    program: TrainingProgram,
+    trainer: Optional[User],
+    *,
+    enrolled_count: int = 0,
+    enrollment_id: Optional[UUID] = None,
+) -> TrainingProgramResponse:
     return TrainingProgramResponse(
         id=program.id,
         name=program.name,
@@ -332,6 +340,9 @@ def _program_payload(program: TrainingProgram, trainer: Optional[User]) -> Train
         created_at=program.created_at,
         updated_at=program.updated_at,
         trainer_name=trainer.full_name if trainer else None,
+        enrolled_count=enrolled_count,
+        is_enrolled=enrollment_id is not None,
+        enrollment_id=enrollment_id,
     )
 
 
@@ -345,6 +356,43 @@ async def _get_default_program_trainer_id(db: AsyncSession, tenant_id: UUID) -> 
             ).limit(1)
         )
     ).scalar_one_or_none()
+
+
+async def _get_program_enrollment_counts(
+    db: AsyncSession,
+    tenant_id: UUID,
+    program_ids: list[UUID],
+) -> dict[UUID, int]:
+    if not program_ids:
+        return {}
+
+    rows = await db.execute(
+        select(
+            TrainingProgramEnrollment.program_id,
+            func.count().label("count"),
+        )
+        .where(
+            TrainingProgramEnrollment.tenant_id == tenant_id,
+            TrainingProgramEnrollment.program_id.in_(program_ids),
+        )
+        .group_by(TrainingProgramEnrollment.program_id)
+    )
+    return {row.program_id: row.count for row in rows}
+
+
+def _program_enrollment_payload(
+    enrollment: TrainingProgramEnrollment,
+    user: Optional[User],
+) -> TrainingProgramEnrollmentResponse:
+    return TrainingProgramEnrollmentResponse(
+        id=enrollment.id,
+        program_id=enrollment.program_id,
+        user_id=enrollment.user_id,
+        user_name=user.full_name if user else None,
+        user_email=user.email if user else None,
+        user_phone=user.phone if user else None,
+        created_at=enrollment.created_at,
+    )
 
 
 def _support_payload(
@@ -970,6 +1018,7 @@ async def list_programs(
             query.order_by(TrainingProgram.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
         )
     ).scalars().all()
+    program_ids = [program.id for program in programs]
 
     trainer_ids = [program.trainer_id for program in programs if program.trainer_id]
     trainers = {
@@ -978,9 +1027,17 @@ async def list_programs(
             await db.execute(select(User).where(User.id.in_(trainer_ids)))
         ).scalars().all()
     } if trainer_ids else {}
+    enrollment_counts = await _get_program_enrollment_counts(db, ctx.tenant_id, program_ids)
 
     return PaginatedResponse(
-        items=[_program_payload(program, trainers.get(program.trainer_id)) for program in programs],
+        items=[
+            _program_payload(
+                program,
+                trainers.get(program.trainer_id),
+                enrolled_count=enrollment_counts.get(program.id, 0),
+            )
+            for program in programs
+        ],
         total=total,
         page=page,
         per_page=per_page,
@@ -1010,7 +1067,7 @@ async def create_program(
     await db.flush()
     await db.refresh(program)
     trainer = await db.get(User, program.trainer_id) if program.trainer_id else None
-    return _program_payload(program, trainer)
+    return _program_payload(program, trainer, enrolled_count=0)
 
 
 @programs_router.patch("/{program_id}", response_model=TrainingProgramResponse)
@@ -1034,7 +1091,43 @@ async def update_program(
     await db.flush()
     await db.refresh(program)
     trainer = await db.get(User, program.trainer_id) if program.trainer_id else None
-    return _program_payload(program, trainer)
+    enrolled_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(TrainingProgramEnrollment)
+            .where(
+                TrainingProgramEnrollment.tenant_id == ctx.tenant_id,
+                TrainingProgramEnrollment.program_id == program.id,
+            )
+        )
+    ).scalar() or 0
+    return _program_payload(program, trainer, enrolled_count=enrolled_count)
+
+
+@programs_router.get("/{program_id}/enrollments", response_model=list[TrainingProgramEnrollmentResponse])
+async def list_program_enrollments(
+    program_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    program = await db.get(TrainingProgram, program_id)
+    if not program or program.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
+
+    rows = await db.execute(
+        select(TrainingProgramEnrollment, User)
+        .join(User, User.id == TrainingProgramEnrollment.user_id)
+        .where(
+            TrainingProgramEnrollment.tenant_id == ctx.tenant_id,
+            TrainingProgramEnrollment.program_id == program_id,
+        )
+        .order_by(User.first_name.asc(), User.last_name.asc(), TrainingProgramEnrollment.created_at.desc())
+    )
+    return [
+        _program_enrollment_payload(enrollment, user)
+        for enrollment, user in rows.all()
+    ]
 
 
 @settings_router.get("", response_model=TenantSettingsResponse)
@@ -1607,6 +1700,33 @@ async def get_mobile_wallet(
         )
     ).scalars().first()
 
+    # Next class from user's enrolled programs
+    enrolled_program_ids = (
+        await db.execute(
+            select(TrainingProgramEnrollment.program_id)
+            .where(
+                TrainingProgramEnrollment.tenant_id == tenant.id,
+                TrainingProgramEnrollment.user_id == current_user.id,
+            )
+        )
+    ).scalars().all()
+
+    next_program_class = None
+    if enrolled_program_ids:
+        next_program_class = (
+            await db.execute(
+                select(GymClass)
+                .where(
+                    GymClass.tenant_id == tenant.id,
+                    GymClass.program_id.in_(enrolled_program_ids),
+                    GymClass.start_time >= datetime.now(timezone.utc),
+                    GymClass.status == ClassStatus.SCHEDULED,
+                )
+                .order_by(GymClass.start_time.asc())
+                .limit(1)
+            )
+        ).scalars().first()
+
     # Reservation quota: count confirmed reservations this week / this month
     weekly_used: int | None = None
     monthly_used: int | None = None
@@ -1641,6 +1761,15 @@ async def get_mobile_wallet(
                 )
             ).scalar() or 0
 
+    def _class_dict(c: GymClass) -> dict:
+        return {
+            "id": str(c.id),
+            "name": c.name,
+            "start_time": c.start_time.isoformat(),
+            "modality": c.modality.value if hasattr(c.modality, "value") else str(c.modality),
+            "program_id": str(c.program_id) if c.program_id else None,
+        }
+
     return MobileMembershipWalletResponse(
         tenant_slug=tenant.slug,
         tenant_name=tenant.name,
@@ -1650,16 +1779,8 @@ async def get_mobile_wallet(
         membership_status=membership.status.value if membership else None,
         expires_at=membership.expires_at if membership else None,
         auto_renew=membership.auto_renew if membership else None,
-        next_class=(
-            {
-                "id": str(next_class.id),
-                "name": next_class.name,
-                "start_time": next_class.start_time.isoformat(),
-                "modality": next_class.modality.value if hasattr(next_class.modality, "value") else str(next_class.modality),
-            }
-            if next_class
-            else None
-        ),
+        next_class=_class_dict(next_class) if next_class else None,
+        next_program_class=_class_dict(next_program_class) if next_program_class else None,
         qr_payload=f"nexo:{tenant.slug}:{current_user.id}:{membership.id if membership else uuid4()}",
         max_reservations_per_week=plan.max_reservations_per_week if plan else None,
         max_reservations_per_month=plan.max_reservations_per_month if plan else None,
@@ -1763,6 +1884,146 @@ async def list_mobile_payments(
         )
         for payment in payments
     ]
+
+
+@mobile_router.get("/programs", response_model=list[TrainingProgramResponse])
+async def list_mobile_programs(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+    if current_user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=403, detail="Solo los clientes pueden ver sus programas")
+
+    programs = (
+        await db.execute(
+            select(TrainingProgram)
+            .where(
+                TrainingProgram.tenant_id == tenant.id,
+                TrainingProgram.is_active == True,
+            )
+            .order_by(TrainingProgram.created_at.desc())
+        )
+    ).scalars().all()
+    program_ids = [program.id for program in programs]
+
+    trainer_ids = [program.trainer_id for program in programs if program.trainer_id]
+    trainers = {
+        trainer.id: trainer
+        for trainer in (
+            await db.execute(select(User).where(User.id.in_(trainer_ids)))
+        ).scalars().all()
+    } if trainer_ids else {}
+    enrollment_counts = await _get_program_enrollment_counts(db, tenant.id, program_ids)
+    enrollments = {
+        enrollment.program_id: enrollment
+        for enrollment in (
+            await db.execute(
+                select(TrainingProgramEnrollment).where(
+                    TrainingProgramEnrollment.tenant_id == tenant.id,
+                    TrainingProgramEnrollment.user_id == current_user.id,
+                    TrainingProgramEnrollment.program_id.in_(program_ids),
+                )
+            )
+        ).scalars().all()
+    } if program_ids else {}
+
+    return [
+        _program_payload(
+            program,
+            trainers.get(program.trainer_id),
+            enrolled_count=enrollment_counts.get(program.id, 0),
+            enrollment_id=enrollments.get(program.id).id if enrollments.get(program.id) else None,
+        )
+        for program in programs
+    ]
+
+
+@mobile_router.post("/programs/{program_id}/enroll", response_model=TrainingProgramResponse, status_code=201)
+async def enroll_mobile_program(
+    program_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+    if current_user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=403, detail="Solo los clientes pueden inscribirse a programas")
+
+    program = await db.get(TrainingProgram, program_id)
+    if not program or program.tenant_id != tenant.id:
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
+    if not program.is_active:
+        raise HTTPException(status_code=400, detail="Este programa no está disponible por ahora")
+
+    existing = (
+        await db.execute(
+            select(TrainingProgramEnrollment).where(
+                TrainingProgramEnrollment.tenant_id == tenant.id,
+                TrainingProgramEnrollment.program_id == program_id,
+                TrainingProgramEnrollment.user_id == current_user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        enrollment = TrainingProgramEnrollment(
+            tenant_id=tenant.id,
+            program_id=program_id,
+            user_id=current_user.id,
+        )
+        db.add(enrollment)
+        await db.flush()
+        existing = enrollment
+
+    trainer = await db.get(User, program.trainer_id) if program.trainer_id else None
+    enrolled_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(TrainingProgramEnrollment)
+            .where(
+                TrainingProgramEnrollment.tenant_id == tenant.id,
+                TrainingProgramEnrollment.program_id == program_id,
+            )
+        )
+    ).scalar() or 0
+    return _program_payload(
+        program,
+        trainer,
+        enrolled_count=enrolled_count,
+        enrollment_id=existing.id,
+    )
+
+
+@mobile_router.delete("/programs/{program_id}/enroll", status_code=204)
+async def leave_mobile_program(
+    program_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+    if current_user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=403, detail="Solo los clientes pueden gestionar su inscripción a programas")
+
+    enrollment = (
+        await db.execute(
+            select(TrainingProgramEnrollment).where(
+                TrainingProgramEnrollment.tenant_id == tenant.id,
+                TrainingProgramEnrollment.program_id == program_id,
+                TrainingProgramEnrollment.user_id == current_user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if enrollment is None:
+        return Response(status_code=204)
+
+    await db.delete(enrollment)
+    await db.flush()
+    return Response(status_code=204)
 
 
 @mobile_router.get("/support/interactions", response_model=list[SupportInteractionResponse])

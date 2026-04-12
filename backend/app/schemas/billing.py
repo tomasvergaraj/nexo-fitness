@@ -84,6 +84,7 @@ class SaaSSignupRequest(TenantOnboardingRequest):
     plan_key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
+    verification_token: Optional[str] = None
 
 
 class SaaSSignupResponse(BaseModel):

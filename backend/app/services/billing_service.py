@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
+from app.core.security import decode_email_verified_token
 from app.integrations.payments.stripe_service import stripe_service
 from app.integrations.payments.fintoc_service import fintoc_service
 from app.models.tenant import LicenseType, Tenant, TenantStatus
@@ -238,6 +239,16 @@ class BillingService:
 
     @staticmethod
     async def signup_tenant(db: AsyncSession, data) -> dict[str, Any]:
+        # Validate email verification token when provided
+        verification_token = getattr(data, "verification_token", None)
+        if verification_token:
+            try:
+                verified_email = decode_email_verified_token(verification_token)
+            except ValueError as exc:
+                raise ValueError(str(exc))
+            if verified_email != data.owner_email.lower().strip():
+                raise ValueError("El token de verificación no corresponde al correo ingresado.")
+
         plan = await get_public_saas_plan_definition(db, data.plan_key)
         tenant_status = TenantStatus.TRIAL
         billing_status = TenantStatus.TRIAL.value

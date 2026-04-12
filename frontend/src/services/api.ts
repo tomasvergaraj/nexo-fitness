@@ -88,6 +88,10 @@ export const authApi = {
     api.post('/auth/forgot-password', { email }),
   resetPassword: (token: string, new_password: string) =>
     api.post('/auth/reset-password', { token, new_password }),
+  sendEmailVerification: (email: string) =>
+    api.post('/auth/email-verification/send', { email }),
+  confirmEmailVerification: (email: string, code: string) =>
+    api.post('/auth/email-verification/confirm', { email, code }),
 };
 
 export const billingApi = {
@@ -112,9 +116,11 @@ export const dashboardApi = {
 export const classesApi = {
   list: (params?: Record<string, unknown>) => api.get('/classes', { params }),
   get: (id: string) => api.get(`/classes/${id}`),
+  listReservations: (id: string) => api.get(`/classes/${id}/reservations`),
   create: (data: Record<string, unknown>) => api.post('/classes', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/classes/${id}`, data),
-  cancel: (id: string) => api.delete(`/classes/${id}`),
+  cancel: (id: string, cancelReason?: string) =>
+    api.delete(`/classes/${id}`, { params: cancelReason ? { cancel_reason: cancelReason } : undefined }),
 };
 
 export const reservationsApi = {
@@ -193,6 +199,7 @@ export const programsApi = {
   list: (params?: Record<string, unknown>) => api.get('/programs', { params }),
   create: (data: Record<string, unknown>) => api.post('/programs', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/programs/${id}`, data),
+  listEnrollments: (id: string) => api.get(`/programs/${id}/enrollments`),
 };
 
 export const settingsApi = {
@@ -236,6 +243,9 @@ export const publicApi = {
 
 export const mobileApi = {
   wallet: () => api.get('/mobile/wallet'),
+  listPrograms: () => api.get('/mobile/programs'),
+  enrollProgram: (id: string) => api.post(`/mobile/programs/${id}/enroll`),
+  leaveProgram: (id: string) => api.delete(`/mobile/programs/${id}/enroll`),
   listPayments: (params?: Record<string, unknown>) => api.get('/mobile/payments', { params }),
   listSupportInteractions: (params?: Record<string, unknown>) => api.get('/mobile/support/interactions', { params }),
   createSupportInteraction: (data: Record<string, unknown>) => api.post('/mobile/support/interactions', data),

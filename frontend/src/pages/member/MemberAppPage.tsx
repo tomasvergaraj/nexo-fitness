@@ -9,6 +9,7 @@ import {
   Copy,
   CreditCard,
   Download,
+  Dumbbell,
   ExternalLink,
   Home,
   ImageOff,
@@ -53,6 +54,7 @@ import type {
   BodyMeasurement,
   GymClass,
   MobilePaymentHistoryItem,
+  TrainingProgram,
   MobileWallet,
   PaginatedResponse,
   PersonalRecord,
@@ -93,7 +95,7 @@ import {
 import type { SupportTimelineEntry } from '@/utils/support';
 import { getSupportLastActivityAt, getSupportLastTimelineEntry, getSupportTraceCount, parseSupportTimeline } from '@/utils/support';
 
-type MemberTabId = 'home' | 'agenda' | 'support' | 'plans' | 'payments' | 'notifications' | 'profile' | 'progress';
+type MemberTabId = 'home' | 'agenda' | 'programs' | 'support' | 'plans' | 'payments' | 'notifications' | 'profile' | 'progress';
 type SupportFilter = 'all' | 'pending' | 'resolved';
 type NotificationFilter = 'all' | 'unread' | 'read' | 'actionable';
 type NotificationDatePreset = '7d' | '30d' | '90d' | 'custom';
@@ -107,6 +109,7 @@ type MemberSnapshot = {
   wallet?: MobileWallet;
   profile?: TenantPublicProfile;
   plans?: Plan[];
+  programs?: TrainingProgram[];
   classes?: PaginatedResponse<GymClass>;
   reservations?: PaginatedResponse<Reservation>;
   payments?: MobilePaymentHistoryItem[];
@@ -136,6 +139,7 @@ const TABS: Array<{
 }> = [
   { id: 'home', label: 'Inicio', icon: Home, primary: true, description: 'Pase digital y accesos rápidos' },
   { id: 'agenda', label: 'Agenda', icon: CalendarDays, primary: true, description: 'Clases, reservas y próximas actividades' },
+  { id: 'programs', label: 'Programas', icon: Dumbbell, primary: false, description: 'Programas de entrenamiento e inscripción personal' },
   { id: 'progress', label: 'Progreso', icon: TrendingUp, primary: true, description: 'Registro de medidas y evolución corporal' },
   { id: 'support', label: 'Soporte', icon: LifeBuoy, primary: true, description: 'Ayuda, respuestas y seguimiento de tus casos' },
   { id: 'plans', label: 'Planes', icon: Ticket, primary: false, description: 'Planes disponibles y compra online' },
@@ -235,6 +239,14 @@ export default function MemberAppPage() {
     queryFn: async () => (await publicApi.getTenantPlans(tenantSlug!)).data,
     enabled: Boolean(tenantSlug),
     initialData: memberSnapshot?.plans,
+    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
+  });
+
+  const programsQuery = useQuery<TrainingProgram[]>({
+    queryKey: ['member-programs'],
+    queryFn: async () => (await mobileApi.listPrograms()).data,
+    enabled: Boolean(user),
+    initialData: memberSnapshot?.programs,
     initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
@@ -510,6 +522,24 @@ export default function MemberAppPage() {
     }
   }
 
+  const enrollProgramMutation = useMutation({
+    mutationFn: async (programId: string) => (await mobileApi.enrollProgram(programId)).data,
+    onSuccess: async () => {
+      toast.success('Te inscribiste al programa.');
+      await queryClient.invalidateQueries({ queryKey: ['member-programs'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo completar la inscripción.')),
+  });
+
+  const leaveProgramMutation = useMutation({
+    mutationFn: async (programId: string) => mobileApi.leaveProgram(programId),
+    onSuccess: async () => {
+      toast.success('Dejaste el programa.');
+      await queryClient.invalidateQueries({ queryKey: ['member-programs'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo quitar la inscripción.')),
+  });
+
   const registerPushSubscriptionMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => (await mobileApi.registerPushSubscription(payload)).data,
     onSuccess: async () => {
@@ -592,6 +622,8 @@ export default function MemberAppPage() {
     && notificationDateFrom === initialNotificationDateRange.from
     && notificationDateTo === initialNotificationDateRange.to;
   const plans = plansQuery.data ?? [];
+  const programs = programsQuery.data ?? [];
+  const enrolledPrograms = programs.filter((program) => program.is_enrolled);
   const pushSubscriptions = pushSubscriptionsQuery.data ?? [];
   const accentColor = normalizeHexColor(profileQuery.data?.branding.primary_color, DEFAULT_PRIMARY_COLOR) ?? DEFAULT_PRIMARY_COLOR;
   const secondaryColor = normalizeHexColor(profileQuery.data?.branding.secondary_color, DEFAULT_SECONDARY_COLOR) ?? DEFAULT_SECONDARY_COLOR;
@@ -956,6 +988,7 @@ export default function MemberAppPage() {
     if (walletQuery.data) nextSnapshot.wallet = walletQuery.data;
     if (profileQuery.data) nextSnapshot.profile = profileQuery.data;
     if (plansQuery.data) nextSnapshot.plans = plansQuery.data;
+    if (programsQuery.data) nextSnapshot.programs = programsQuery.data;
     if (classesQuery.data) nextSnapshot.classes = classesQuery.data;
     if (reservationsQuery.data) nextSnapshot.reservations = reservationsQuery.data;
     if (paymentsQuery.data) nextSnapshot.payments = paymentsQuery.data;
@@ -972,6 +1005,7 @@ export default function MemberAppPage() {
     notificationsQuery.data,
     paymentsQuery.data,
     plansQuery.data,
+    programsQuery.data,
     profileQuery.data,
     reservationsQuery.data,
     supportInteractionsQuery.data,
@@ -1500,6 +1534,20 @@ export default function MemberAppPage() {
                     onClick={() => setTab(searchParams, setSearchParams, 'agenda')}
                   />
                   <QuickActionCard
+                    icon={Dumbbell}
+                    title="Programas"
+                    description={
+                      enrolledPrograms.length
+                        ? `${enrolledPrograms.length} ${enrolledPrograms.length === 1 ? 'programa activo' : 'programas activos'}`
+                        : programs.length
+                          ? `${programs.length} programas para unirte`
+                          : 'Revisa rutinas y objetivos del gimnasio'
+                    }
+                    accentColor={accentColor}
+                    secondaryColor={secondaryColor}
+                    onClick={() => setTab(searchParams, setSearchParams, 'programs')}
+                  />
+                  <QuickActionCard
                     icon={Ticket}
                     title="Planes"
                     description={plans.length ? `${plans.length} opciones disponibles` : 'Revisa tu plan actual'}
@@ -1580,6 +1628,29 @@ export default function MemberAppPage() {
                   </>
                 )}
                 </Panel>
+
+                {walletQuery.data?.next_program_class ? (
+                  <Panel title="Mi programa">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="badge badge-success">Próxima clase</span>
+                      <span className="badge badge-neutral">{formatRelative(walletQuery.data.next_program_class.start_time)}</span>
+                    </div>
+                    <p className="mt-4 text-xl font-semibold">{walletQuery.data.next_program_class.name}</p>
+                    <p className="mt-2 text-sm text-surface-600 dark:text-surface-300">
+                      {formatDateTime(walletQuery.data.next_program_class.start_time)} · {formatClassModalityLabel(walletQuery.data.next_program_class.modality)}
+                    </p>
+                    {gymLocation ? (
+                      <div className="mt-4 flex items-start gap-3 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-white/10 dark:bg-surface-950/40">
+                        <MapPin size={18} className="mt-0.5" style={{ color: accentColor }} />
+                        <p className="text-sm leading-6 text-surface-600 dark:text-surface-300">{gymLocation}</p>
+                      </div>
+                    ) : null}
+                    <button type="button" className="btn-secondary mt-4" onClick={() => setTab(searchParams, setSearchParams, 'programs')}>
+                      <Dumbbell size={16} />
+                      Ver mis programas
+                    </button>
+                  </Panel>
+                ) : null}
 
                 <Panel title="Tu dispositivo">
                   <div className="space-y-3">
@@ -1852,6 +1923,101 @@ export default function MemberAppPage() {
                   description={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' ? 'Prueba cambiando el filtro de fecha o modalidad.' : 'La agenda aparecerá aquí cuando el gimnasio publique nuevas clases.'}
                 />
               )}
+            </div>
+          ) : null}
+
+          {activeTab === 'programs' ? (
+            <div className="space-y-4">
+              {programsQuery.isLoading && !programsQuery.data ? <SkeletonListItems count={4} /> : null}
+              <Panel title="Programas de entrenamiento">
+                <p className="text-sm leading-6 text-surface-600 dark:text-surface-300">
+                  Únete a los programas activos del gimnasio para seguir una estructura semanal, conocer al trainer responsable y mantener tus objetivos claros.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <DeviceStatusItem label="Disponibles" value={String(programs.length)} tone={programs.length ? 'info' : 'neutral'} />
+                  <DeviceStatusItem label="Inscrito" value={String(enrolledPrograms.length)} tone={enrolledPrograms.length ? 'success' : 'neutral'} />
+                  <DeviceStatusItem label="Activos" value={String(programs.filter((program) => program.is_active).length)} tone={programs.some((program) => program.is_active) ? 'warning' : 'neutral'} />
+                </div>
+              </Panel>
+
+              {programs.length ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {programs.map((program) => (
+                    <Panel key={program.id} title={program.name}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={cn('badge', program.is_enrolled ? 'badge-success' : 'badge-neutral')}>
+                          {program.is_enrolled ? 'Ya estás inscrito' : 'Disponible'}
+                        </span>
+                        <span className="badge badge-neutral">
+                          {program.duration_weeks ? `${program.duration_weeks} semanas` : 'Duración flexible'}
+                        </span>
+                        <span className="badge badge-info">
+                          {program.enrolled_count} {program.enrolled_count === 1 ? 'inscrito' : 'inscritos'}
+                        </span>
+                      </div>
+
+                      <p className="mt-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
+                        {program.description || 'Programa activo del gimnasio para acompañar tu entrenamiento.'}
+                      </p>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <ProfileDetailItem label="Trainer" value={program.trainer_name || 'Sin asignar'} />
+                        <ProfileDetailItem label="Tipo" value={program.program_type || 'General'} />
+                      </div>
+
+                      <div className="mt-4 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Horario semanal</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {program.schedule.length ? program.schedule.map((entry, index) => {
+                            const day = typeof entry.day === 'string' && entry.day.trim() ? entry.day : `Día ${index + 1}`;
+                            const focus = typeof entry.focus === 'string' && entry.focus.trim() ? entry.focus : 'Trabajo general';
+                            return (
+                              <span
+                                key={`${program.id}-${day}-${index}`}
+                                className="rounded-full border border-surface-200 bg-white px-3 py-1.5 text-xs font-medium text-surface-600 dark:border-white/10 dark:bg-white/5 dark:text-surface-300"
+                              >
+                                {day}: {focus}
+                              </span>
+                            );
+                          }) : (
+                            <span className="text-sm text-surface-500">El gimnasio aún no definió una rutina semanal visible.</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                        {program.is_enrolled ? (
+                          <button
+                            type="button"
+                            className="btn-secondary w-full justify-center sm:w-auto"
+                            onClick={() => leaveProgramMutation.mutate(program.id)}
+                            disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
+                          >
+                            <XCircle size={16} />
+                            Salir del programa
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-primary w-full justify-center sm:w-auto"
+                            style={{ backgroundImage: brandGradient }}
+                            onClick={() => enrollProgramMutation.mutate(program.id)}
+                            disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
+                          >
+                            <Dumbbell size={16} />
+                            Inscribirme
+                          </button>
+                        )}
+                      </div>
+                    </Panel>
+                  ))}
+                </div>
+              ) : !programsQuery.isLoading ? (
+                <EmptyState
+                  title="Todavía no hay programas publicados"
+                  description="Cuando el gimnasio active programas de entrenamiento aparecerán aquí para que puedas sumarte."
+                />
+              ) : null}
             </div>
           ) : null}
 
@@ -3086,13 +3252,13 @@ export default function MemberAppPage() {
             onClick={() => setIsDrawerOpen(true)}
             className={cn(
               'flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-colors',
-              ['plans', 'payments', 'profile'].includes(activeTab)
+              ['programs', 'plans', 'payments', 'profile'].includes(activeTab)
                 ? 'text-surface-900 dark:text-white'
                 : 'text-surface-400 hover:text-surface-700 dark:text-surface-500 dark:hover:text-surface-300',
             )}
           >
             <span
-              className={cn('flex h-7 w-7 items-center justify-center rounded-xl transition-all', ['plans', 'payments', 'profile'].includes(activeTab) ? 'scale-110' : '')}
+              className={cn('flex h-7 w-7 items-center justify-center rounded-xl transition-all', ['programs', 'plans', 'payments', 'profile'].includes(activeTab) ? 'scale-110' : '')}
               style={['plans', 'payments', 'profile'].includes(activeTab) ? { background: `linear-gradient(135deg, ${accentColor}, ${secondaryColor})`, color: 'white' } : undefined}
             >
               <Menu size={16} />
@@ -3993,6 +4159,7 @@ async function refreshMemberQueries(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: ['member-wallet'] }),
     queryClient.invalidateQueries({ queryKey: ['member-tenant-profile'] }),
     queryClient.invalidateQueries({ queryKey: ['member-plans'] }),
+    queryClient.invalidateQueries({ queryKey: ['member-programs'] }),
     queryClient.invalidateQueries({ queryKey: ['member-classes'] }),
     queryClient.invalidateQueries({ queryKey: ['member-reservations'] }),
     queryClient.invalidateQueries({ queryKey: ['member-payments'] }),

@@ -10,7 +10,7 @@ from app.models.business import (
     CheckIn, Payment, PaymentStatus, PaymentMethod,
     Campaign, CampaignStatus, CampaignChannel,
     SupportInteraction, InteractionChannel,
-    AuditLog, Notification, TrainingProgram,
+    AuditLog, Notification, TrainingProgram, TrainingProgramEnrollment,
 )
 
 __all__ = [
@@ -23,5 +23,5 @@ __all__ = [
     "CheckIn", "Payment", "PaymentStatus", "PaymentMethod",
     "Campaign", "CampaignStatus", "CampaignChannel",
     "SupportInteraction", "InteractionChannel",
-    "AuditLog", "Notification", "TrainingProgram",
+    "AuditLog", "Notification", "TrainingProgram", "TrainingProgramEnrollment",
 ]

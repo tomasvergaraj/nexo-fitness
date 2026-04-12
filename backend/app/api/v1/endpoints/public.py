@@ -13,7 +13,7 @@ from sqlalchemy.exc import ProgrammingError
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import require_superadmin
-from app.core.security import create_password_reset_token, hash_password
+from app.core.security import create_password_reset_token, decode_email_verified_token, hash_password
 from app.integrations.email.email_service import email_service
 from app.models.business import (
     Branch,
@@ -630,7 +630,25 @@ async def _create_public_checkout_session_for_tenant(
 
     await _ensure_checkout_email_can_purchase(db, tenant, data.customer_email)
 
+    # When creating a new account, require a verified email token
     if data.customer_password:
+        existing = await _get_existing_user_by_email(db, data.customer_email)
+        if not existing:
+            if not data.verification_token:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Debes verificar tu correo electrónico antes de crear una cuenta.",
+                )
+            try:
+                verified_email = decode_email_verified_token(data.verification_token)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+            if verified_email != data.customer_email.lower().strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El token de verificación no corresponde al correo ingresado.",
+                )
+
         await _find_or_create_checkout_user(
             db,
             tenant=tenant,

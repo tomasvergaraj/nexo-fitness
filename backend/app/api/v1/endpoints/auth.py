@@ -1,13 +1,19 @@
 """Authentication API endpoints."""
 
+import json
+import random
+import string
 import structlog
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.security import create_email_verified_token
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest, LoginResponse, RefreshRequest, RegisterRequest,
@@ -94,3 +100,103 @@ async def reset_password(data: PasswordResetConfirm, db: AsyncSession = Depends(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return {"detail": "Contraseña actualizada correctamente. Ya puedes iniciar sesión."}
+
+
+# ── Email verification (OTP) ─────────────────────────────────────────────────
+
+class EmailVerificationSendRequest(BaseModel):
+    email: EmailStr
+
+
+class EmailVerificationConfirmRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+def _redis_otp_key(email: str) -> str:
+    return f"email_verify:{email.lower().strip()}"
+
+
+async def _get_redis():
+    import redis.asyncio as aioredis
+    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+@router.post("/email-verification/send", status_code=status.HTTP_200_OK)
+async def send_email_verification(
+    data: EmailVerificationSendRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Check if email is already registered.
+    - If yes → return {exists: true} (caller can redirect to login).
+    - If no  → generate 6-digit OTP, store in Redis (10 min TTL), send email
+               → return {exists: false, sent: true}.
+    """
+    email = data.email.lower().strip()
+
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
+        return {"exists": True}
+
+    code = "".join(random.choices(string.digits, k=6))
+
+    redis = await _get_redis()
+    key = _redis_otp_key(email)
+    payload = json.dumps({"code": code, "attempts": 0})
+    await redis.set(key, payload, ex=600)  # 10 minutes
+    await redis.aclose()
+
+    sent = await email_service.send_email_verification(to_email=email, code=code)
+    if not sent and settings.APP_ENV != "production":
+        logger.info("email_verification_debug_code", email=email, code=code)
+
+    return {"exists": False, "sent": True}
+
+
+@router.post("/email-verification/confirm", status_code=status.HTTP_200_OK)
+async def confirm_email_verification(data: EmailVerificationConfirmRequest):
+    """
+    Validate the OTP code. On success returns a short-lived JWT verification token
+    that the frontend must attach to the signup/checkout request.
+    """
+    email = data.email.lower().strip()
+    key = _redis_otp_key(email)
+
+    redis = await _get_redis()
+    raw = await redis.get(key)
+
+    if not raw:
+        await redis.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El código ha expirado o no existe. Solicita uno nuevo.",
+        )
+
+    stored = json.loads(raw)
+    attempts: int = stored.get("attempts", 0)
+
+    if attempts >= 5:
+        await redis.delete(key)
+        await redis.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos fallidos. Solicita un nuevo código.",
+        )
+
+    if stored["code"] != data.code.strip():
+        stored["attempts"] = attempts + 1
+        ttl = await redis.ttl(key)
+        await redis.set(key, json.dumps(stored), ex=max(ttl, 1))
+        await redis.aclose()
+        remaining = 5 - stored["attempts"]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Código incorrecto. Te quedan {remaining} intento{'s' if remaining != 1 else ''}.",
+        )
+
+    await redis.delete(key)
+    await redis.aclose()
+
+    verified_token = create_email_verified_token(email)
+    return {"verified_token": verified_token}

@@ -5,10 +5,12 @@ import {
   ArrowRight,
   BadgeCheck,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronRight,
   Clock3,
   CreditCard,
+  Loader2,
   LockKeyhole,
   Mail,
   MapPin,
@@ -21,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Modal from '@/components/ui/Modal';
-import { publicApi } from '@/services/api';
+import { authApi, publicApi } from '@/services/api';
 import {
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_SECONDARY_COLOR,
@@ -163,6 +165,8 @@ const getDiscountAmount = (plan: StorefrontPlan | null | undefined) => {
   return Math.max(plan.price - getDiscountedPrice(plan), 0);
 };
 
+type CheckoutVerifyStep = 'email' | 'code' | 'done';
+
 export default function TenantStorefrontPage() {
   const { slug = '' } = useParams();
   const location = useLocation();
@@ -172,6 +176,14 @@ export default function TenantStorefrontPage() {
   const [accountMode, setAccountMode] = useState<AccountMode>('create');
   const [resumeSession, setResumeSession] = useState<CheckoutResumeSession | null>(null);
   const handledCheckoutStateRef = useRef(false);
+
+  // Email verification for new account creation
+  const [checkoutVerifyStep, setCheckoutVerifyStep] = useState<CheckoutVerifyStep>('email');
+  const [checkoutVerifyCode, setCheckoutVerifyCode] = useState('');
+  const [checkoutVerifyToken, setCheckoutVerifyToken] = useState('');
+  const [checkoutVerifyLoading, setCheckoutVerifyLoading] = useState(false);
+  const [checkoutVerifyError, setCheckoutVerifyError] = useState('');
+  const checkoutVerifyCodeRef = useRef<HTMLInputElement>(null);
   const isHostResolvedStorefront = !slug;
   const hostStorefrontKey = typeof window === 'undefined' ? '' : window.location.hostname;
   const storefrontKey = isHostResolvedStorefront ? hostStorefrontKey : slug;
@@ -256,6 +268,47 @@ export default function TenantStorefrontPage() {
     ));
   }, [defaultPlan]);
 
+  const handleCheckoutSendCode = async () => {
+    const email = form.customer_email.trim().toLowerCase();
+    if (!email) return;
+    setCheckoutVerifyLoading(true);
+    setCheckoutVerifyError('');
+    try {
+      const res = await authApi.sendEmailVerification(email);
+      const data = res.data as { exists?: boolean; sent?: boolean };
+      if (data.exists) {
+        // Email exists → switch to "existing account" mode, skip verification
+        setAccountMode('existing');
+        setCheckoutVerifyStep('done');
+        setCheckoutVerifyToken('');
+        toast('Este correo ya tiene una cuenta. Continuarás con acceso existente.', { icon: 'ℹ️' });
+        return;
+      }
+      setCheckoutVerifyStep('code');
+      setTimeout(() => checkoutVerifyCodeRef.current?.focus(), 100);
+    } catch (err: any) {
+      setCheckoutVerifyError(err?.response?.data?.detail || 'No se pudo enviar el código. Inténtalo de nuevo.');
+    } finally {
+      setCheckoutVerifyLoading(false);
+    }
+  };
+
+  const handleCheckoutConfirmCode = async () => {
+    const email = form.customer_email.trim().toLowerCase();
+    setCheckoutVerifyLoading(true);
+    setCheckoutVerifyError('');
+    try {
+      const res = await authApi.confirmEmailVerification(email, checkoutVerifyCode);
+      const data = res.data as { verified_token: string };
+      setCheckoutVerifyToken(data.verified_token);
+      setCheckoutVerifyStep('done');
+    } catch (err: any) {
+      setCheckoutVerifyError(err?.response?.data?.detail || 'Código incorrecto. Inténtalo de nuevo.');
+    } finally {
+      setCheckoutVerifyLoading(false);
+    }
+  };
+
   const checkoutMutation = useMutation({
     mutationFn: async () => {
       const storefrontUrl = isHostResolvedStorefront
@@ -268,6 +321,7 @@ export default function TenantStorefrontPage() {
         customer_phone: form.customer_phone.trim(),
         customer_date_of_birth: form.customer_date_of_birth || undefined,
         customer_password: accountMode === 'create' ? form.customer_password : undefined,
+        verification_token: accountMode === 'create' && checkoutVerifyToken ? checkoutVerifyToken : undefined,
         success_url: `${storefrontUrl}?checkout=success`,
         cancel_url: `${storefrontUrl}?checkout=cancelled`,
       };
@@ -718,15 +772,98 @@ export default function TenantStorefrontPage() {
 
       <Modal
         open={showCheckout}
-        title="Crea tu cuenta y paga"
-        description="Completa tus datos, define cómo quieres acceder y te llevaremos a un pago seguro."
+        title={accountMode === 'create' && checkoutVerifyStep !== 'done' ? 'Verifica tu correo' : 'Crea tu cuenta y paga'}
+        description={
+          accountMode === 'create' && checkoutVerifyStep === 'email'
+            ? 'Ingresa tu correo. Te enviamos un código de 6 dígitos para confirmarlo antes de continuar.'
+            : accountMode === 'create' && checkoutVerifyStep === 'code'
+            ? `Ingresaste ${form.customer_email}. Revisa tu bandeja y escribe el código de 6 dígitos.`
+            : 'Completa tus datos, define cómo quieres acceder y te llevaremos a un pago seguro.'
+        }
         size="lg"
         onClose={() => {
-          if (!checkoutMutation.isPending) {
+          if (!checkoutMutation.isPending && !checkoutVerifyLoading) {
             setShowCheckout(false);
+            setCheckoutVerifyStep('email');
+            setCheckoutVerifyCode('');
+            setCheckoutVerifyToken('');
+            setCheckoutVerifyError('');
           }
         }}
       >
+        {/* ── Email verification sub-steps (only for new account creation) ── */}
+        {accountMode === 'create' && checkoutVerifyStep !== 'done' ? (
+          <div className="space-y-5 py-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700">
+                {checkoutVerifyStep === 'email' ? 'Tu correo electrónico' : 'Código de verificación'}
+              </label>
+              {checkoutVerifyStep === 'email' ? (
+                <input
+                  type="email"
+                  className="input"
+                  value={form.customer_email}
+                  onChange={(e) => setForm((c) => ({ ...c, customer_email: e.target.value }))}
+                  placeholder="tu@email.com"
+                  autoFocus
+                  required
+                />
+              ) : (
+                <input
+                  ref={checkoutVerifyCodeRef}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  className="input text-center text-2xl font-mono tracking-[0.4em]"
+                  value={checkoutVerifyCode}
+                  onChange={(e) => setCheckoutVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="······"
+                />
+              )}
+            </div>
+            {checkoutVerifyError ? (
+              <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{checkoutVerifyError}</p>
+            ) : null}
+            <div className="flex flex-col gap-2">
+              {checkoutVerifyStep === 'email' ? (
+                <button
+                  type="button"
+                  onClick={handleCheckoutSendCode}
+                  disabled={checkoutVerifyLoading || !form.customer_email}
+                  className="btn-primary flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {checkoutVerifyLoading ? <Loader2 size={16} className="animate-spin" /> : <>Enviar código <ArrowRight size={15} /></>}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleCheckoutConfirmCode}
+                    disabled={checkoutVerifyLoading || checkoutVerifyCode.length !== 6}
+                    className="btn-primary flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {checkoutVerifyLoading ? <Loader2 size={16} className="animate-spin" /> : <>Verificar y continuar <Check size={15} /></>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCheckoutVerifyStep('email'); setCheckoutVerifyCode(''); setCheckoutVerifyError(''); }}
+                    className="text-center text-sm text-surface-500 hover:text-surface-700"
+                  >
+                    Cambiar correo o reenviar código
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => { setAccountMode('existing'); setCheckoutVerifyStep('done'); setCheckoutVerifyToken(''); }}
+                className="text-center text-sm text-surface-500 hover:text-surface-700"
+              >
+                Ya tengo una cuenta, continuar con acceso existente
+              </button>
+            </div>
+          </div>
+        ) : (
         <form
           className="space-y-6"
           onSubmit={(event) => {
@@ -959,6 +1096,7 @@ export default function TenantStorefrontPage() {
             </button>
           </div>
         </form>
+        )}
       </Modal>
     </div>
   );

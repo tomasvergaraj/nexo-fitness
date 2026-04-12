@@ -15,6 +15,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
         "/api/v1/auth/login", "/api/v1/auth/register-gym",
         "/api/v1/auth/refresh", "/api/v1/auth/forgot-password",
         "/api/v1/auth/reset-password",
+        "/api/v1/auth/email-verification/send",
+        "/api/v1/auth/email-verification/confirm",
         "/api/v1/public/webhooks/fintoc",
     }
 
