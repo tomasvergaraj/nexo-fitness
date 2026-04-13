@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -81,6 +82,33 @@ def require_roles(*allowed_roles: str):
             )
         return current_user
     return _check_role
+
+
+def require_plans_write():
+    """Allow owner/admin always; trainer/reception if staff_can_edit_plans is enabled for the tenant."""
+    async def _check(
+        current_user: User = Depends(get_current_user),
+        tenant: Optional[Tenant] = Depends(get_current_tenant),
+    ):
+        if current_user.is_superadmin:
+            return current_user
+        role = getattr(current_user.role, "value", str(current_user.role))
+        if role in ("owner", "admin"):
+            return current_user
+        if role in ("trainer", "reception", "staff"):
+            features: dict = {}
+            try:
+                if tenant and tenant.features:
+                    features = json.loads(tenant.features)
+            except Exception:
+                pass
+            if features.get("staff_can_edit_plans", False):
+                return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para editar planes. El dueño puede habilitar esta función en Configuración → Automatización y seguridad.",
+        )
+    return _check
 
 
 def require_superadmin():

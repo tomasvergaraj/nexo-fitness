@@ -5,7 +5,7 @@ import {
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
   ChevronLeft, ShieldCheck, WalletCards, CalendarCheck2, Tag,
 } from 'lucide-react';
-import NexoBrand from '@/components/branding/NexoBrand';
+import NexoBrand, { NEXO_BRAND_SLOGAN } from '@/components/branding/NexoBrand';
 import { cn } from '@/utils';
 import { useAuthStore } from '@/stores/authStore';
 import type { UserRole } from '@/types';
@@ -88,7 +88,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
               iconClassName="shadow-lg shadow-brand-500/25"
               titleClassName="text-base tracking-tight text-surface-900 dark:text-white"
               accentClassName="text-brand-500"
-              subtitle="Plataforma SaaS"
+              subtitle={NEXO_BRAND_SLOGAN}
               subtitleClassName="font-medium tracking-widest text-[10px] text-surface-400 dark:text-surface-500"
             />
           </NavLink>

@@ -14,16 +14,16 @@ type PlatformPlanFormState = {
   key: string;
   name: string;
   description: string;
-  license_type: 'monthly' | 'annual' | 'perpetual';
+  license_type: 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'perpetual';
   currency: string;
   price: string;
   discount_pct: string;
-  billing_interval: 'month' | 'year' | 'manual';
+  billing_interval: 'month' | 'quarter' | 'semi_annual' | 'year' | 'manual';
   trial_days: string;
   max_members: string;
   max_branches: string;
+  checkout_provider: 'none' | 'stripe' | 'fintoc' | 'webpay';
   stripe_price_id: string;
-  fintoc_enabled: boolean;
   features: string;
   highlighted: boolean;
   is_active: boolean;
@@ -48,8 +48,8 @@ const emptyForm: PlatformPlanFormState = {
   trial_days: '14',
   max_members: '500',
   max_branches: '3',
+  checkout_provider: 'none',
   stripe_price_id: '',
-  fintoc_enabled: false,
   features: 'Panel operativo multicuenta\nClientes, clases y check-in',
   highlighted: false,
   is_active: true,
@@ -75,8 +75,8 @@ function toFormState(plan?: AdminSaaSPlan): PlatformPlanFormState {
     trial_days: String(plan.trial_days),
     max_members: String(plan.max_members),
     max_branches: String(plan.max_branches),
+    checkout_provider: plan.webpay_enabled ? 'webpay' : plan.fintoc_enabled ? 'fintoc' : plan.stripe_price_id ? 'stripe' : 'none',
     stripe_price_id: plan.stripe_price_id ?? '',
-    fintoc_enabled: plan.fintoc_enabled ?? false,
     features: plan.features.join('\n'),
     highlighted: plan.highlighted,
     is_active: plan.is_active,
@@ -92,6 +92,13 @@ function parseFeatures(rawValue: string): string[] {
     .filter(Boolean);
 }
 
+function providerLabel(provider?: AdminSaaSPlan['checkout_provider'] | PlatformPlanFormState['checkout_provider'] | null) {
+  if (provider === 'webpay') return 'Webpay';
+  if (provider === 'fintoc') return 'Fintoc';
+  if (provider === 'stripe') return 'Stripe';
+  return 'Sin checkout';
+}
+
 function toCreatePayload(form: PlatformPlanFormState): AdminSaaSPlanCreateRequest {
   return {
     key: form.key.trim().toLowerCase(),
@@ -105,8 +112,9 @@ function toCreatePayload(form: PlatformPlanFormState): AdminSaaSPlanCreateReques
     trial_days: Number(form.trial_days),
     max_members: Number(form.max_members),
     max_branches: Number(form.max_branches),
-    stripe_price_id: form.stripe_price_id.trim() || null,
-    fintoc_enabled: form.fintoc_enabled,
+    stripe_price_id: form.checkout_provider === 'stripe' ? form.stripe_price_id.trim() || null : null,
+    fintoc_enabled: form.checkout_provider === 'fintoc',
+    webpay_enabled: form.checkout_provider === 'webpay',
     features: parseFeatures(form.features),
     highlighted: form.highlighted,
     is_active: form.is_active,
@@ -127,8 +135,9 @@ function toUpdatePayload(form: PlatformPlanFormState): AdminSaaSPlanUpdateReques
     trial_days: Number(form.trial_days),
     max_members: Number(form.max_members),
     max_branches: Number(form.max_branches),
-    stripe_price_id: form.stripe_price_id.trim() || null,
-    fintoc_enabled: form.fintoc_enabled,
+    stripe_price_id: form.checkout_provider === 'stripe' ? form.stripe_price_id.trim() || null : null,
+    fintoc_enabled: form.checkout_provider === 'fintoc',
+    webpay_enabled: form.checkout_provider === 'webpay',
     features: parseFeatures(form.features),
     highlighted: form.highlighted,
     is_active: form.is_active,
@@ -335,7 +344,7 @@ export default function PlatformPlansPage() {
                   </p>
                 )}
                 <p className={cn('mt-1 text-xs uppercase tracking-[0.18em]', plan.highlighted ? 'text-white/70' : 'text-surface-500')}>
-                  {plan.billing_interval === 'year' ? 'Cobro anual' : plan.billing_interval === 'manual' ? 'Manual' : 'Cobro mensual'}
+                  {plan.billing_interval === 'year' ? 'Cobro anual' : plan.billing_interval === 'quarter' ? 'Cobro trimestral' : plan.billing_interval === 'semi_annual' ? 'Cobro semestral' : plan.billing_interval === 'manual' ? 'Manual' : 'Cobro mensual'}
                 </p>
               </div>
               <div className={cn('text-right text-xs', plan.highlighted ? 'text-white/80' : 'text-surface-500')}>
@@ -354,7 +363,7 @@ export default function PlatformPlansPage() {
               </span>
               <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', plan.highlighted ? 'bg-white/15 text-white' : 'bg-surface-100 text-surface-700 dark:bg-surface-800 dark:text-surface-300')}>
                 {plan.checkout_enabled
-                  ? `Cobro: ${plan.checkout_provider === 'fintoc' ? 'Fintoc' : 'Stripe'}`
+                  ? `Cobro: ${providerLabel(plan.checkout_provider)}`
                   : 'Cobro pendiente'}
               </span>
             </div>
@@ -363,10 +372,10 @@ export default function PlatformPlansPage() {
               <div className="flex items-center justify-between text-sm">
                 <span className={plan.highlighted ? 'text-white/80' : 'text-surface-500'}>Pasarela</span>
                 <span className={cn('text-xs font-medium', !plan.highlighted && 'text-surface-700 dark:text-surface-300')}>
-                  {plan.fintoc_enabled ? 'Fintoc' : plan.stripe_price_id ? 'Stripe' : 'Sin checkout'}
+                  {providerLabel(plan.checkout_provider)}
                 </span>
               </div>
-              {!plan.fintoc_enabled && (
+              {plan.checkout_provider === 'stripe' && (
                 <div className="flex items-center justify-between text-sm">
                   <span className={plan.highlighted ? 'text-white/80' : 'text-surface-500'}>Stripe price ID</span>
                   <span className={cn('max-w-[180px] truncate font-mono text-xs', !plan.highlighted && 'text-surface-700 dark:text-surface-300')}>
@@ -511,6 +520,8 @@ export default function PlatformPlansPage() {
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Licencia</label>
               <select className="input" value={form.license_type} onChange={(event) => setForm((current) => ({ ...current, license_type: event.target.value as PlatformPlanFormState['license_type'] }))}>
                 <option value="monthly">Mensual</option>
+                <option value="quarterly">Trimestral</option>
+                <option value="semi_annual">Semestral</option>
                 <option value="annual">Anual</option>
                 <option value="perpetual">Perpetua</option>
               </select>
@@ -519,6 +530,8 @@ export default function PlatformPlansPage() {
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Cobro</label>
               <select className="input" value={form.billing_interval} onChange={(event) => setForm((current) => ({ ...current, billing_interval: event.target.value as PlatformPlanFormState['billing_interval'] }))}>
                 <option value="month">Mensual</option>
+                <option value="quarter">Trimestral</option>
+                <option value="semi_annual">Semestral</option>
                 <option value="year">Anual</option>
                 <option value="manual">Manual</option>
               </select>
@@ -562,26 +575,21 @@ export default function PlatformPlansPage() {
           <div className="rounded-2xl border border-surface-200 dark:border-surface-800 p-4 space-y-4">
             <p className="text-sm font-semibold text-surface-700 dark:text-surface-300">Pasarela de pago</p>
 
-            {/* Fintoc toggle */}
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={form.fintoc_enabled}
-                onChange={(event) => setForm((current) => ({ ...current, fintoc_enabled: event.target.checked }))}
-              />
-              <div>
-                <span className="block text-sm font-medium text-surface-700 dark:text-surface-300">
-                  Fintoc (transferencia bancaria CLP)
-                </span>
-                <span className="block text-xs text-surface-500 mt-0.5">
-                  Al activar, el checkout usara Fintoc en lugar de Stripe. Requiere FINTOC_SECRET_KEY en el servidor.
-                </span>
-              </div>
-            </label>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Proveedor</label>
+              <select
+                className="input"
+                value={form.checkout_provider}
+                onChange={(event) => setForm((current) => ({ ...current, checkout_provider: event.target.value as PlatformPlanFormState['checkout_provider'] }))}
+              >
+                <option value="none">Solo trial / sin checkout</option>
+                <option value="stripe">Stripe</option>
+                <option value="fintoc">Fintoc</option>
+                <option value="webpay">Webpay</option>
+              </select>
+            </div>
 
-            {/* Stripe price ID — solo si Fintoc no está activo */}
-            {!form.fintoc_enabled && (
+            {form.checkout_provider === 'stripe' && (
               <div>
                 <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Stripe price ID</label>
                 <input
@@ -593,18 +601,32 @@ export default function PlatformPlansPage() {
               </div>
             )}
 
+            <div className="rounded-xl border border-surface-200/60 bg-surface-50 px-3 py-3 text-xs text-surface-500 dark:border-surface-800 dark:bg-surface-950/40 dark:text-surface-400">
+              {form.checkout_provider === 'stripe'
+                ? 'Stripe usa el price ID del plan y las credenciales globales del servidor.'
+                : form.checkout_provider === 'fintoc'
+                  ? 'Fintoc usa FINTOC_SECRET_KEY del backend y checkout hosted para transferencias bancarias.'
+                  : form.checkout_provider === 'webpay'
+                    ? 'Webpay usa WEBPAY_COMMERCE_CODE y WEBPAY_API_KEY del backend para cobrar el SaaS del super admin.'
+                    : 'Sin pasarela: el plan puede publicarse, pero no iniciará un checkout automático.'}
+            </div>
+
             {/* Indicador del proveedor activo */}
             <div className={`rounded-xl px-3 py-2.5 text-xs font-medium flex items-center gap-2 ${
-              form.fintoc_enabled
+              form.checkout_provider === 'fintoc'
                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-300'
-                : form.stripe_price_id.trim()
+                : form.checkout_provider === 'webpay'
+                  ? 'bg-sky-50 text-sky-700 dark:bg-sky-950/20 dark:text-sky-300'
+                  : form.checkout_provider === 'stripe' && form.stripe_price_id.trim()
                   ? 'bg-violet-50 text-violet-700 dark:bg-violet-950/20 dark:text-violet-300'
                   : 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400'
             }`}>
               <WalletCards size={14} />
-              {form.fintoc_enabled
+              {form.checkout_provider === 'fintoc'
                 ? 'Cobro activo vía Fintoc'
-                : form.stripe_price_id.trim()
+                : form.checkout_provider === 'webpay'
+                  ? 'Cobro activo vía Webpay'
+                  : form.checkout_provider === 'stripe' && form.stripe_price_id.trim()
                   ? 'Cobro activo vía Stripe'
                   : 'Sin cobro configurado, solo prueba'}
             </div>
@@ -636,7 +658,11 @@ export default function PlatformPlansPage() {
             <div className="rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">
               <div className="flex items-center gap-2 text-sm text-surface-500 dark:text-surface-400">
                 <WalletCards size={16} />
-                {form.stripe_price_id.trim() ? 'Cobro posible' : 'Cobro pendiente'}
+                {form.checkout_provider === 'none'
+                  ? 'Sin checkout'
+                  : form.checkout_provider === 'stripe'
+                    ? (form.stripe_price_id.trim() ? 'Cobro posible' : 'Falta Stripe price ID')
+                    : 'Cobro posible'}
               </div>
             </div>
           </div>

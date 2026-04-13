@@ -42,12 +42,16 @@ def build_public_checkout_urls(
     session_reference: str,
     success_url: str,
     cancel_url: str,
+    amount: str | None = None,
+    promo_code_id: str | None = None,
 ) -> tuple[str, str]:
     checkout_url = _merge_query_params(
         checkout_base_url,
         {
             "plan_id": plan_id,
             "session": session_reference,
+            "amount": amount,
+            "promo_code_id": promo_code_id,
             "success_url": success_url,
             "cancel_url": cancel_url,
         },
@@ -55,6 +59,8 @@ def build_public_checkout_urls(
     payment_link_url = _merge_query_params(
         _append_path_segment(checkout_base_url, f"link/{session_reference}"),
         {
+            "amount": amount,
+            "promo_code_id": promo_code_id,
             "success_url": success_url,
             "cancel_url": cancel_url,
         },

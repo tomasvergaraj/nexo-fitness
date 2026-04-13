@@ -22,6 +22,7 @@ const initialForm = {
   owner_last_name: '',
   owner_email: '',
   owner_password: '',
+  owner_password_confirm: '',
 };
 
 // Verification step: 'email' → send code, 'code' → enter OTP, 'done' → verified
@@ -83,6 +84,8 @@ export default function RegisterPage() {
   }, []);
 
   const activePlan = plans.find((plan) => plan.key === selectedPlan);
+  const ownerPasswordMismatch =
+    form.owner_password_confirm.length > 0 && form.owner_password !== form.owner_password_confirm;
 
   const formatPrice = (plan: SaaSPlan) =>
     new Intl.NumberFormat('es-CL', {
@@ -140,13 +143,18 @@ export default function RegisterPage() {
       setError('Selecciona un plan para continuar');
       return;
     }
+    if (form.owner_password !== form.owner_password_confirm) {
+      setError('Las contraseñas del propietario no coinciden.');
+      return;
+    }
 
     setLoading(true);
     setError('');
 
     try {
+      const { owner_password_confirm: _ownerPasswordConfirm, ...signupPayload } = form;
       const response = await billingApi.signup({
-        ...form,
+        ...signupPayload,
         license_type: activePlan.license_type,
         plan_key: activePlan.key,
         verification_token: verifyToken || undefined,
@@ -527,6 +535,22 @@ export default function RegisterPage() {
                     <input type="password" className="input bg-white/5 text-white" value={form.owner_password} onChange={(event) => updateField('owner_password', event.target.value)} required />
                     <p className="mt-2 text-xs text-surface-500">Este usuario queda listo para entrar al panel apenas se cree la cuenta.</p>
                   </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-2 block text-sm font-medium text-surface-300">Confirmar contraseña</label>
+                    <input
+                      type="password"
+                      className={cn(
+                        'input bg-white/5 text-white',
+                        ownerPasswordMismatch && 'border-red-400/60 focus:border-red-400 focus:ring-red-500/30',
+                      )}
+                      value={form.owner_password_confirm}
+                      onChange={(event) => updateField('owner_password_confirm', event.target.value)}
+                      required
+                    />
+                    <p className={cn('mt-2 text-xs text-surface-500', ownerPasswordMismatch && 'text-red-300')}>
+                      {ownerPasswordMismatch ? 'Debe coincidir exactamente con la contraseña anterior.' : 'Repite la contraseña para evitar errores al crear la cuenta principal.'}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-black/10 px-4 py-4">
@@ -566,12 +590,12 @@ export default function RegisterPage() {
 
                 <motion.button
                   type="submit"
-                  disabled={loading || plansLoading || !activePlan}
-                  whileHover={{ scale: loading || plansLoading || !activePlan ? 1 : 1.01 }}
-                  whileTap={{ scale: loading || plansLoading || !activePlan ? 1 : 0.98 }}
+                  disabled={loading || plansLoading || !activePlan || ownerPasswordMismatch}
+                  whileHover={{ scale: loading || plansLoading || !activePlan || ownerPasswordMismatch ? 1 : 1.01 }}
+                  whileTap={{ scale: loading || plansLoading || !activePlan || ownerPasswordMismatch ? 1 : 0.98 }}
                   className={cn(
                     'flex min-w-[280px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-4 font-semibold text-white shadow-xl shadow-brand-500/25',
-                    (loading || plansLoading || !activePlan) && 'cursor-not-allowed opacity-80',
+                    (loading || plansLoading || !activePlan || ownerPasswordMismatch) && 'cursor-not-allowed opacity-80',
                   )}
                 >
                   {loading || plansLoading ? (

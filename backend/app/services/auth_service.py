@@ -5,6 +5,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+import structlog
+
+_auth_logger = structlog.get_logger("auth")
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,19 +45,60 @@ class AuthService:
         from app.services.tenant_access_service import enforce_tenant_access  # local to avoid circular
         await enforce_tenant_access(db, tenant, user, now=datetime.now(timezone.utc))
 
+    _DISPOSABLE_DOMAINS: frozenset[str] = frozenset({
+        "mailinator.com", "guerrillamail.com", "guerrillamail.info", "guerrillamail.biz",
+        "guerrillamail.de", "guerrillamail.net", "guerrillamail.org", "sharklasers.com",
+        "grr.la", "spam4.me", "trashmail.com", "trashmail.me", "trashmail.at", "trashmail.io",
+        "fakeinbox.com", "maildrop.cc", "dispostable.com", "yopmail.com", "yopmail.fr",
+        "tempmail.com", "tempr.email", "discard.email", "10minutemail.com", "10minutemail.net",
+        "minutemail.com", "mailnull.com", "spamspot.com", "getairmail.com", "filzmail.com",
+        "mailnesia.com", "throwam.com", "spamgourmet.com", "temp-mail.org", "throwam.com",
+        "getnada.com", "mailsac.com", "inboxbear.com", "spamfree24.org", "trashmail.net",
+        "mytemp.email", "burnermail.io", "tempinbox.com", "incognitomail.com",
+    })
+
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        """Strip +alias and Gmail dots to detect duplicate registrations."""
+        email = email.lower().strip()
+        local, _, domain = email.partition("@")
+        local = local.split("+")[0]
+        if domain in {"gmail.com", "googlemail.com"}:
+            local = local.replace(".", "")
+            domain = "gmail.com"
+        return f"{local}@{domain}"
+
     @staticmethod
     async def _ensure_registration_is_unique(db: AsyncSession, data: TenantOnboardingRequest) -> None:
         existing = await db.execute(select(Tenant).where(Tenant.slug == data.slug))
         if existing.scalar_one_or_none():
             raise ValueError(f"El slug '{data.slug}' ya está en uso")
 
-        existing_user = await db.execute(select(User).where(User.email == data.owner_email))
+        email = data.owner_email.lower().strip()
+        _, _, domain = email.partition("@")
+
+        if domain in AuthService._DISPOSABLE_DOMAINS:
+            raise ValueError("No se permiten correos temporales o desechables.")
+
+        existing_user = await db.execute(select(User).where(User.email == email))
         if existing_user.scalar_one_or_none():
             raise ValueError("El correo ya está registrado")
 
+        normalized = AuthService._normalize_email(email)
+        if normalized != email:
+            existing_norm = await db.execute(select(User).where(User.email == normalized))
+            if existing_norm.scalar_one_or_none():
+                raise ValueError("El correo ya está registrado")
+
     @staticmethod
     def _resolve_license_type(raw_value: str) -> LicenseType:
-        license_map = {"monthly": LicenseType.MONTHLY, "annual": LicenseType.ANNUAL, "perpetual": LicenseType.PERPETUAL}
+        license_map = {
+            "monthly": LicenseType.MONTHLY,
+            "quarterly": LicenseType.QUARTERLY,
+            "semi_annual": LicenseType.SEMI_ANNUAL,
+            "annual": LicenseType.ANNUAL,
+            "perpetual": LicenseType.PERPETUAL,
+        }
         return license_map.get(raw_value, LicenseType.MONTHLY)
 
     @staticmethod
@@ -144,6 +189,7 @@ class AuthService:
         user = result.scalar_one_or_none()
 
         if not user or not verify_password(data.password, user.hashed_password):
+            _auth_logger.warning("login_failed", email=data.email)
             raise ValueError("Correo o contraseña incorrectos")
 
         # Build tokens unconditionally — credentials are valid

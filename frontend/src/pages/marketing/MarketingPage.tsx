@@ -71,7 +71,7 @@ const emptyForm: CampaignForm = {
   channel: 'email',
   status: 'draft',
   notification_type: 'info',
-  action_url: 'nexofitness://store',
+  action_url: '',
   send_push: true,
   total_recipients: '0',
   total_sent: '0',
@@ -162,7 +162,7 @@ function toForm(campaign?: Campaign): CampaignForm {
     channel: campaign.channel,
     status: campaign.status,
     notification_type: campaign.notification_type,
-    action_url: campaign.action_url ?? 'nexofitness://store',
+    action_url: campaign.action_url ?? '',
     send_push: campaign.send_push,
     total_recipients: String(campaign.total_recipients),
     total_sent: String(campaign.total_sent),
@@ -180,7 +180,7 @@ function createBroadcastForm(campaign?: Campaign): BroadcastForm {
     title: campaign?.subject?.trim() || campaign?.name || 'Nueva campaña',
     message: campaign?.content ?? '',
     type: campaign?.notification_type ?? 'info',
-    action_url: campaign?.action_url ?? 'nexofitness://store',
+    action_url: campaign?.action_url ?? '',
     send_push: campaign?.send_push ?? true,
     user_ids: [],
     segment_filter: campaign?.segment_filter ? normalizeSegmentFilter(campaign.segment_filter) : undefined,
@@ -830,13 +830,13 @@ export default function MarketingPage() {
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
-                  Abrir al tocar el aviso
+                  Abrir al tocar el aviso (opcional)
                 </label>
                 <input
                   className="input"
                   value={form.action_url}
                   onChange={(e) => setForm((f) => ({ ...f, action_url: e.target.value }))}
-                  placeholder="Sección de la app o URL personalizada"
+                  placeholder="Déjalo vacío si la campaña solo debe informar"
                 />
               </div>
             </div>
@@ -1083,13 +1083,13 @@ export default function MarketingPage() {
           {/* Destino */}
           <div>
             <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
-              Abrir al tocar el aviso
+              Abrir al tocar el aviso (opcional)
             </label>
             <input
               className="input"
               value={broadcastForm.action_url}
               onChange={(e) => setBroadcastForm((f) => ({ ...f, action_url: e.target.value }))}
-              placeholder="Sección de la app o URL personalizada"
+              placeholder="Déjalo vacío si el aviso solo debe informar"
             />
             <div className="mt-2 flex flex-wrap gap-2">
               {actionUrlPresets.map((preset) => (

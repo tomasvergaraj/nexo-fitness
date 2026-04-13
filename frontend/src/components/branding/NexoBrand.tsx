@@ -1,6 +1,8 @@
 import { cn } from '@/utils';
 
 const SYSTEM_ICON_URL = '/icon.png?v=20260409-2';
+export const NEXO_BRAND_SLOGAN = 'Impulsa tu negocio fitness';
+export const NEXO_BRAND_VALUE_PROP = 'Vende más planes, automatiza tu operación y fideliza a tus miembros desde un solo lugar.';
 
 type NexoBrandIconProps = {
   size?: number;

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.integrations.payments.stripe_service import stripe_service
 from app.integrations.payments.fintoc_service import fintoc_service
+from app.integrations.payments.webpay_service import webpay_service
 from app.models.platform import SaaSPlan
 from app.models.tenant import LicenseType
 from app.schemas.billing import (
@@ -41,6 +42,7 @@ class SaaSPlanDefinition:
     stripe_price_id: str
     discount_pct: Optional[Decimal] = None
     fintoc_enabled: bool = False
+    webpay_enabled: bool = False
     highlighted: bool = False
     is_active: bool = True
     is_public: bool = True
@@ -61,11 +63,14 @@ class SaaSPlanDefinition:
     def checkout_enabled(self) -> bool:
         stripe_ok = bool(self.stripe_price_id and stripe_service.is_configured())
         fintoc_ok = bool(self.fintoc_enabled and fintoc_service.is_configured())
-        return stripe_ok or fintoc_ok
+        webpay_ok = bool(self.webpay_enabled and webpay_service.is_configured())
+        return stripe_ok or fintoc_ok or webpay_ok
 
     @property
     def checkout_provider(self) -> Optional[str]:
-        """Returns the active checkout provider for this plan, preferring Fintoc when both are set."""
+        """Returns the active checkout provider for this plan."""
+        if self.webpay_enabled and webpay_service.is_configured():
+            return "webpay"
         if self.fintoc_enabled and fintoc_service.is_configured():
             return "fintoc"
         if self.stripe_price_id and stripe_service.is_configured():
@@ -111,6 +116,7 @@ class SaaSPlanDefinition:
             checkout_provider=self.checkout_provider,
             stripe_price_id=self.stripe_price_id or None,
             fintoc_enabled=self.fintoc_enabled,
+            webpay_enabled=self.webpay_enabled,
             is_active=self.is_active,
             is_public=self.is_public,
             sort_order=self.sort_order,
@@ -153,7 +159,7 @@ def default_saas_plan_definitions() -> list[SaaSPlanDefinition]:
         SaaSPlanDefinition(
             key="monthly",
             name="Mensual",
-            description="Ideal para gimnasios que quieren arrancar con trial y activar pago online en el mismo flujo.",
+            description="Ideal para empezar. Acceso completo a todas las funciones con 14 días gratis.",
             license_type=LicenseType.MONTHLY,
             price=Decimal(settings.SAAS_MONTHLY_PRICE),
             currency=settings.SAAS_CURRENCY,
@@ -162,19 +168,75 @@ def default_saas_plan_definitions() -> list[SaaSPlanDefinition]:
             max_members=500,
             max_branches=3,
             features=(
-                "Dashboard operativo multitenant",
+                "Hasta 500 miembros activos",
+                "Hasta 3 sedes",
                 "Clientes, clases y check-in",
-                "Pagos internos y reportes",
-                "Trial automatico y checkout Stripe",
+                "Pagos y cobros internos",
+                "Tienda online y cobro público",
+                "Reportes y estadísticas",
+                f"{settings.SAAS_TRIAL_DAYS} días de prueba gratis",
             ),
             stripe_price_id=settings.STRIPE_SAAS_MONTHLY_PRICE_ID,
-            highlighted=True,
+            webpay_enabled=True,
+            highlighted=False,
             sort_order=1,
+        ),
+        SaaSPlanDefinition(
+            key="quarterly",
+            name="Trimestral",
+            description="Paga 3 meses y ahorra casi 10.000 CLP. Sin ataduras de largo plazo.",
+            license_type=LicenseType.QUARTERLY,
+            price=Decimal(settings.SAAS_QUARTERLY_PRICE),
+            currency=settings.SAAS_CURRENCY,
+            billing_interval="quarter",
+            trial_days=settings.SAAS_TRIAL_DAYS,
+            max_members=500,
+            max_branches=3,
+            features=(
+                "Hasta 500 miembros activos",
+                "Hasta 3 sedes",
+                "Clientes, clases y check-in",
+                "Pagos y cobros internos",
+                "Tienda online y cobro público",
+                "Reportes y estadísticas",
+                "~9.5% descuento vs mensual",
+                f"{settings.SAAS_TRIAL_DAYS} días de prueba gratis",
+            ),
+            stripe_price_id=settings.STRIPE_SAAS_QUARTERLY_PRICE_ID,
+            webpay_enabled=True,
+            highlighted=True,
+            sort_order=2,
+        ),
+        SaaSPlanDefinition(
+            key="semi_annual",
+            name="Semestral",
+            description="6 meses con casi 25.000 CLP de ahorro. El equilibrio entre flexibilidad y precio.",
+            license_type=LicenseType.SEMI_ANNUAL,
+            price=Decimal(settings.SAAS_SEMI_ANNUAL_PRICE),
+            currency=settings.SAAS_CURRENCY,
+            billing_interval="semi_annual",
+            trial_days=settings.SAAS_TRIAL_DAYS,
+            max_members=500,
+            max_branches=3,
+            features=(
+                "Hasta 500 miembros activos",
+                "Hasta 3 sedes",
+                "Clientes, clases y check-in",
+                "Pagos y cobros internos",
+                "Tienda online y cobro público",
+                "Reportes y estadísticas",
+                "~11.9% descuento vs mensual",
+                f"{settings.SAAS_TRIAL_DAYS} días de prueba gratis",
+            ),
+            stripe_price_id=settings.STRIPE_SAAS_SEMI_ANNUAL_PRICE_ID,
+            webpay_enabled=True,
+            highlighted=False,
+            sort_order=3,
         ),
         SaaSPlanDefinition(
             key="annual",
             name="Anual",
-            description="Mejor precio para operaciones estables que quieren crecer con mas capacidad y menor churn.",
+            description="2 meses gratis al pagar el año. Más capacidad para gimnasios en crecimiento.",
             license_type=LicenseType.ANNUAL,
             price=Decimal(settings.SAAS_ANNUAL_PRICE),
             currency=settings.SAAS_CURRENCY,
@@ -183,13 +245,15 @@ def default_saas_plan_definitions() -> list[SaaSPlanDefinition]:
             max_members=1500,
             max_branches=10,
             features=(
-                "Todo el plan mensual",
-                "Mayor capacidad de sedes y miembros",
-                "Prioridad para expansion comercial",
-                "Costo anual con descuento",
+                "Hasta 1500 miembros activos",
+                "Hasta 10 sedes",
+                "Todo lo del plan mensual",
+                "2 meses gratis vs pago mensual",
+                f"{settings.SAAS_TRIAL_DAYS} días de prueba gratis",
             ),
             stripe_price_id=settings.STRIPE_SAAS_ANNUAL_PRICE_ID,
-            sort_order=2,
+            webpay_enabled=True,
+            sort_order=4,
         ),
     ]
 
@@ -211,6 +275,8 @@ def plan_to_feature_flags(plan: SaaSPlanDefinition) -> dict[str, object]:
         "max_members": plan.max_members,
         "max_branches": plan.max_branches,
         "checkout_enabled": plan.checkout_enabled,
+        "fintoc_enabled": plan.fintoc_enabled,
+        "webpay_enabled": plan.webpay_enabled,
     }
 
 
@@ -239,6 +305,7 @@ def definition_from_record(record: SaaSPlan) -> SaaSPlanDefinition:
         features=tuple(parse_plan_features(record.features)),
         stripe_price_id=record.stripe_price_id or (fallback_plan.stripe_price_id if fallback_plan else ""),
         fintoc_enabled=bool(getattr(record, "fintoc_enabled", False)),
+        webpay_enabled=bool(getattr(record, "webpay_enabled", False)),
         highlighted=record.highlighted,
         is_active=record.is_active,
         is_public=record.is_public,
@@ -281,6 +348,7 @@ async def ensure_default_saas_plans(db: AsyncSession) -> None:
                 is_active=plan.is_active,
                 is_public=plan.is_public,
                 sort_order=plan.sort_order,
+                webpay_enabled=plan.webpay_enabled,
             )
         )
 
@@ -350,6 +418,7 @@ async def create_admin_saas_plan(db: AsyncSession, data: AdminSaaSPlanCreateRequ
         features=serialize_plan_features(data.features),
         stripe_price_id=(data.stripe_price_id or "").strip() or None,
         fintoc_enabled=data.fintoc_enabled,
+        webpay_enabled=data.webpay_enabled,
         highlighted=data.highlighted,
         is_active=data.is_active,
         is_public=data.is_public,
@@ -390,6 +459,9 @@ async def update_admin_saas_plan(
             setattr(record, key, cleaned or None)
             continue
         if key == "fintoc_enabled":
+            setattr(record, key, bool(value))
+            continue
+        if key == "webpay_enabled":
             setattr(record, key, bool(value))
             continue
         if key in {"name", "description"} and value is not None:

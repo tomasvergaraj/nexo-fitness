@@ -28,6 +28,8 @@ def test_build_public_checkout_urls_preserve_existing_query_and_add_return_urls(
         session_reference="session_456",
         success_url="nexofitness://checkout/success",
         cancel_url="nexofitness://checkout/cancel",
+        amount="27990",
+        promo_code_id="promo_789",
     )
 
     checkout_parts = urlsplit(checkout_url)
@@ -40,11 +42,15 @@ def test_build_public_checkout_urls_preserve_existing_query_and_add_return_urls(
     assert checkout_query["channel"] == ["storefront"]
     assert checkout_query["plan_id"] == ["plan_123"]
     assert checkout_query["session"] == ["session_456"]
+    assert checkout_query["amount"] == ["27990"]
+    assert checkout_query["promo_code_id"] == ["promo_789"]
     assert checkout_query["success_url"] == ["nexofitness://checkout/success"]
     assert checkout_query["cancel_url"] == ["nexofitness://checkout/cancel"]
 
     assert payment_parts.path == "/start/link/session_456"
     assert payment_query["tenant"] == ["nexo"]
     assert payment_query["channel"] == ["storefront"]
+    assert payment_query["amount"] == ["27990"]
+    assert payment_query["promo_code_id"] == ["promo_789"]
     assert payment_query["success_url"] == ["nexofitness://checkout/success"]
     assert payment_query["cancel_url"] == ["nexofitness://checkout/cancel"]

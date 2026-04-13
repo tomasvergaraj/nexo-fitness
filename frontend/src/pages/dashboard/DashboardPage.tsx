@@ -1,23 +1,67 @@
 import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   DollarSign, Users, CalendarDays, ClipboardCheck, AlertTriangle, TrendingUp, UserCheck, ArrowUpRight,
-  Cake, Clock, CreditCard, User,
+  Cake, Clock, CreditCard, Rocket, User,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
-import { dashboardApi } from '@/services/api';
+import { billingApi, dashboardApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import { cn, formatCurrency, getApiError, parseApiNumber } from '@/utils';
-import type { DashboardMetrics, DayPanel } from '@/types';
+import type { DashboardMetrics, DayPanel, SaaSPlan, TenantBilling } from '@/types';
+
+function billingStatusLabel(status?: TenantBilling['status']) {
+  if (status === 'trial') return 'En prueba';
+  if (status === 'active') return 'Activa';
+  if (status === 'expired') return 'Vencida';
+  if (status === 'cancelled') return 'Cancelada';
+  if (status === 'suspended') return 'Suspendida';
+  return 'Sin estado';
+}
+
+function billingStatusBadge(status?: TenantBilling['status']) {
+  if (status === 'trial') return 'badge badge-warning';
+  if (status === 'active') return 'badge badge-success';
+  if (status === 'expired') return 'badge badge-danger';
+  if (status === 'cancelled' || status === 'suspended') return 'badge badge-neutral';
+  return 'badge badge-neutral';
+}
+
+function licenseTypeLabel(licenseType?: TenantBilling['license_type']) {
+  if (licenseType === 'annual') return 'Anual';
+  if (licenseType === 'perpetual') return 'Perpetua';
+  return 'Mensual';
+}
+
+function billingDateLabel(subscription?: TenantBilling | null) {
+  if (!subscription) return 'Sin fecha disponible';
+  if (subscription.status === 'trial' && subscription.trial_ends_at) {
+    return `Prueba hasta ${new Date(subscription.trial_ends_at).toLocaleDateString('es-CL')}`;
+  }
+  if (subscription.license_expires_at) {
+    return `Vigente hasta ${new Date(subscription.license_expires_at).toLocaleDateString('es-CL')}`;
+  }
+  if (subscription.license_type === 'perpetual') {
+    return 'Acceso sin vencimiento';
+  }
+  return 'Fecha de vigencia no informada';
+}
+
+function usageRatio(used: number, limit?: number) {
+  if (!limit || limit <= 0) return 0;
+  return Math.min((used / limit) * 100, 100);
+}
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
+  const canViewSubscription = user?.role === 'owner' || user?.role === 'admin';
 
   if (user?.role === 'superadmin') {
     return <Navigate to="/platform/tenants" replace />;
@@ -42,6 +86,34 @@ export default function DashboardPage() {
     refetchInterval: 60_000,
   });
 
+  const { data: subscriptionData } = useQuery<TenantBilling>({
+    queryKey: ['tenant-current-subscription'],
+    queryFn: async () => (await billingApi.currentSubscription()).data,
+    enabled: canViewSubscription,
+    retry: false,
+  });
+
+  const { data: publicPlans = [] } = useQuery<SaaSPlan[]>({
+    queryKey: ['platform-public-plans'],
+    queryFn: async () => (await billingApi.listPublicPlans()).data,
+    enabled: canViewSubscription,
+    staleTime: 60_000,
+  });
+
+  const upgradePlan = useMutation({
+    mutationFn: async (planKey: string) => (await billingApi.reactivate(planKey)).data as { checkout_url?: string },
+    onSuccess: (payload) => {
+      if (payload.checkout_url) {
+        window.location.href = payload.checkout_url;
+        return;
+      }
+      toast.error('No encontramos un checkout disponible para mejorar tu plan.');
+    },
+    onError: (error: unknown) => {
+      toast.error(getApiError(error, 'No pudimos iniciar el upgrade del plan.'));
+    },
+  });
+
   const revenueData = useMemo(() => ([
     { label: 'Hoy', value: parseApiNumber(data?.revenue_today) },
     { label: 'Semana', value: parseApiNumber(data?.revenue_week) },
@@ -54,6 +126,34 @@ export default function DashboardPage() {
     { label: 'Check-ins', value: data?.checkins_today ?? 0 },
   ]), [data?.checkins_today, data?.classes_today, data?.reservations_today]);
 
+  const nextUpgradePlan = useMemo(() => {
+    if (!subscriptionData) {
+      return null;
+    }
+
+    return [...publicPlans]
+      .filter((plan) => plan.checkout_enabled && plan.key !== subscriptionData.plan_key)
+      .sort((left, right) => {
+        const leftCapacity = left.max_members + left.max_branches * 1000;
+        const rightCapacity = right.max_members + right.max_branches * 1000;
+        return leftCapacity - rightCapacity;
+      })
+      .find((plan) =>
+        plan.max_members > (subscriptionData.max_members ?? 0)
+        || plan.max_branches > (subscriptionData.max_branches ?? 0),
+      ) ?? null;
+  }, [publicPlans, subscriptionData]);
+
+  const quotaNeedsAttention = Boolean(
+    subscriptionData
+      && (
+        subscriptionData.over_client_limit
+        || subscriptionData.over_branch_limit
+        || subscriptionData.remaining_client_slots === 0
+        || subscriptionData.remaining_branch_slots === 0
+      ),
+  );
+
   return (
     <motion.div
       variants={staggerContainer}
@@ -65,7 +165,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Dashboard</h1>
           <p className="mt-1 text-sm text-surface-500">
-            {isLoading ? 'Cargando métricas reales del gimnasio...' : 'Resumen operativo conectado al backend'}
+            {isLoading ? 'Cargando métricas del negocio...' : 'Resumen operativo del negocio'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -94,6 +194,168 @@ export default function DashboardPage() {
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
           {dashboardError}
         </div>
+      ) : null}
+
+      {canViewSubscription && subscriptionData ? (
+        <motion.div
+          variants={fadeInUp}
+          className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-brand-200/50 bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-brand-700 dark:border-brand-900/40 dark:bg-brand-950/20 dark:text-brand-300">
+                <CreditCard size={14} />
+                Plan Contratado
+              </div>
+              <h2 className="mt-3 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {subscriptionData.plan_name || 'Sin plan asignado'}
+              </h2>
+              <p className="mt-1 text-sm text-surface-500">
+                {licenseTypeLabel(subscriptionData.license_type)} · {billingDateLabel(subscriptionData)}
+              </p>
+            </div>
+            <span className={billingStatusBadge(subscriptionData.status)}>
+              {billingStatusLabel(subscriptionData.status)}
+            </span>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Clave</p>
+              <p className="mt-1 font-semibold text-surface-900 dark:text-white">{subscriptionData.plan_key}</p>
+            </div>
+            <div className="rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Miembros incluidos</p>
+              <p className="mt-1 font-semibold text-surface-900 dark:text-white">
+                {subscriptionData.max_members ? subscriptionData.max_members.toLocaleString('es-CL') : 'Sin límite visible'}
+              </p>
+            </div>
+            <div className="rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Sucursales incluidas</p>
+              <p className="mt-1 font-semibold text-surface-900 dark:text-white">
+                {subscriptionData.max_branches ?? 'Sin límite visible'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-surface-200/70 bg-surface-50 px-4 py-4 dark:border-surface-800/70 dark:bg-surface-800/30">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Uso de clientes</p>
+                  <p className="mt-1 font-semibold text-surface-900 dark:text-white">
+                    {subscriptionData.usage_active_clients.toLocaleString('es-CL')} / {(subscriptionData.max_members ?? 0).toLocaleString('es-CL')}
+                  </p>
+                </div>
+                <span className={cn(
+                  'badge',
+                  subscriptionData.over_client_limit
+                    ? 'badge-danger'
+                    : subscriptionData.remaining_client_slots === 0
+                      ? 'badge-warning'
+                      : 'badge-success',
+                )}>
+                  {subscriptionData.over_client_limit
+                    ? 'Sobrecupo'
+                    : subscriptionData.remaining_client_slots === 0
+                      ? 'Sin cupos'
+                      : `${subscriptionData.remaining_client_slots} libres`}
+                </span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface-200 dark:bg-surface-800">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all',
+                    subscriptionData.over_client_limit
+                      ? 'bg-rose-500'
+                      : subscriptionData.remaining_client_slots === 0
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500',
+                  )}
+                  style={{ width: `${usageRatio(subscriptionData.usage_active_clients, subscriptionData.max_members)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-surface-200/70 bg-surface-50 px-4 py-4 dark:border-surface-800/70 dark:bg-surface-800/30">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Uso de sucursales</p>
+                  <p className="mt-1 font-semibold text-surface-900 dark:text-white">
+                    {subscriptionData.usage_active_branches} / {subscriptionData.max_branches ?? 0}
+                  </p>
+                </div>
+                <span className={cn(
+                  'badge',
+                  subscriptionData.over_branch_limit
+                    ? 'badge-danger'
+                    : subscriptionData.remaining_branch_slots === 0
+                      ? 'badge-warning'
+                      : 'badge-success',
+                )}>
+                  {subscriptionData.over_branch_limit
+                    ? 'Sobrecupo'
+                    : subscriptionData.remaining_branch_slots === 0
+                      ? 'Sin cupos'
+                      : `${subscriptionData.remaining_branch_slots} libres`}
+                </span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface-200 dark:bg-surface-800">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all',
+                    subscriptionData.over_branch_limit
+                      ? 'bg-rose-500'
+                      : subscriptionData.remaining_branch_slots === 0
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500',
+                  )}
+                  style={{ width: `${usageRatio(subscriptionData.usage_active_branches, subscriptionData.max_branches)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {quotaNeedsAttention ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 dark:border-amber-900/40 dark:bg-amber-950/10">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Capacidad del plan al límite</p>
+                  <p className="mt-1 text-sm text-amber-700 dark:text-amber-200">
+                    {subscriptionData.over_client_limit || subscriptionData.over_branch_limit
+                      ? 'Tu cuenta quedó sobre el cupo del plan actual. No podrás crear nuevas altas hasta liberar espacio o mejorar tu plan.'
+                      : 'Ya usaste todos los cupos disponibles del plan actual. La próxima alta de cliente o sucursal quedará bloqueada.'}
+                  </p>
+                </div>
+                {nextUpgradePlan ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={upgradePlan.isPending}
+                    onClick={() => upgradePlan.mutate(nextUpgradePlan.key)}
+                  >
+                    <Rocket size={16} />
+                    {upgradePlan.isPending ? 'Abriendo checkout...' : `Mejorar a ${nextUpgradePlan.name}`}
+                  </button>
+                ) : (
+                  <span className="text-sm text-amber-700 dark:text-amber-200">
+                    No hay un plan superior publicado ahora mismo. Contacta a soporte comercial.
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          {subscriptionData.features?.length ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {subscriptionData.features.slice(0, 4).map((feature) => (
+                <span key={feature} className="badge badge-neutral">
+                  {feature}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </motion.div>
       ) : null}
 
       <OnboardingChecklist />

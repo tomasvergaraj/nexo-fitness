@@ -32,11 +32,11 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
-import { clientsApi, membershipsApi, notificationsApi } from '@/services/api';
+import { billingApi, clientsApi, membershipsApi, notificationsApi, plansApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
-import { cn, formatDate, formatDateTime, getInitials , getApiError } from '@/utils';
-import type { AppNotification, NotificationDispatchResponse, PaginatedResponse, PushDelivery, User, UserRole } from '@/types';
+import { cn, formatCurrency, formatDate, formatDateTime, formatDurationLabel, getInitials, getApiError, getPlanLimitError, parseApiNumber, type PlanLimitErrorPayload } from '@/utils';
+import type { AppNotification, MembershipManualSaleResult, NotificationDispatchResponse, PaginatedResponse, Plan, PushDelivery, SaaSPlan, TenantBilling, User, UserRole } from '@/types';
 
 const filters = [
   { label: 'Todos', value: '' },
@@ -82,6 +82,7 @@ const emptyForm: ClientFormState = {
 
 const clientCreateRoles: UserRole[] = ['owner', 'admin', 'reception'];
 const clientResetPasswordRoles: UserRole[] = ['owner', 'admin'];
+const planUpgradeRoles: UserRole[] = ['owner', 'admin'];
 
 type NotificationForm = {
   user_id: string;
@@ -94,6 +95,17 @@ type NotificationForm = {
   send_push: boolean;
 };
 
+type ManualSaleForm = {
+  plan_id: string;
+  starts_at: string;
+  expires_at: string;
+  payment_method: 'cash' | 'transfer';
+  amount: string;
+  currency: string;
+  description: string;
+  notes: string;
+};
+
 function createNotificationForm(client?: User): NotificationForm {
   return {
     user_id: client?.id ?? '',
@@ -102,8 +114,48 @@ function createNotificationForm(client?: User): NotificationForm {
     title: client ? `Actualización para ${client.first_name}` : 'Actualización de tu cuenta',
     message: '',
     type: 'info',
-    action_url: 'nexofitness://account/profile',
+    action_url: '',
     send_push: true,
+  };
+}
+
+function getTodayInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getEffectivePlanPrice(plan?: Plan | null): number {
+  if (!plan) return 0;
+  const basePrice = parseApiNumber(plan.price);
+  const discountPct = parseApiNumber(plan.discount_pct);
+  if (!discountPct) {
+    return basePrice;
+  }
+  return Math.round(basePrice * (1 - discountPct / 100));
+}
+
+function getSuggestedExpiryDate(plan?: Plan | null, startsAt?: string) {
+  if (!plan?.duration_days || !startsAt) {
+    return '';
+  }
+  const nextDate = new Date(`${startsAt}T00:00:00`);
+  if (Number.isNaN(nextDate.getTime())) {
+    return '';
+  }
+  nextDate.setDate(nextDate.getDate() + plan.duration_days);
+  return nextDate.toISOString().slice(0, 10);
+}
+
+function createManualSaleForm(plan?: Plan | null): ManualSaleForm {
+  const startsAt = getTodayInputValue();
+  return {
+    plan_id: plan?.id ?? '',
+    starts_at: startsAt,
+    expires_at: getSuggestedExpiryDate(plan, startsAt),
+    payment_method: 'cash',
+    amount: plan ? String(getEffectivePlanPrice(plan)) : '',
+    currency: plan?.currency ?? 'CLP',
+    description: plan ? `Venta manual del plan ${plan.name}` : '',
+    notes: '',
   };
 }
 
@@ -165,6 +217,7 @@ export default function ClientsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [actionsClient, setActionsClient] = useState<User | null>(null);
+  const [manualSaleClient, setManualSaleClient] = useState<User | null>(null);
   const [editContactClient, setEditContactClient] = useState<User | null>(null);
   const [editContactForm, setEditContactForm] = useState<ClientEditFormState>({
     first_name: '',
@@ -178,6 +231,7 @@ export default function ClientsPage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [notificationForm, setNotificationForm] = useState<NotificationForm>(createNotificationForm());
+  const [manualSaleForm, setManualSaleForm] = useState<ManualSaleForm>(createManualSaleForm());
   const [lastDispatchResult, setLastDispatchResult] = useState<NotificationDispatchResponse | null>(null);
   const [lastDispatchUsedPush, setLastDispatchUsedPush] = useState<boolean | null>(null);
   const [freezeClient, setFreezeClient] = useState<User | null>(null);
@@ -186,9 +240,11 @@ export default function ClientsPage() {
   const [historyClient, setHistoryClient] = useState<User | null>(null);
   const [notesClient, setNotesClient] = useState<User | null>(null);
   const [notesText, setNotesText] = useState('');
+  const [planLimitError, setPlanLimitError] = useState<PlanLimitErrorPayload | null>(null);
   const deferredSearch = useDeferredValue(search);
   const canCreateClients = Boolean(userRole && clientCreateRoles.includes(userRole));
   const canResetClientPasswords = Boolean(userRole && clientResetPasswordRoles.includes(userRole));
+  const canUpgradePlan = Boolean(userRole && planUpgradeRoles.includes(userRole));
   const readOnlyClientAccess = Boolean(userRole && !canCreateClients);
 
   useEffect(() => {
@@ -211,6 +267,72 @@ export default function ClientsPage() {
     },
   });
 
+  const { data: subscriptionData } = useQuery<TenantBilling>({
+    queryKey: ['tenant-current-subscription'],
+    queryFn: async () => (await billingApi.currentSubscription()).data,
+    enabled: canUpgradePlan,
+    staleTime: 60_000,
+  });
+
+  const { data: publicPlans = [] } = useQuery<SaaSPlan[]>({
+    queryKey: ['platform-public-plans'],
+    queryFn: async () => (await billingApi.listPublicPlans()).data,
+    enabled: canUpgradePlan,
+    staleTime: 60_000,
+  });
+
+  const { data: availablePlansData, isLoading: isLoadingAvailablePlans } = useQuery<PaginatedResponse<Plan>>({
+    queryKey: ['plans', 'manual-sale'],
+    queryFn: async () => (await plansApi.list({ active_only: true })).data,
+    enabled: !!manualSaleClient,
+    staleTime: 60_000,
+  });
+
+  const availablePlans = availablePlansData?.items ?? [];
+  const selectedSalePlan = useMemo(
+    () => availablePlans.find((plan) => plan.id === manualSaleForm.plan_id) ?? null,
+    [availablePlans, manualSaleForm.plan_id],
+  );
+
+  useEffect(() => {
+    if (!manualSaleClient || manualSaleForm.plan_id || !availablePlans.length) {
+      return;
+    }
+    setManualSaleForm(createManualSaleForm(availablePlans[0]));
+  }, [availablePlans, manualSaleClient, manualSaleForm.plan_id]);
+
+  const nextUpgradePlan = useMemo(() => {
+    if (!subscriptionData) {
+      return null;
+    }
+
+    return [...publicPlans]
+      .filter((plan) => plan.checkout_enabled && plan.key !== subscriptionData.plan_key)
+      .sort((left, right) => {
+        const leftCapacity = left.max_members + left.max_branches * 1000;
+        const rightCapacity = right.max_members + right.max_branches * 1000;
+        return leftCapacity - rightCapacity;
+      })
+      .find((plan) =>
+        plan.max_members > (subscriptionData.max_members ?? 0)
+        || plan.max_branches > (subscriptionData.max_branches ?? 0),
+      ) ?? null;
+  }, [publicPlans, subscriptionData]);
+
+  const upgradePlan = useMutation({
+    mutationFn: async (planKey: string) => (await billingApi.reactivate(planKey)).data as { checkout_url?: string },
+    onSuccess: (payload) => {
+      if (payload.checkout_url) {
+        window.location.href = payload.checkout_url;
+        return;
+      }
+      toast.error('No encontramos un checkout disponible para mejorar el plan.');
+    },
+    onError: (error: unknown) => {
+      toast.error(getApiError(error, 'No pudimos iniciar el upgrade del plan.'));
+    },
+  });
+
   const createClient = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -226,6 +348,7 @@ export default function ClientsPage() {
     },
     onSuccess: () => {
       toast.success('Cliente creado correctamente');
+      setPlanLimitError(null);
       setShowCreateModal(false);
       setForm(emptyForm);
       setSearch('');
@@ -234,6 +357,10 @@ export default function ClientsPage() {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
     onError: (error: any) => {
+      const limitError = getPlanLimitError(error);
+      if (limitError) {
+        setPlanLimitError(limitError);
+      }
       toast.error(getApiError(error, 'No se pudo crear el cliente'));
     },
   });
@@ -244,10 +371,15 @@ export default function ClientsPage() {
       return response.data;
     },
     onSuccess: (_, variables) => {
+      setPlanLimitError(null);
       toast.success(variables.isActive ? 'Cliente activado' : 'Cliente desactivado');
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
     onError: (error: any) => {
+      const limitError = getPlanLimitError(error);
+      if (limitError) {
+        setPlanLimitError(limitError);
+      }
       toast.error(getApiError(error, 'No se pudo actualizar el cliente'));
     },
   });
@@ -422,6 +554,49 @@ export default function ClientsPage() {
     },
   });
 
+  const registerManualSale = useMutation({
+    mutationFn: async () => {
+      if (!manualSaleClient) {
+        throw new Error('No hay cliente seleccionado');
+      }
+      if (!manualSaleForm.plan_id) {
+        throw new Error('Selecciona un plan');
+      }
+      const normalizedAmount = manualSaleForm.amount.trim();
+      const response = await membershipsApi.manualSale({
+        user_id: manualSaleClient.id,
+        plan_id: manualSaleForm.plan_id,
+        starts_at: manualSaleForm.starts_at,
+        expires_at: manualSaleForm.expires_at || null,
+        payment_method: manualSaleForm.payment_method,
+        amount: normalizedAmount ? Number(normalizedAmount) : null,
+        currency: manualSaleForm.currency.trim().toUpperCase() || 'CLP',
+        description: manualSaleForm.description.trim() || null,
+        notes: manualSaleForm.notes.trim() || null,
+        auto_renew: false,
+      });
+      return response.data as MembershipManualSaleResult;
+    },
+    onSuccess: (result) => {
+      const replacedCount = result.replaced_membership_ids.length;
+      const amountLabel = formatCurrency(parseApiNumber(result.payment.amount), result.payment.currency);
+      toast.success(
+        replacedCount
+          ? `Venta manual registrada. Nuevo plan activo y ${replacedCount} membresía(s) previa(s) cerrada(s).`
+          : `Venta manual registrada por ${amountLabel}.`,
+      );
+      setManualSaleClient(null);
+      setManualSaleForm(createManualSaleForm());
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      queryClient.invalidateQueries({ queryKey: ['client-membership-history'] });
+      queryClient.invalidateQueries({ queryKey: ['member-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+    },
+    onError: (error: unknown) => {
+      toast.error(getApiError(error, 'No se pudo registrar la venta manual'));
+    },
+  });
+
   const items = data?.items ?? [];
 
   const dispatchSummary = useMemo(() => {
@@ -470,6 +645,24 @@ export default function ClientsPage() {
     setLastDispatchResult(null);
     setLastDispatchUsedPush(null);
     setShowNotificationModal(true);
+  };
+
+  const openManualSaleModal = (client: User) => {
+    setActionsClient(null);
+    setManualSaleClient(client);
+    setManualSaleForm(createManualSaleForm(availablePlans[0]));
+  };
+
+  const updateManualSalePlan = (planId: string) => {
+    const nextPlan = availablePlans.find((plan) => plan.id === planId);
+    setManualSaleForm((current) => ({
+      ...current,
+      plan_id: planId,
+      expires_at: getSuggestedExpiryDate(nextPlan, current.starts_at),
+      amount: nextPlan ? String(getEffectivePlanPrice(nextPlan)) : '',
+      currency: nextPlan?.currency ?? 'CLP',
+      description: nextPlan ? `Venta manual del plan ${nextPlan.name}` : current.description,
+    }));
   };
 
   const exportClients = () => {
@@ -532,7 +725,10 @@ export default function ClientsPage() {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => {
+                setPlanLimitError(null);
+                setShowCreateModal(true);
+              }}
               className="btn-primary text-sm"
             >
               <Plus size={16} /> Nuevo Cliente
@@ -810,6 +1006,17 @@ export default function ClientsPage() {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
+              {canCreateClients ? (
+                <ClientActionTile
+                  icon={Plus}
+                  title={actionsClient.membership_id ? 'Registrar renovación / cambio de plan' : 'Asignar plan y cobrar manualmente'}
+                  description={actionsClient.membership_id
+                    ? 'Registra efectivo o transferencia y reemplaza la membresía vigente sin perder el historial.'
+                    : 'Asigna un plan al cliente y deja registrada la venta manual en el sistema.'}
+                  accentClass="text-emerald-500"
+                  onClick={() => openManualSaleModal(actionsClient)}
+                />
+              ) : null}
               <ClientActionTile
                 icon={Bell}
                 title="Enviar aviso"
@@ -920,6 +1127,216 @@ export default function ClientsPage() {
       </Modal>
 
       <Modal
+        open={!!manualSaleClient}
+        size="lg"
+        title={`Registrar venta manual — ${manualSaleClient?.first_name ?? ''} ${manualSaleClient?.last_name ?? ''}`}
+        description="Asigna un plan al cliente y deja registro contable de la venta cuando pague en efectivo o por transferencia directa."
+        onClose={() => {
+          if (!registerManualSale.isPending) {
+            setManualSaleClient(null);
+          }
+        }}
+      >
+        {manualSaleClient ? (
+          <form
+            className="space-y-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              registerManualSale.mutate();
+            }}
+          >
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/60">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-surface-900 dark:text-white">
+                    {manualSaleClient.first_name} {manualSaleClient.last_name}
+                  </p>
+                  <p className="mt-1 text-sm text-surface-500">{manualSaleClient.email}</p>
+                  <p className="mt-1 text-xs text-surface-500">
+                    {manualSaleClient.membership_id
+                      ? `Plan actual: ${manualSaleClient.plan_name ?? 'Sin plan'} · estado ${manualSaleClient.membership_status ?? 'sin estado'}`
+                      : 'Aún no tiene una membresía activa registrada.'}
+                  </p>
+                </div>
+                <span className="badge badge-success">Venta manual</span>
+              </div>
+            </div>
+
+            {isLoadingAvailablePlans ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={index} className="shimmer h-16 rounded-2xl" />
+                ))}
+              </div>
+            ) : !availablePlans.length ? (
+              <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-sm text-surface-500 dark:border-surface-700">
+                No hay planes activos para asignar. Crea o reactiva un plan en el módulo de planes antes de registrar esta venta.
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Plan a vender</label>
+                    <select
+                      className="input"
+                      value={manualSaleForm.plan_id}
+                      onChange={(event) => updateManualSalePlan(event.target.value)}
+                      required
+                    >
+                      <option value="">Selecciona un plan</option>
+                      {availablePlans.map((plan) => (
+                        <option key={plan.id} value={plan.id}>
+                          {plan.name} · {formatCurrency(getEffectivePlanPrice(plan), plan.currency)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Medio de pago</label>
+                    <select
+                      className="input"
+                      value={manualSaleForm.payment_method}
+                      onChange={(event) =>
+                        setManualSaleForm((current) => ({
+                          ...current,
+                          payment_method: event.target.value as ManualSaleForm['payment_method'],
+                        }))
+                      }
+                    >
+                      <option value="cash">Efectivo</option>
+                      <option value="transfer">Transferencia directa</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Inicio de vigencia</label>
+                    <input
+                      type="date"
+                      className="input"
+                      value={manualSaleForm.starts_at}
+                      onChange={(event) =>
+                        setManualSaleForm((current) => ({
+                          ...current,
+                          starts_at: event.target.value,
+                          expires_at: current.plan_id
+                            ? getSuggestedExpiryDate(
+                              availablePlans.find((plan) => plan.id === current.plan_id) ?? null,
+                              event.target.value,
+                            )
+                            : current.expires_at,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Vencimiento</label>
+                    <input
+                      type="date"
+                      className="input"
+                      value={manualSaleForm.expires_at}
+                      onChange={(event) => setManualSaleForm((current) => ({ ...current, expires_at: event.target.value }))}
+                    />
+                    <p className="mt-1 text-xs text-surface-500">Puedes ajustarlo manualmente si necesitas una vigencia distinta.</p>
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Monto registrado</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      className="input"
+                      value={manualSaleForm.amount}
+                      onChange={(event) => setManualSaleForm((current) => ({ ...current, amount: event.target.value }))}
+                      placeholder="29990"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {selectedSalePlan ? (
+                  <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/40">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-surface-900 dark:text-white">{selectedSalePlan.name}</p>
+                        <p className="mt-1 text-xs text-surface-500">
+                          {formatDurationLabel(selectedSalePlan.duration_type, selectedSalePlan.duration_days)} · precio lista {formatCurrency(parseApiNumber(selectedSalePlan.price), selectedSalePlan.currency)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Cobro sugerido</p>
+                        <p className="mt-1 text-lg font-semibold text-surface-900 dark:text-white">
+                          {formatCurrency(getEffectivePlanPrice(selectedSalePlan), selectedSalePlan.currency)}
+                        </p>
+                      </div>
+                    </div>
+                    {manualSaleClient.membership_id ? (
+                      <p className="mt-3 text-xs text-amber-600 dark:text-amber-300">
+                        Al guardar, la membresía activa o congelada actual se cerrará automáticamente para dejar esta venta como vigente.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Descripción del pago</label>
+                    <input
+                      className="input"
+                      value={manualSaleForm.description}
+                      onChange={(event) => setManualSaleForm((current) => ({ ...current, description: event.target.value }))}
+                      placeholder="Venta manual del plan..."
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Moneda</label>
+                    <input
+                      className="input uppercase"
+                      value={manualSaleForm.currency}
+                      maxLength={3}
+                      onChange={(event) => setManualSaleForm((current) => ({ ...current, currency: event.target.value.toUpperCase() }))}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Nota interna de la membresía</label>
+                  <textarea
+                    className="input min-h-28 resize-y"
+                    value={manualSaleForm.notes}
+                    onChange={(event) => setManualSaleForm((current) => ({ ...current, notes: event.target.value }))}
+                    placeholder="Ejemplo: Pagó por transferencia bancaria directa con comprobante enviado por WhatsApp."
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setManualSaleClient(null)}>
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={
+                  registerManualSale.isPending
+                  || !availablePlans.length
+                  || !manualSaleForm.plan_id
+                  || !manualSaleForm.starts_at
+                  || !manualSaleForm.amount.trim()
+                  || Number(manualSaleForm.amount) < 0
+                }
+              >
+                {registerManualSale.isPending ? 'Registrando venta...' : 'Asignar plan y registrar pago'}
+              </button>
+            </div>
+          </form>
+        ) : null}
+      </Modal>
+
+      <Modal
         open={showCreateModal}
         title="Nuevo cliente"
         description="Registra un nuevo cliente para gestionar sus reservas, pagos y asistencia."
@@ -1010,6 +1427,61 @@ export default function ClientsPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={!!planLimitError}
+        title={planLimitError?.resource === 'branches' ? 'Límite de sucursales alcanzado' : 'Límite de clientes alcanzado'}
+        description="El plan actual ya no tiene capacidad disponible para nuevas altas activas."
+        onClose={() => {
+          if (!upgradePlan.isPending) {
+            setPlanLimitError(null);
+          }
+        }}
+      >
+        {planLimitError ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-200">
+              <p className="font-semibold">{planLimitError.detail}</p>
+              <p className="mt-2">
+                Uso actual: <span className="font-semibold">{planLimitError.current_usage}</span> de <span className="font-semibold">{planLimitError.limit}</span>.
+              </p>
+            </div>
+
+            {subscriptionData ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/50">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Clientes activos</p>
+                  <p className="mt-2 text-lg font-semibold text-surface-900 dark:text-white">
+                    {subscriptionData.usage_active_clients} / {subscriptionData.max_members ?? 0}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/50">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Sucursales activas</p>
+                  <p className="mt-2 text-lg font-semibold text-surface-900 dark:text-white">
+                    {subscriptionData.usage_active_branches} / {subscriptionData.max_branches ?? 0}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" className="btn-secondary" onClick={() => setPlanLimitError(null)}>
+                Cerrar
+              </button>
+              {canUpgradePlan && nextUpgradePlan ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={upgradePlan.isPending}
+                  onClick={() => upgradePlan.mutate(nextUpgradePlan.key)}
+                >
+                  {upgradePlan.isPending ? 'Abriendo checkout...' : `Mejorar a ${nextUpgradePlan.name}`}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </Modal>
 
       {/* Modal editar ficha */}
@@ -1250,7 +1722,7 @@ export default function ClientsPage() {
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Abrir al tocar el aviso</label>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Abrir al tocar el aviso (opcional)</label>
             <input
               className="input"
               value={notificationForm.action_url}
@@ -1260,7 +1732,7 @@ export default function ClientsPage() {
                   action_url: event.target.value,
                 }))
               }
-              placeholder="Elige una sección sugerida o ingresa un destino personalizado"
+              placeholder="Déjalo vacío si el aviso solo debe informar"
             />
             <div className="mt-3 flex flex-wrap gap-2">
               {notificationActionPresets.map((preset) => (

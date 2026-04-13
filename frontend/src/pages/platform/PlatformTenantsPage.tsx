@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import {
   AlertTriangle, Building2, CheckCircle2, Clock3, Search, ShieldCheck, Store, WalletCards, Zap,
 } from 'lucide-react';
+import { NEXO_BRAND_SLOGAN } from '@/components/branding/NexoBrand';
 import StatCard from '@/components/dashboard/StatCard';
 import { billingApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
@@ -94,7 +95,7 @@ export default function PlatformTenantsPage() {
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-brand-200/50 bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-700 dark:border-brand-900/40 dark:bg-brand-950/20 dark:text-brand-300">
             <ShieldCheck size={14} />
-            Plataforma SaaS
+            {NEXO_BRAND_SLOGAN}
           </div>
           <h1 className="mt-3 text-2xl font-bold font-display text-surface-900 dark:text-white">Cuentas SaaS y ventas online</h1>
           <p className="mt-1 text-sm text-surface-500">

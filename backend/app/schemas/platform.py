@@ -83,6 +83,40 @@ class MembershipResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MembershipManualSaleRequest(BaseModel):
+    user_id: UUID
+    plan_id: UUID
+    starts_at: date
+    expires_at: Optional[date] = None
+    payment_method: str = Field(pattern=r"^(cash|transfer)$")
+    amount: Optional[Decimal] = Field(default=None, ge=0)
+    currency: str = Field(default="CLP", min_length=3, max_length=3)
+    description: Optional[str] = Field(default=None, max_length=255)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    auto_renew: bool = False
+
+
+class ManualPaymentResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    membership_id: Optional[UUID] = None
+    amount: Decimal
+    currency: str
+    status: str
+    method: str
+    description: Optional[str] = None
+    paid_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MembershipManualSaleResponse(BaseModel):
+    membership: MembershipResponse
+    payment: ManualPaymentResponse
+    replaced_membership_ids: List[UUID] = Field(default_factory=list)
+
+
 class PromoCodeCreate(BaseModel):
     code: str = Field(min_length=2, max_length=50, pattern=r"^[A-Za-z0-9_\-]+$")
     name: str = Field(min_length=1, max_length=200)

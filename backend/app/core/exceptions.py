@@ -33,3 +33,36 @@ class ActionRequiredError(Exception):
         if self.tenant_slug:
             response["tenant_slug"] = self.tenant_slug
         return response
+
+
+class PlanLimitReachedError(Exception):
+    def __init__(
+        self,
+        detail: str,
+        *,
+        resource: str,
+        current_usage: int,
+        limit: int,
+        plan_key: str,
+        upgrade_required: bool = True,
+        status_code: int = 409,
+    ) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.resource = resource
+        self.current_usage = current_usage
+        self.limit = limit
+        self.plan_key = plan_key
+        self.upgrade_required = upgrade_required
+        self.status_code = status_code
+
+    def to_response(self) -> dict[str, object]:
+        return {
+            "detail": self.detail,
+            "code": "plan_limit_reached",
+            "resource": self.resource,
+            "current_usage": self.current_usage,
+            "limit": self.limit,
+            "plan_key": self.plan_key,
+            "upgrade_required": self.upgrade_required,
+        }

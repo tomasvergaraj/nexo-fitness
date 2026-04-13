@@ -59,6 +59,7 @@ class PaymentMethod(str, enum.Enum):
     STRIPE = "stripe"
     MERCADOPAGO = "mercadopago"
     FINTOC = "fintoc"
+    WEBPAY = "webpay"
     CASH = "cash"
     TRANSFER = "transfer"
     OTHER = "other"

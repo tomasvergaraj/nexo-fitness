@@ -3,9 +3,11 @@
 import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import ProgrammingError
@@ -28,26 +30,35 @@ from app.models.business import (
     PlanDuration,
     PromoCode,
 )
-from app.models.platform import PlatformLead, TenantPaymentProviderAccount
+from app.models.platform import PlatformLead, TenantPaymentProviderAccount, WebpayTransaction
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.business import GymClassResponse, PaginatedResponse, PlanResponse
 from app.schemas.platform import (
-    PaymentProviderAccountResponse,
     PlatformLeadCreateRequest,
     PlatformLeadResponse,
     PlatformLeadUpdateRequest,
+    PromoCodeValidateRequest,
+    PromoCodeValidateResponse,
     PublicCheckoutSessionRequest,
     PublicCheckoutSessionResponse,
     TenantPublicProfileResponse,
 )
 from app.integrations.payments.fintoc_service import fintoc_service
+from app.integrations.payments.webpay_service import webpay_service
 from app.services.branding_service import DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR, coerce_brand_color
 from app.services.custom_domain_service import extract_hostname, normalize_custom_domain
 from app.services.public_checkout_service import build_public_checkout_urls, build_storefront_return_urls
 from app.services.billing_service import activate_tenant_subscription
+from app.services.class_service import build_gym_class_responses
+from app.services.promo_code_service import resolve_tenant_promo_pricing
 from app.services.saas_plan_service import definition_from_record, default_saas_plan_definitions
 from app.services.support_contact_service import resolve_tenant_support_contacts
+from app.services.tenant_quota_service import assert_can_create_client
+from app.services.webpay_checkout_service import (
+    build_webpay_redirect_url,
+    create_tenant_webpay_transaction,
+)
 from app.models.platform import SaaSPlan
 
 public_router = APIRouter(prefix="/public", tags=["Public"])
@@ -152,6 +163,21 @@ async def _get_default_payment_account(db: AsyncSession, tenant_id: UUID) -> Ten
     return result.scalars().first()
 
 
+def _payment_account_checkout_ready(account: TenantPaymentProviderAccount | None) -> bool:
+    if account is None or account.status != "connected":
+        return False
+
+    metadata = _loads_dict(account.metadata_json)
+    if account.provider == "fintoc":
+        tenant_key = str(metadata.get("secret_key") or "").strip()
+        return bool(tenant_key or fintoc_service.is_configured())
+    if account.provider == "webpay":
+        return webpay_service.is_account_configured(metadata)
+    if account.provider in {"stripe", "mercadopago", "manual"}:
+        return bool((account.checkout_base_url or "").strip())
+    return False
+
+
 async def _get_existing_user_by_email(db: AsyncSession, email: str) -> User | None:
     result = await db.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
@@ -169,6 +195,17 @@ async def _ensure_checkout_email_can_purchase(db: AsyncSession, tenant: Tenant, 
                 "Usa otro correo para comprar este plan o migra esa cuenta primero."
             ),
         )
+
+
+async def _checkout_requires_client_slot(db: AsyncSession, tenant: Tenant, customer_email: str) -> bool:
+    existing_user = await _get_existing_user_by_email(db, customer_email)
+    if not existing_user:
+        return True
+    if existing_user.tenant_id and existing_user.tenant_id != tenant.id:
+        return False
+    if existing_user.tenant_id == tenant.id and existing_user.is_active:
+        return False
+    return True
 
 
 def _split_customer_name(full_name: str) -> tuple[str, str]:
@@ -245,6 +282,7 @@ async def _build_tenant_public_profile_response(
     branches = (
         await db.execute(select(Branch).where(Branch.tenant_id == tenant.id, Branch.is_active == True))
     ).scalars().all()
+    branch_name_by_id = {branch.id: branch.name for branch in branches}
     plans = (
         await db.execute(
             select(Plan)
@@ -318,12 +356,14 @@ async def _build_tenant_public_profile_response(
                 "class_type": gym_class.class_type,
                 "start_time": gym_class.start_time.isoformat(),
                 "modality": gym_class.modality.value if hasattr(gym_class.modality, "value") else str(gym_class.modality),
+                "branch_id": str(gym_class.branch_id) if gym_class.branch_id else None,
+                "branch_name": branch_name_by_id.get(gym_class.branch_id) if gym_class.branch_id else None,
                 "capacity": gym_class.max_capacity,
                 "bookings": gym_class.current_bookings,
             }
             for gym_class in upcoming_classes
         ],
-        checkout_enabled=bool(features.get("public_checkout_enabled", True) and default_account),
+        checkout_enabled=bool(features.get("public_checkout_enabled", True) and _payment_account_checkout_ready(default_account)),
     )
 
 
@@ -342,6 +382,8 @@ async def _find_or_create_checkout_user(
     if user:
         if user.tenant_id and user.tenant_id != tenant.id:
             raise RuntimeError(f"El correo del cliente {customer_email} ya está asociado a otra cuenta")
+        if (user.tenant_id is None or user.tenant_id == tenant.id) and not user.is_active:
+            await assert_can_create_client(db, tenant)
 
         first_name, last_name = _split_customer_name(customer_name)
         if user.tenant_id is None:
@@ -358,6 +400,8 @@ async def _find_or_create_checkout_user(
         user.is_verified = True
         user.deleted_at = None
         return user, False
+
+    await assert_can_create_client(db, tenant)
 
     first_name, last_name = _split_customer_name(customer_name)
     initial_password = customer_password or f"Nexo{uuid4().hex}Aa1"
@@ -392,6 +436,7 @@ async def _activate_checkout_purchase(
     checkout_session_id: str | None,
     amount: int | str | Decimal | None,
     currency: str | None,
+    payment_method: PaymentMethod,
     metadata: dict,
     promo_code_id: str | None = None,
 ) -> dict:
@@ -407,7 +452,7 @@ async def _activate_checkout_purchase(
         await db.execute(
             select(Payment).where(
                 Payment.tenant_id == tenant.id,
-                Payment.method == PaymentMethod.FINTOC,
+                Payment.method == payment_method,
                 Payment.external_id == external_payment_id,
             )
         )
@@ -486,7 +531,7 @@ async def _activate_checkout_purchase(
             amount=amount_decimal,
             currency=(currency or plan.currency or "CLP").upper(),
             status=PaymentStatus.COMPLETED,
-            method=PaymentMethod.FINTOC,
+            method=payment_method,
             description=f"Checkout publico - {plan.name}",
             external_id=external_payment_id,
             metadata_json=json.dumps(payment_metadata),
@@ -499,7 +544,7 @@ async def _activate_checkout_purchase(
         payment.amount = amount_decimal
         payment.currency = (currency or payment.currency or plan.currency or "CLP").upper()
         payment.status = PaymentStatus.COMPLETED
-        payment.method = PaymentMethod.FINTOC
+        payment.method = payment_method
         payment.description = payment.description or f"Checkout publico - {plan.name}"
         payment.metadata_json = json.dumps(payment_metadata)
         payment.paid_at = payment.paid_at or datetime.now(timezone.utc)
@@ -557,41 +602,80 @@ async def list_tenant_public_plans(slug: str, db: AsyncSession = Depends(get_db)
     return [PlanResponse.model_validate(plan) for plan in plans]
 
 
+@public_router.post("/tenants/{slug}/promo-codes/validate", response_model=PromoCodeValidateResponse)
+async def validate_tenant_public_promo_code(
+    slug: str,
+    body: PromoCodeValidateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_public_tenant_or_404(db, slug)
+    pricing = await resolve_tenant_promo_pricing(
+        db,
+        tenant_id=tenant.id,
+        plan_id=body.plan_id,
+        promo_code=body.code,
+    )
+    if not pricing.valid or pricing.promo is None:
+        return PromoCodeValidateResponse(valid=False, reason=pricing.reason)
+
+    return PromoCodeValidateResponse(
+        valid=True,
+        promo_code_id=pricing.promo.id,
+        discount_type=pricing.promo.discount_type,
+        discount_value=float(pricing.promo.discount_value),
+        discount_amount=float(pricing.promo_discount_amount or 0),
+        final_price=float(pricing.final_price or 0),
+    )
+
+
+@public_router.post("/storefront/promo-codes/validate", response_model=PromoCodeValidateResponse)
+async def validate_storefront_public_promo_code(
+    request: Request,
+    body: PromoCodeValidateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    tenant = await _get_public_tenant_by_custom_domain_or_404(db, request)
+    pricing = await resolve_tenant_promo_pricing(
+        db,
+        tenant_id=tenant.id,
+        plan_id=body.plan_id,
+        promo_code=body.code,
+    )
+    if not pricing.valid or pricing.promo is None:
+        return PromoCodeValidateResponse(valid=False, reason=pricing.reason)
+
+    return PromoCodeValidateResponse(
+        valid=True,
+        promo_code_id=pricing.promo.id,
+        discount_type=pricing.promo.discount_type,
+        discount_value=float(pricing.promo.discount_value),
+        discount_amount=float(pricing.promo_discount_amount or 0),
+        final_price=float(pricing.final_price or 0),
+    )
+
+
 @public_router.get("/tenants/{slug}/classes", response_model=list[GymClassResponse])
 async def list_tenant_public_classes(
     slug: str,
     limit: int = Query(12, ge=1, le=50),
+    branch_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     tenant = await _get_public_tenant_or_404(db, slug)
-    classes = (
-        await db.execute(
-            select(GymClass)
-            .where(
-                GymClass.tenant_id == tenant.id,
-                GymClass.start_time >= datetime.now(timezone.utc),
-                GymClass.status == ClassStatus.SCHEDULED,
-            )
-            .order_by(GymClass.start_time.asc())
-            .limit(limit)
+    query = (
+        select(GymClass)
+        .where(
+            GymClass.tenant_id == tenant.id,
+            GymClass.start_time >= datetime.now(timezone.utc),
+            GymClass.status == ClassStatus.SCHEDULED,
         )
-    ).scalars().all()
+        .order_by(GymClass.start_time.asc())
+    )
+    if branch_id:
+        query = query.where(GymClass.branch_id == branch_id)
 
-    # Enrich with instructor names
-    instructor_ids = list({c.instructor_id for c in classes if c.instructor_id})
-    instructors_by_id = {}
-    if instructor_ids:
-        from app.models.user import User
-        instr_result = await db.execute(select(User).where(User.id.in_(instructor_ids)))
-        for u in instr_result.scalars().all():
-            instructors_by_id[u.id] = f"{u.first_name} {u.last_name}"
-
-    items = []
-    for c in classes:
-        item = GymClassResponse.model_validate(c)
-        item.instructor_name = instructors_by_id.get(c.instructor_id) if c.instructor_id else None
-        items.append(item)
-    return items
+    classes = (await db.execute(query.limit(limit))).scalars().all()
+    return await build_gym_class_responses(db, classes)
 
 
 @public_router.post("/tenants/{slug}/checkout-session", response_model=PublicCheckoutSessionResponse)
@@ -624,11 +708,27 @@ async def _create_public_checkout_session_for_tenant(
     if not plan or plan.tenant_id != tenant.id or not plan.is_active or plan.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Plan no disponible")
 
+    pricing = await resolve_tenant_promo_pricing(
+        db,
+        tenant_id=tenant.id,
+        plan_id=plan.id,
+        promo_code_id=data.promo_code_id,
+    )
+    if not pricing.valid or pricing.plan is None or pricing.final_price is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=pricing.reason or "No se pudo aplicar el código promocional.")
+
     account = await _get_default_payment_account(db, tenant.id)
     if not account:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La cuenta no tiene un medio de pago conectado")
+    if not _payment_account_checkout_ready(account):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La cuenta tiene un proveedor de pago configurado, pero todavía no está lista para cobrar online.",
+        )
 
     await _ensure_checkout_email_can_purchase(db, tenant, data.customer_email)
+    if await _checkout_requires_client_slot(db, tenant, data.customer_email):
+        await assert_can_create_client(db, tenant)
 
     # When creating a new account, require a verified email token
     if data.customer_password:
@@ -666,11 +766,15 @@ async def _create_public_checkout_session_for_tenant(
         tenant.custom_domain,
     )
 
-    # ── Fintoc: crear payment intent directo y devolver widget URL ──────────
-    if account.provider == "fintoc" and fintoc_service.is_configured():
+    # ── Fintoc: crear checkout hosted y devolver redirect URL ───────────────
+    if account.provider == "fintoc":
+        account_metadata = _loads_dict(account.metadata_json)
+        tenant_fintoc_key = str(account_metadata.get("secret_key") or "").strip() or None
+        if not tenant_fintoc_key and not fintoc_service.is_configured():
+            raise HTTPException(status_code=400, detail="Fintoc no configurado: agrega la API key secreta en la cuenta de pago.")
         try:
             checkout_session = await fintoc_service.create_checkout_session(
-                amount=int(plan.price),
+                amount=int(pricing.final_price),
                 currency=plan.currency or "CLP",
                 customer_name=data.customer_name or "",
                 customer_email=data.customer_email or "",
@@ -686,7 +790,11 @@ async def _create_public_checkout_session_for_tenant(
                     "customer_phone": data.customer_phone or "",
                     "customer_date_of_birth": data.customer_date_of_birth.isoformat() if data.customer_date_of_birth else "",
                     "promo_code_id": str(data.promo_code_id) if data.promo_code_id else "",
+                    "price_before_promo": str(pricing.price_before_promo or ""),
+                    "promo_discount_amount": str(pricing.promo_discount_amount or ""),
+                    "final_price": str(pricing.final_price),
                 },
+                secret_key=tenant_fintoc_key,
             )
             return PublicCheckoutSessionResponse(
                 provider="fintoc",
@@ -702,6 +810,49 @@ async def _create_public_checkout_session_for_tenant(
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Error de Fintoc: {exc}") from exc
 
+    # ── Webpay: crear transacción real y devolver relay interno ─────────────
+    if account.provider == "webpay":
+        try:
+            transaction = await create_tenant_webpay_transaction(
+                db,
+                tenant=tenant,
+                payment_account=account,
+                user=None,
+                amount=pricing.final_price,
+                currency=plan.currency or "CLP",
+                flow_type="tenant_plan_checkout",
+                flow_reference=session_reference,
+                success_url=data.success_url or success_url,
+                cancel_url=data.cancel_url or cancel_url,
+                metadata={
+                    "tenant_id": str(tenant.id),
+                    "tenant_slug": tenant.slug,
+                    "plan_id": str(plan.id),
+                    "plan_name": plan.name,
+                    "customer_name": data.customer_name or "",
+                    "customer_email": data.customer_email,
+                    "customer_phone": data.customer_phone or "",
+                    "customer_date_of_birth": data.customer_date_of_birth.isoformat() if data.customer_date_of_birth else "",
+                    "promo_code_id": str(data.promo_code_id) if data.promo_code_id else "",
+                    "price_before_promo": str(pricing.price_before_promo or ""),
+                    "promo_discount_amount": str(pricing.promo_discount_amount or ""),
+                    "final_price": str(pricing.final_price),
+                    "payment_account_id": str(account.id),
+                },
+            )
+            return PublicCheckoutSessionResponse(
+                provider="webpay",
+                status="ready",
+                checkout_url=transaction.checkout_url or build_webpay_redirect_url(str(transaction.id)),
+                payment_link_url=transaction.checkout_url or build_webpay_redirect_url(str(transaction.id)),
+                qr_payload=transaction.checkout_url or build_webpay_redirect_url(str(transaction.id)),
+                session_reference=session_reference,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Error de Webpay: {exc}") from exc
+
     # ── Otros providers (Stripe, MercadoPago) ────────────────────────────────
     checkout_base = account.checkout_base_url or f"https://checkout.nexofitness.cl/{tenant.slug}"
     checkout_url, payment_link_url = build_public_checkout_urls(
@@ -710,6 +861,8 @@ async def _create_public_checkout_session_for_tenant(
         session_reference=session_reference,
         success_url=data.success_url or success_url,
         cancel_url=data.cancel_url or cancel_url,
+        amount=str(pricing.final_price),
+        promo_code_id=str(data.promo_code_id) if data.promo_code_id else None,
     )
     return PublicCheckoutSessionResponse(
         provider=account.provider,
@@ -772,6 +925,237 @@ async def _activate_saas_tenant(
     return True
 
 
+def _merge_redirect_query(base_url: str, params: dict[str, str | None]) -> str:
+    parts = urlsplit(base_url)
+    overridden = {key for key, value in params.items() if value is not None}
+    query_items = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key not in overridden]
+    query_items.extend((key, value) for key, value in params.items() if value is not None)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
+
+
+def _webpay_redirect_response(base_url: str, **params: str | None) -> RedirectResponse:
+    return RedirectResponse(_merge_redirect_query(base_url, params), status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _webpay_form_html(action_url: str, token: str) -> str:
+    return f"""<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redirigiendo a Webpay</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; display: grid; min-height: 100vh; place-items: center; margin: 0; }}
+      .card {{ max-width: 28rem; padding: 2rem; border-radius: 1.5rem; background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(148, 163, 184, 0.2); text-align: center; }}
+      .spinner {{ width: 2rem; height: 2rem; border-radius: 999px; border: 3px solid rgba(255,255,255,0.2); border-top-color: #38bdf8; margin: 0 auto 1rem; animation: spin 0.9s linear infinite; }}
+      @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    </style>
+  </head>
+  <body onload="document.getElementById('webpay-redirect-form').submit()">
+    <div class="card">
+      <div class="spinner"></div>
+      <h1>Redirigiendo a Webpay</h1>
+      <p>Estamos conectando tu pago con Transbank. Si no ocurre automáticamente, presiona el botón.</p>
+      <form id="webpay-redirect-form" method="post" action="{action_url}">
+        <input type="hidden" name="token_ws" value="{token}" />
+        <button type="submit">Continuar a Webpay</button>
+      </form>
+    </div>
+  </body>
+</html>"""
+
+
+def _webpay_commit_succeeded(payload: dict) -> bool:
+    try:
+        response_code = int(payload.get("response_code"))
+    except (TypeError, ValueError):
+        response_code = -1
+    status_value = str(payload.get("status") or "").upper()
+    return response_code == 0 and status_value == "AUTHORIZED"
+
+
+async def _resolve_webpay_transaction(
+    db: AsyncSession,
+    *,
+    transaction_id: str | None,
+    token: str | None,
+) -> WebpayTransaction | None:
+    if transaction_id:
+        try:
+            transaction = await db.get(WebpayTransaction, UUID(transaction_id))
+        except ValueError:
+            transaction = None
+        if transaction:
+            return transaction
+
+    if token:
+        return (
+            await db.execute(select(WebpayTransaction).where(WebpayTransaction.token == token))
+        ).scalars().first()
+
+    return None
+
+
+async def _resolve_webpay_credentials(
+    db: AsyncSession,
+    transaction: WebpayTransaction,
+):
+    if transaction.payment_account_id:
+        account = await db.get(TenantPaymentProviderAccount, transaction.payment_account_id)
+        if account is None:
+            raise ValueError("La cuenta Webpay asociada ya no existe.")
+        credentials = webpay_service.credentials_from_metadata(_loads_dict(account.metadata_json))
+        if credentials is None:
+            raise ValueError("La cuenta Webpay asociada no tiene credenciales válidas.")
+        return credentials
+
+    credentials = webpay_service.get_platform_credentials()
+    if credentials is None:
+        raise ValueError("Webpay no está configurado para la plataforma.")
+    return credentials
+
+
+@public_router.get("/webpay/redirect/{transaction_id}", include_in_schema=False)
+async def webpay_redirect(transaction_id: UUID, db: AsyncSession = Depends(get_db)):
+    transaction = await db.get(WebpayTransaction, transaction_id)
+    if not transaction or not transaction.token or not transaction.provider_url:
+        raise HTTPException(status_code=404, detail="Transacción Webpay no encontrada")
+
+    return HTMLResponse(_webpay_form_html(transaction.provider_url, transaction.token))
+
+
+@public_router.api_route("/webpay/return", methods=["GET", "POST"], include_in_schema=False)
+async def webpay_return(request: Request, db: AsyncSession = Depends(get_db)):
+    form_data = {}
+    if request.method == "POST":
+        form = await request.form()
+        form_data = {key: value for key, value in form.items()}
+
+    query_data = dict(request.query_params)
+    token_ws = str(form_data.get("token_ws") or query_data.get("token_ws") or "").strip() or None
+    tbk_token = str(form_data.get("TBK_TOKEN") or query_data.get("TBK_TOKEN") or "").strip() or None
+    transaction_id = str(query_data.get("transaction_id") or form_data.get("transaction_id") or "").strip() or None
+
+    transaction = await _resolve_webpay_transaction(db, transaction_id=transaction_id, token=token_ws or tbk_token)
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transacción Webpay no encontrada")
+
+    provider_payload = {**query_data, **form_data}
+
+    if tbk_token and not token_ws:
+        transaction.status = "cancelled"
+        transaction.provider_response_json = json.dumps(provider_payload)
+        await db.flush()
+        return _webpay_redirect_response(
+            transaction.cancel_url or settings.public_app_url,
+            provider="webpay",
+            status="cancelled",
+            reason="user_aborted",
+        )
+
+    if not token_ws:
+        transaction.status = "failed"
+        transaction.provider_response_json = json.dumps(provider_payload)
+        await db.flush()
+        return _webpay_redirect_response(
+            transaction.cancel_url or settings.public_app_url,
+            provider="webpay",
+            status="failed",
+            reason="missing_token",
+        )
+
+    if transaction.status == "committed" and transaction.response_code == 0:
+        return _webpay_redirect_response(
+            transaction.success_url or settings.public_app_url,
+            provider="webpay",
+            status="success",
+            flow=transaction.flow_type,
+        )
+
+    try:
+        credentials = await _resolve_webpay_credentials(db, transaction)
+        commit_payload = await webpay_service.commit_transaction(token=token_ws, credentials=credentials)
+    except Exception as exc:
+        transaction.status = "failed"
+        transaction.provider_response_json = json.dumps({"error": str(exc), **provider_payload})
+        await db.flush()
+        return _webpay_redirect_response(
+            transaction.cancel_url or settings.public_app_url,
+            provider="webpay",
+            status="failed",
+            reason="commit_error",
+        )
+
+    transaction.token = token_ws
+    transaction.external_id = str(commit_payload.get("buy_order") or token_ws)
+    transaction.authorization_code = commit_payload.get("authorization_code")
+    transaction.response_code = commit_payload.get("response_code")
+    transaction.transaction_status = commit_payload.get("status")
+    transaction.provider_response_json = json.dumps(commit_payload)
+    transaction.committed_at = datetime.now(timezone.utc)
+
+    metadata = _loads_dict(transaction.metadata_json)
+    if _webpay_commit_succeeded(commit_payload):
+        try:
+            if transaction.flow_type in {"saas_signup", "saas_reactivation"}:
+                await _activate_saas_tenant(
+                    db,
+                    tenant_id=str(metadata.get("tenant_id") or ""),
+                    saas_plan_key=str(metadata.get("saas_plan_key") or ""),
+                )
+            elif transaction.flow_type == "tenant_plan_checkout":
+                await _activate_checkout_purchase(
+                    db,
+                    tenant_id=str(metadata.get("tenant_id") or ""),
+                    plan_id=str(metadata.get("plan_id") or ""),
+                    customer_email=str(metadata.get("customer_email") or ""),
+                    customer_name=str(metadata.get("customer_name") or ""),
+                    customer_phone=str(metadata.get("customer_phone") or "") or None,
+                    customer_date_of_birth=_parse_optional_date(str(metadata.get("customer_date_of_birth") or "") or None),
+                    external_payment_id=token_ws,
+                    session_reference=str(metadata.get("session_reference") or transaction.flow_reference or ""),
+                    checkout_session_id=str(transaction.id),
+                    amount=commit_payload.get("amount") or transaction.amount,
+                    currency=commit_payload.get("currency") or transaction.currency,
+                    payment_method=PaymentMethod.WEBPAY,
+                    metadata=metadata,
+                    promo_code_id=str(metadata.get("promo_code_id") or "") or None,
+                )
+            transaction.status = "committed"
+            await db.flush()
+            return _webpay_redirect_response(
+                transaction.success_url or settings.public_app_url,
+                provider="webpay",
+                status="success",
+                flow=transaction.flow_type,
+            )
+        except Exception as exc:
+            transaction.status = "activation_error"
+            transaction.provider_response_json = json.dumps(
+                {
+                    "commit": commit_payload,
+                    "activation_error": str(exc),
+                }
+            )
+            await db.flush()
+            return _webpay_redirect_response(
+                transaction.success_url or settings.public_app_url,
+                provider="webpay",
+                status="success",
+                flow=transaction.flow_type,
+                activation="pending_review",
+            )
+
+    transaction.status = "failed"
+    await db.flush()
+    return _webpay_redirect_response(
+        transaction.cancel_url or settings.public_app_url,
+        provider="webpay",
+        status="failed",
+        flow=transaction.flow_type,
+    )
+
+
 @public_router.post("/webhooks/fintoc", include_in_schema=False)
 async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     """Recibe eventos de Fintoc y activa la compra del cliente cuando el pago se confirma."""
@@ -827,6 +1211,7 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                         checkout_session_id=str(event_data.get("id") or ""),
                         amount=payment_intent.get("amount"),
                         currency=payment_intent.get("currency"),
+                        payment_method=PaymentMethod.FINTOC,
                         metadata=metadata,
                         promo_code_id=str(metadata.get("promo_code_id") or "") or None,
                     )
@@ -859,6 +1244,7 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                     checkout_session_id=str(metadata.get("checkout_session_id") or ""),
                     amount=event_data.get("amount"),
                     currency=event_data.get("currency"),
+                    payment_method=PaymentMethod.FINTOC,
                     metadata=metadata,
                     promo_code_id=str(metadata.get("promo_code_id") or "") or None,
                 )

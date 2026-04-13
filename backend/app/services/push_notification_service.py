@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
+from urllib.parse import parse_qs, urlencode, urlparse
 from uuid import UUID
 
 import httpx
@@ -24,6 +25,7 @@ except ImportError:  # pragma: no cover - optional dependency in local dev
 from app.core.config import get_settings
 from app.models.business import Campaign, Notification
 from app.models.platform import PushDelivery, PushSubscription
+from app.models.user import User, UserRole
 
 settings = get_settings()
 
@@ -204,17 +206,151 @@ def _build_expo_message(notification: Notification, subscription: PushSubscripti
     }
 
 
-def _build_webpush_payload(notification: Notification) -> dict[str, Any]:
+def _default_webpush_route(role: UserRole | None) -> str:
+    if role == UserRole.CLIENT:
+        return "/member?tab=notifications"
+    if role == UserRole.SUPERADMIN:
+        return "/platform/tenants"
+    return "/dashboard"
+
+
+def _map_staff_tab_to_route(tab: str | None) -> str:
+    if tab == "agenda":
+        return "/classes"
+    if tab == "payments":
+        return "/reports"
+    if tab in {"plans", "store", "checkout"}:
+        return "/plans"
+    if tab == "support":
+        return "/support"
+    if tab == "profile":
+        return "/settings"
+    if tab == "programs":
+        return "/programs"
+    if tab == "clients":
+        return "/clients"
+    if tab == "reports":
+        return "/reports"
+    if tab == "promo-codes":
+        return "/promo-codes"
+    if tab == "settings":
+        return "/settings"
+    return "/dashboard"
+
+
+def _build_member_route(params: dict[str, str]) -> str:
+    next_params = {"tab": params.get("tab") or "notifications"}
+    for key, value in params.items():
+        if key != "tab" and value:
+            next_params[key] = value
+    return f"/member?{urlencode(next_params)}"
+
+
+def _extract_action_parts(action_url: str | None) -> tuple[str | None, dict[str, str], str | None]:
+    raw = (action_url or "").strip()
+    if not raw:
+        return None, {}, None
+
+    if raw.startswith(("http://", "https://")):
+        return None, {}, raw
+
+    if raw.startswith("/"):
+        return raw, {}, None
+
+    if raw.startswith("?"):
+        params = {key: values[-1] for key, values in parse_qs(raw[1:], keep_blank_values=True).items()}
+        return "", params, None
+
+    if raw.startswith("nexofitness://"):
+        parsed = urlparse(raw)
+        path_parts = [parsed.netloc, parsed.path.lstrip("/")]
+        path = "/".join(part for part in path_parts if part).lower()
+        params = {key: values[-1] for key, values in parse_qs(parsed.query, keep_blank_values=True).items()}
+        return path, params, None
+
+    return raw.lower(), {}, None
+
+
+def _resolve_webpush_target_url(action_url: str | None, recipient_role: UserRole | None) -> str:
+    path, params, absolute_url = _extract_action_parts(action_url)
+    if absolute_url:
+        return absolute_url
+
+    if path and path.startswith("/"):
+        return path
+
+    if recipient_role == UserRole.CLIENT:
+        if not path and params:
+            return _build_member_route(params)
+
+        client_params = dict(params)
+        if path:
+            if "agenda" in path or "class" in path:
+                client_params["tab"] = "agenda"
+            elif "support" in path:
+                client_params["tab"] = "support"
+            elif "payments" in path:
+                client_params["tab"] = "payments"
+            elif any(section in path for section in {"store", "checkout", "plans"}):
+                client_params["tab"] = "plans"
+            elif "account/profile" in path or "profile" in path:
+                client_params["tab"] = "profile"
+            elif "program" in path:
+                client_params["tab"] = "programs"
+            elif "progress" in path:
+                client_params["tab"] = "progress"
+        return _build_member_route(client_params)
+
+    if recipient_role == UserRole.SUPERADMIN:
+        if path and path.startswith("platform/"):
+            return f"/{path}"
+        if path and "plan" in path:
+            return "/platform/plans"
+        if path and "lead" in path:
+            return "/platform/leads"
+        return "/platform/tenants"
+
+    if path and path.startswith("platform/"):
+        return f"/{path}"
+    if not path and params:
+        return _map_staff_tab_to_route(params.get("tab"))
+    if path and ("agenda" in path or "class" in path):
+        return "/classes"
+    if path and "support" in path:
+        return "/support"
+    if path and "payments" in path:
+        return "/reports"
+    if path and any(section in path for section in {"store", "checkout", "plans"}):
+        return "/plans"
+    if path and ("account/profile" in path or "profile" in path):
+        return "/settings"
+    if path and "program" in path:
+        return "/programs"
+    if path and "report" in path:
+        return "/reports"
+    if path and "promo" in path:
+        return "/promo-codes"
+    if path and "client" in path:
+        return "/clients"
+    if path and "setting" in path:
+        return "/settings"
+    if path and "dashboard" in path:
+        return "/dashboard"
+    return _default_webpush_route(recipient_role)
+
+
+def _build_webpush_payload(notification: Notification, recipient_role: UserRole | None) -> dict[str, Any]:
     body = notification.message or notification.title
     return {
         "title": notification.title,
         "body": body,
         "message": notification.message,
-        "url": notification.action_url or "/member?tab=notifications",
+        "url": _resolve_webpush_target_url(notification.action_url, recipient_role),
         "notification_id": str(notification.id),
         "campaign_id": str(notification.campaign_id) if notification.campaign_id else None,
         "type": notification.type,
         "tag": f"notification-{notification.id}",
+        "action_url": notification.action_url,
     }
 
 
@@ -567,6 +703,8 @@ async def send_notification_via_expo(
 async def send_notification_via_webpush(
     notification: Notification,
     subscriptions: Sequence[PushSubscription],
+    *,
+    recipient_role: UserRole | None = None,
 ) -> list[PushDeliveryResult]:
     deliveries: list[PushDeliveryResult] = []
 
@@ -600,7 +738,7 @@ async def send_notification_via_webpush(
             for subscription in subscriptions
         ]
 
-    payload = json.dumps(_build_webpush_payload(notification))
+    payload = json.dumps(_build_webpush_payload(notification, recipient_role))
     vapid_claims = {"sub": settings.WEB_PUSH_VAPID_SUBJECT.strip() or "mailto:soporte@nexofitness.com"}
 
     for subscription in subscriptions:
@@ -686,6 +824,7 @@ async def send_notification_via_push(
     notification: Notification,
     subscriptions: Sequence[PushSubscription],
     *,
+    recipient_role: UserRole | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> list[PushDeliveryResult]:
     deliveries: list[PushDeliveryResult] = []
@@ -714,7 +853,13 @@ async def send_notification_via_push(
     if expo_subscriptions:
         deliveries.extend(await send_notification_via_expo(notification, expo_subscriptions, http_client=http_client))
     if webpush_subscriptions:
-        deliveries.extend(await send_notification_via_webpush(notification, webpush_subscriptions))
+        deliveries.extend(
+            await send_notification_via_webpush(
+                notification,
+                webpush_subscriptions,
+                recipient_role=recipient_role,
+            )
+        )
 
     return deliveries
 
@@ -745,10 +890,12 @@ async def create_and_dispatch_notification(
 
     deliveries: list[PushDeliveryResult] = []
     if send_push:
+        recipient = await db.get(User, user_id)
         subscriptions = await list_active_push_subscriptions(db, tenant_id=tenant_id, user_id=user_id)
         deliveries = await send_notification_via_push(
             notification,
             subscriptions,
+            recipient_role=recipient.role if recipient else None,
             http_client=http_client,
         )
         await store_push_delivery_results(

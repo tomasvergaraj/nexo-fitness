@@ -36,6 +36,8 @@ from app.services.saas_plan_service import (
     plan_to_feature_flags,
     update_admin_saas_plan,
 )
+from app.services.tenant_quota_service import get_tenant_usage_snapshot
+from app.services.webpay_checkout_service import create_platform_webpay_transaction
 
 settings = get_settings()
 
@@ -102,6 +104,8 @@ def get_effective_plan_for_tenant(tenant: Tenant) -> SaaSPlanDefinition:
     trial_days_raw = feature_flags.get("trial_days", 0)
     max_members_raw = feature_flags.get("max_members", tenant.max_members or 500)
     max_branches_raw = feature_flags.get("max_branches", tenant.max_branches or 3)
+    fintoc_enabled = bool(feature_flags.get("fintoc_enabled", False))
+    webpay_enabled = bool(feature_flags.get("webpay_enabled", False))
     fallback_plan = next((plan for plan in get_public_saas_plans() if plan.key == resolved_key), None)
     checkout_enabled = bool(feature_flags.get("checkout_enabled")) or bool(fallback_plan and fallback_plan.checkout_enabled)
 
@@ -119,6 +123,8 @@ def get_effective_plan_for_tenant(tenant: Tenant) -> SaaSPlanDefinition:
             max_branches=_coerce_int(max_branches_raw, fallback_plan.max_branches),
             features=tuple(str(feature) for feature in (feature_list or list(fallback_plan.features))),
             stripe_price_id=fallback_plan.stripe_price_id if checkout_enabled else "",
+            fintoc_enabled=fintoc_enabled or fallback_plan.fintoc_enabled,
+            webpay_enabled=webpay_enabled or fallback_plan.webpay_enabled,
             highlighted=fallback_plan.highlighted,
         )
 
@@ -135,6 +141,8 @@ def get_effective_plan_for_tenant(tenant: Tenant) -> SaaSPlanDefinition:
         max_branches=_coerce_int(max_branches_raw, 3),
         features=tuple(str(feature) for feature in feature_list),
         stripe_price_id=fallback_plan.stripe_price_id if checkout_enabled and fallback_plan else "",
+        fintoc_enabled=fintoc_enabled,
+        webpay_enabled=webpay_enabled,
         highlighted=False,
     )
 
@@ -157,6 +165,10 @@ def activate_tenant_subscription(
         tenant.license_expires_at = period_end
     elif plan.license_type == LicenseType.ANNUAL:
         tenant.license_expires_at = current_time + timedelta(days=365)
+    elif plan.license_type == LicenseType.SEMI_ANNUAL:
+        tenant.license_expires_at = current_time + timedelta(days=180)
+    elif plan.license_type == LicenseType.QUARTERLY:
+        tenant.license_expires_at = current_time + timedelta(days=90)
     elif plan.license_type == LicenseType.PERPETUAL:
         tenant.license_expires_at = None
     else:
@@ -312,10 +324,34 @@ class BillingService:
                         "owner_user_id": str(owner.id),
                         "saas_plan_key": plan.key,
                     },
+                    recipient_account=None,
                 )
                 checkout_url = session.get("redirect_url")
                 next_action = "redirect_to_checkout"
                 message = "Tu cuenta esta lista. Completa el pago para activar tu suscripcion."
+            elif checkout_provider == "webpay":
+                transaction = await create_platform_webpay_transaction(
+                    db,
+                    tenant=tenant,
+                    user=owner,
+                    amount=plan.price,
+                    currency=plan.currency or "CLP",
+                    flow_type="saas_signup",
+                    flow_reference=plan.key,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    metadata={
+                        "tenant_id": str(tenant.id),
+                        "tenant_slug": tenant.slug,
+                        "owner_user_id": str(owner.id),
+                        "owner_email": owner.email,
+                        "saas_plan_key": plan.key,
+                    },
+                )
+                checkout_url = transaction.checkout_url
+                checkout_session_id = str(transaction.id)
+                next_action = "redirect_to_checkout"
+                message = "Tu cuenta esta lista. Completa el pago en Webpay para activar tu suscripción."
             else:
                 # Stripe: crear checkout session y redirigir
                 customer_id = await stripe_service.create_customer(
@@ -445,13 +481,14 @@ class BillingService:
         return {"received": True, "event": event_type, "matched": True}
 
     @staticmethod
-    def describe_tenant_billing(tenant: Tenant) -> dict[str, Any]:
+    async def describe_tenant_billing(db: AsyncSession, tenant: Tenant) -> dict[str, Any]:
         plan = get_effective_plan_for_tenant(tenant)
         owner = next((user for user in tenant.users if user.role == UserRole.OWNER), None)
         feature_flags = get_tenant_feature_flags(tenant)
         platform_features = feature_flags.get("saas_features", [])
         if not isinstance(platform_features, list):
             platform_features = []
+        usage = await get_tenant_usage_snapshot(db, tenant.id, tenant=tenant)
 
         return {
             "tenant_id": tenant.id,
@@ -470,6 +507,12 @@ class BillingService:
             "is_active": tenant.is_active,
             "max_members": tenant.max_members,
             "max_branches": tenant.max_branches,
+            "usage_active_clients": usage.active_clients,
+            "usage_active_branches": usage.active_branches,
+            "remaining_client_slots": usage.remaining_client_slots,
+            "remaining_branch_slots": usage.remaining_branch_slots,
+            "over_client_limit": usage.over_client_limit,
+            "over_branch_limit": usage.over_branch_limit,
             "features": platform_features,
             "owner_email": owner.email if owner else None,
             "owner_name": owner.full_name if owner else None,
@@ -491,9 +534,12 @@ class BillingService:
         )
         result = await db.execute(query)
         tenants = result.scalars().all()
+        items: list[dict[str, Any]] = []
+        for tenant in tenants:
+            items.append(await BillingService.describe_tenant_billing(db, tenant))
 
         return {
-            "items": [BillingService.describe_tenant_billing(tenant) for tenant in tenants],
+            "items": items,
             "total": total,
             "page": page,
             "per_page": per_page,

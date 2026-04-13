@@ -29,11 +29,11 @@ def make_tenant(**overrides) -> Tenant:
     return tenant
 
 
-def test_public_saas_plans_include_monthly_and_annual() -> None:
+def test_public_saas_plans_include_all_public_catalog_plans() -> None:
     plans = get_public_saas_plans()
     plan_keys = {plan.key for plan in plans}
 
-    assert plan_keys == {"monthly", "annual"}
+    assert plan_keys == {"monthly", "quarterly", "semi_annual", "annual"}
     assert all(plan.trial_days >= 0 for plan in plans)
 
 

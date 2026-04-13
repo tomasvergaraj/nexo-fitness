@@ -174,6 +174,7 @@ export default function MemberAppPage() {
   const [supportDateTo, setSupportDateTo] = useState(initialSupportDateRange.to);
   const [agendaDateFilter, setAgendaDateFilter] = useState<'all' | 'today' | 'week'>('all');
   const [agendaModalityFilter, setAgendaModalityFilter] = useState<string>('all');
+  const [agendaBranchFilter, setAgendaBranchFilter] = useState<string>('all');
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
   const [notificationSearch, setNotificationSearch] = useState('');
   const initialNotificationDateRange = useMemo(() => getNotificationPresetDateRange('30d'), []);
@@ -600,6 +601,15 @@ export default function MemberAppPage() {
     () => Array.from(new Set(classes.map((c) => c.modality).filter(Boolean))).sort(),
     [classes],
   );
+  const agendaBranches = useMemo(() => (
+    Array.from(
+      new Map(
+        classes
+          .filter((gymClass) => gymClass.branch_id && gymClass.branch_name)
+          .map((gymClass) => [gymClass.branch_id!, { id: gymClass.branch_id!, name: gymClass.branch_name! }]),
+      ).values(),
+    ).sort((left, right) => left.name.localeCompare(right.name, 'es-CL'))
+  ), [classes]);
 
   const filteredClasses = useMemo(() => {
     const now = new Date();
@@ -610,9 +620,10 @@ export default function MemberAppPage() {
       if (agendaDateFilter === 'today' && start > todayEnd) return false;
       if (agendaDateFilter === 'week' && start > weekEnd) return false;
       if (agendaModalityFilter !== 'all' && c.modality !== agendaModalityFilter) return false;
+      if (agendaBranchFilter !== 'all' && c.branch_id !== agendaBranchFilter) return false;
       return true;
     });
-  }, [classes, agendaDateFilter, agendaModalityFilter]);
+  }, [agendaBranchFilter, agendaDateFilter, agendaModalityFilter, classes]);
   const reservations = reservationsQuery.data?.items ?? [];
   const payments = paymentsQuery.data ?? [];
   const supportInteractions = supportInteractionsQuery.data ?? [];
@@ -1804,6 +1815,30 @@ export default function MemberAppPage() {
                       ))}
                     </>
                   ) : null}
+                  {agendaBranches.length > 1 ? (
+                    <>
+                      <span className="self-center text-surface-600">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setAgendaBranchFilter('all')}
+                        style={agendaBranchFilter === 'all' ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                        className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaBranchFilter === 'all' ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                      >
+                        Todas las sedes
+                      </button>
+                      {agendaBranches.map((branch) => (
+                        <button
+                          key={branch.id}
+                          type="button"
+                          onClick={() => setAgendaBranchFilter(branch.id)}
+                          style={agendaBranchFilter === branch.id ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                          className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaBranchFilter === branch.id ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                        >
+                          {branch.name}
+                        </button>
+                      ))}
+                    </>
+                  ) : null}
                 </div>
               </Panel>
 
@@ -1852,13 +1887,26 @@ export default function MemberAppPage() {
                               <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">
                                 {gymClass.class_type || 'Clase del gimnasio'}
                                 {gymClass.instructor_name ? ` · ${gymClass.instructor_name}` : ''}
+                                {gymClass.branch_name ? ` · ${gymClass.branch_name}` : ''}
                                 {gymClass.description ? ` · ${gymClass.description}` : ''}
                               </p>
 
-                              <div className={cn('mt-4 grid gap-3', gymClass.instructor_name ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
+                              <div
+                                className={cn(
+                                  'mt-4 grid gap-3',
+                                  gymClass.instructor_name && gymClass.branch_name
+                                    ? 'sm:grid-cols-5'
+                                    : gymClass.instructor_name || gymClass.branch_name
+                                      ? 'sm:grid-cols-4'
+                                      : 'sm:grid-cols-3',
+                                )}
+                              >
                                 <ProfileDetailItem label="Horario" value={formatAgendaTimeRange(gymClass.start_time, gymClass.end_time)} />
                                 {gymClass.instructor_name && (
                                   <ProfileDetailItem label="Instructor" value={gymClass.instructor_name} />
+                                )}
+                                {gymClass.branch_name && (
+                                  <ProfileDetailItem label="Sede" value={gymClass.branch_name} />
                                 )}
                                 <ProfileDetailItem label="Cupos" value={formatAgendaAvailabilityLabel(gymClass.current_bookings, gymClass.max_capacity)} />
                                 <ProfileDetailItem label="Tu estado" value={reservation ? getReservationStatusLabel(reservation) : 'Disponible para reservar'} />
@@ -1919,8 +1967,8 @@ export default function MemberAppPage() {
                 );
               }) : (
                 <EmptyState
-                  title={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' ? 'Sin clases con ese filtro' : 'Todavía no hay clases visibles'}
-                  description={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' ? 'Prueba cambiando el filtro de fecha o modalidad.' : 'La agenda aparecerá aquí cuando el gimnasio publique nuevas clases.'}
+                  title={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' || agendaBranchFilter !== 'all' ? 'Sin clases con ese filtro' : 'Todavía no hay clases visibles'}
+                  description={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' || agendaBranchFilter !== 'all' ? 'Prueba cambiando el filtro de fecha, modalidad o sede.' : 'La agenda aparecerá aquí cuando el gimnasio publique nuevas clases.'}
                 />
               )}
             </div>

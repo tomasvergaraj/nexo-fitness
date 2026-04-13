@@ -32,6 +32,7 @@ class AdminSaaSPlanResponse(SaaSPlanResponse):
     id: UUID
     stripe_price_id: Optional[str] = None
     fintoc_enabled: bool = False
+    webpay_enabled: bool = False
     is_active: bool = True
     is_public: bool = True
     sort_order: int = 0
@@ -54,6 +55,7 @@ class AdminSaaSPlanCreateRequest(BaseModel):
     features: List[str] = Field(default_factory=list)
     stripe_price_id: Optional[str] = None
     fintoc_enabled: bool = False
+    webpay_enabled: bool = False
     highlighted: bool = False
     is_active: bool = True
     is_public: bool = True
@@ -74,6 +76,7 @@ class AdminSaaSPlanUpdateRequest(BaseModel):
     features: Optional[List[str]] = None
     stripe_price_id: Optional[str] = None
     fintoc_enabled: Optional[bool] = None
+    webpay_enabled: Optional[bool] = None
     highlighted: Optional[bool] = None
     is_active: Optional[bool] = None
     is_public: Optional[bool] = None
@@ -121,6 +124,12 @@ class TenantBillingResponse(BaseModel):
     is_active: bool
     max_members: Optional[int] = None
     max_branches: Optional[int] = None
+    usage_active_clients: int = 0
+    usage_active_branches: int = 0
+    remaining_client_slots: int = 0
+    remaining_branch_slots: int = 0
+    over_client_limit: bool = False
+    over_branch_limit: bool = False
     features: List[str] = Field(default_factory=list)
     owner_email: Optional[str] = None
     owner_name: Optional[str] = None

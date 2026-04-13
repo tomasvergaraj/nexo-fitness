@@ -10,7 +10,7 @@ from sqlalchemy import select, func, or_, cast, Date, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_tenant_context, TenantContext, require_roles, get_current_user
+from app.core.dependencies import get_tenant_context, TenantContext, require_roles, require_plans_write, get_current_user
 from app.core.security import hash_password, verify_password
 from app.models.user import User, UserRole
 from app.models.business import Plan, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
@@ -20,6 +20,7 @@ from app.schemas.business import (
     PaymentCreate, PaymentResponse,
     PaginatedResponse,
 )
+from app.services.tenant_quota_service import assert_can_create_client
 
 # ─── Clients Router ──────────────────────────────────────────────────────────
 
@@ -179,6 +180,10 @@ async def create_client(
     existing = await db.execute(select(User).where(User.email == data.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
+    if not ctx.tenant:
+        raise HTTPException(status_code=403, detail="No hay tenant activo para crear clientes")
+
+    await assert_can_create_client(db, ctx.tenant)
 
     user = User(
         tenant_id=ctx.tenant_id,
@@ -350,6 +355,11 @@ async def update_client(
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="El correo ya está registrado por otro usuario")
 
+    if update_data.get("is_active") is True and not client.is_active:
+        if not ctx.tenant:
+            raise HTTPException(status_code=403, detail="No hay tenant activo para reactivar clientes")
+        await assert_can_create_client(db, ctx.tenant)
+
     if "tags" in update_data and update_data["tags"] is not None:
         update_data["tags"] = json.dumps(update_data["tags"])
     for field, value in update_data.items():
@@ -369,8 +379,12 @@ async def reset_client_password(
     _user=Depends(require_roles("owner", "admin")),
 ):
     new_password = data.get("new_password", "")
-    if not new_password or len(new_password) < 6:
-        raise HTTPException(status_code=422, detail="La contraseña debe tener al menos 6 caracteres")
+    if not new_password or len(new_password) < 8:
+        raise HTTPException(status_code=422, detail="La contraseña debe tener al menos 8 caracteres")
+    if not any(c.isupper() for c in new_password):
+        raise HTTPException(status_code=422, detail="La contraseña debe incluir al menos una mayúscula")
+    if not any(c.isdigit() for c in new_password):
+        raise HTTPException(status_code=422, detail="La contraseña debe incluir al menos un número")
 
     result = await db.execute(
         select(User).where(User.id == client_id, User.tenant_id == ctx.tenant_id)
@@ -415,7 +429,7 @@ async def create_plan(
     data: PlanCreate,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
+    _user=Depends(require_plans_write()),
 ):
     plan = Plan(
         tenant_id=ctx.tenant_id,
@@ -445,7 +459,7 @@ async def update_plan(
     data: PlanUpdate,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
+    _user=Depends(require_plans_write()),
 ):
     result = await db.execute(
         select(Plan).where(Plan.id == plan_id, Plan.tenant_id == ctx.tenant_id)

@@ -40,7 +40,10 @@ async def list_public_plans(db: AsyncSession = Depends(get_db)):
 
 @router.post("/signup", response_model=SaaSSignupResponse, status_code=201)
 async def signup_tenant(data: SaaSSignupRequest, db: AsyncSession = Depends(get_db)):
-    return await BillingService.signup_tenant(db, data)
+    try:
+        return await BillingService.signup_tenant(db, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/webhooks/stripe")
@@ -52,10 +55,11 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/subscription", response_model=TenantBillingResponse)
 async def get_current_subscription(
+    db: AsyncSession = Depends(get_db),
     tenant=Depends(get_current_tenant),
     _user=Depends(require_roles("owner", "admin")),
 ):
-    return BillingService.describe_tenant_billing(tenant)
+    return await BillingService.describe_tenant_billing(db, tenant)
 
 
 @router.get("/admin/tenants", response_model=PaginatedResponse)
@@ -197,7 +201,10 @@ async def reactivate_subscription(
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
 
-    checkout_url = await create_reactivation_checkout(db, tenant, current_user, plan_key=body.plan_key)
+    try:
+        checkout_url = await create_reactivation_checkout(db, tenant, current_user, plan_key=body.plan_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     if checkout_url:
         await db.flush()

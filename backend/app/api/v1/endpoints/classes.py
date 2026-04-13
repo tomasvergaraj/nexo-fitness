@@ -22,6 +22,12 @@ from app.schemas.business import (
     CheckInCreate, CheckInResponse, CheckInScanRequest,
     PaginatedResponse,
 )
+from app.services.class_service import (
+    build_gym_class_response,
+    build_gym_class_responses,
+    normalize_class_modality,
+    validate_branch_assignment,
+)
 
 logger = structlog.get_logger()
 
@@ -159,29 +165,20 @@ async def list_classes(
         count_query = count_query.where(GymClass.branch_id == branch_id)
     if instructor_id:
         query = query.where(GymClass.instructor_id == instructor_id)
+        count_query = count_query.where(GymClass.instructor_id == instructor_id)
     if date_from:
         query = query.where(GymClass.start_time >= date_from)
+        count_query = count_query.where(GymClass.start_time >= date_from)
     if date_to:
         query = query.where(GymClass.start_time <= date_to)
+        count_query = count_query.where(GymClass.start_time <= date_to)
 
     total = (await db.execute(count_query)).scalar() or 0
     query = query.order_by(GymClass.start_time.desc()).offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(query)
     classes = result.scalars().all()
 
-    # Enrich with instructor names
-    instructor_ids = list({c.instructor_id for c in classes if c.instructor_id})
-    instructors_by_id = {}
-    if instructor_ids:
-        instr_result = await db.execute(select(User).where(User.id.in_(instructor_ids)))
-        for u in instr_result.scalars().all():
-            instructors_by_id[u.id] = f"{u.first_name} {u.last_name}"
-
-    items = []
-    for c in classes:
-        data = GymClassResponse.model_validate(c)
-        data.instructor_name = instructors_by_id.get(c.instructor_id) if c.instructor_id else None
-        items.append(data)
+    items = await build_gym_class_responses(db, classes)
 
     return PaginatedResponse(
         items=items,
@@ -215,8 +212,16 @@ async def create_class(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "trainer")),
 ):
+    normalized_modality = normalize_class_modality(data.modality)
+    await validate_branch_assignment(
+        db,
+        tenant_id=ctx.tenant_id,
+        modality=normalized_modality,
+        branch_id=data.branch_id,
+    )
     duration = data.end_time - data.start_time
     base_fields = data.model_dump(exclude={"repeat_type", "repeat_until", "start_time", "end_time"})
+    base_fields["modality"] = normalized_modality
 
     if data.repeat_type != "none" and data.repeat_until:
         group_id = uuid4()
@@ -243,7 +248,7 @@ async def create_class(
         await db.flush()
         if first_class:
             await db.refresh(first_class)
-            return GymClassResponse.model_validate(first_class)
+            return await build_gym_class_response(db, first_class)
         # Fallback (no occurrences generated — repeat_until before start)
         gym_class = GymClass(
             tenant_id=ctx.tenant_id,
@@ -255,7 +260,7 @@ async def create_class(
         db.add(gym_class)
         await db.flush()
         await db.refresh(gym_class)
-        return GymClassResponse.model_validate(gym_class)
+        return await build_gym_class_response(db, gym_class)
 
     gym_class = GymClass(
         tenant_id=ctx.tenant_id,
@@ -268,7 +273,7 @@ async def create_class(
     db.add(gym_class)
     await db.flush()
     await db.refresh(gym_class)
-    return GymClassResponse.model_validate(gym_class)
+    return await build_gym_class_response(db, gym_class)
 
 
 @router.get("/classes/{class_id}", response_model=GymClassResponse)
@@ -283,7 +288,7 @@ async def get_class(
     gym_class = result.scalar_one_or_none()
     if not gym_class:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
-    return GymClassResponse.model_validate(gym_class)
+    return await build_gym_class_response(db, gym_class)
 
 
 @router.get("/classes/{class_id}/reservations", response_model=list[ClassReservationDetailResponse])
@@ -349,12 +354,22 @@ async def update_class(
         raise HTTPException(status_code=404, detail="Clase no encontrada")
 
     update_data = data.model_dump(exclude_unset=True)
+    effective_modality = normalize_class_modality(update_data.get("modality", gym_class.modality))
+    effective_branch_id = update_data["branch_id"] if "branch_id" in update_data else gym_class.branch_id
+    await validate_branch_assignment(
+        db,
+        tenant_id=ctx.tenant_id,
+        modality=effective_modality,
+        branch_id=effective_branch_id,
+    )
+    update_data["modality"] = effective_modality
+
     for field, value in update_data.items():
         setattr(gym_class, field, value)
 
     await db.flush()
     await db.refresh(gym_class)
-    return GymClassResponse.model_validate(gym_class)
+    return await build_gym_class_response(db, gym_class)
 
 
 @router.delete("/classes/{class_id}", status_code=204)

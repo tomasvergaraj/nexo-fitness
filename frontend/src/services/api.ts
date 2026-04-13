@@ -179,6 +179,7 @@ export const branchesApi = {
 export const membershipsApi = {
   list: (params?: Record<string, unknown>) => api.get('/memberships', { params }),
   create: (data: Record<string, unknown>) => api.post('/memberships', data),
+  manualSale: (data: Record<string, unknown>) => api.post('/memberships/manual-sale', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/memberships/${id}`, data),
 };
 
@@ -224,6 +225,7 @@ export const paymentProviderApi = {
   list: () => api.get('/payment-provider/accounts'),
   create: (data: Record<string, unknown>) => api.post('/payment-provider/accounts', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/payment-provider/accounts/${id}`, data),
+  delete: (id: string) => api.delete(`/payment-provider/accounts/${id}`),
 };
 
 export const platformApi = {
@@ -236,6 +238,10 @@ export const publicApi = {
   getStorefrontProfile: () => api.get('/public/storefront/profile'),
   getTenantPlans: (slug: string) => api.get(`/public/tenants/${slug}/plans`),
   getTenantClasses: (slug: string, params?: Record<string, unknown>) => api.get(`/public/tenants/${slug}/classes`, { params }),
+  validateTenantPromoCode: (slug: string, code: string, planId: string) =>
+    api.post(`/public/tenants/${slug}/promo-codes/validate`, { code, plan_id: planId }),
+  validateStorefrontPromoCode: (code: string, planId: string) =>
+    api.post('/public/storefront/promo-codes/validate', { code, plan_id: planId }),
   createCheckoutSession: (slug: string, data: Record<string, unknown>) => api.post(`/public/tenants/${slug}/checkout-session`, data),
   createStorefrontCheckoutSession: (data: Record<string, unknown>) => api.post('/public/storefront/checkout-session', data),
   createLead: (data: Record<string, unknown>) => api.post('/public/leads', data),

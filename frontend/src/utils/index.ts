@@ -5,11 +5,35 @@ export const DEFAULT_PRIMARY_COLOR = '#06b6d4';
 export const DEFAULT_SECONDARY_COLOR = '#0f766e';
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 
+export type PlanLimitErrorPayload = {
+  detail: string;
+  code: 'plan_limit_reached';
+  resource: 'clients' | 'branches';
+  current_usage: number;
+  limit: number;
+  plan_key: string;
+  upgrade_required: boolean;
+};
+
 /**
  * Extracts a human-readable message from a FastAPI/Pydantic error response.
  * Handles both string details and Pydantic v2 array validation errors.
  */
 export function getApiError(error: unknown, fallback = 'Ocurrió un error inesperado'): string {
+  const responseData = (error as any)?.response?.data;
+  if (responseData && typeof responseData === 'object') {
+    const responseDetail = (responseData as Record<string, unknown>).detail;
+    if (responseDetail && typeof responseDetail === 'object') {
+      const nestedMessage = (responseDetail as Record<string, unknown>).detail;
+      if (typeof nestedMessage === 'string') {
+        return nestedMessage;
+      }
+      const nestedAlt = (responseDetail as Record<string, unknown>).message;
+      if (typeof nestedAlt === 'string') {
+        return nestedAlt;
+      }
+    }
+  }
   const detail = (error as any)?.response?.data?.detail;
   if (!detail) return fallback;
   if (typeof detail === 'string') return detail;
@@ -22,6 +46,29 @@ export function getApiError(error: unknown, fallback = 'Ocurrió un error inespe
       .join(' · ');
   }
   return fallback;
+}
+
+export function getPlanLimitError(error: unknown): PlanLimitErrorPayload | null {
+  const responseData = (error as any)?.response?.data;
+  if (!responseData || typeof responseData !== 'object') {
+    return null;
+  }
+
+  const candidate = responseData as Partial<PlanLimitErrorPayload> & {
+    detail?: unknown;
+  };
+  if (candidate.code === 'plan_limit_reached' && typeof candidate.detail === 'string') {
+    return candidate as PlanLimitErrorPayload;
+  }
+
+  if (candidate.detail && typeof candidate.detail === 'object') {
+    const nested = candidate.detail as Partial<PlanLimitErrorPayload>;
+    if (nested.code === 'plan_limit_reached' && typeof nested.detail === 'string') {
+      return nested as PlanLimitErrorPayload;
+    }
+  }
+
+  return null;
 }
 
 export function cn(...inputs: ClassValue[]) {

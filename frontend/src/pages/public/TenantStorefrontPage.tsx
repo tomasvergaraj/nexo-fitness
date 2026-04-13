@@ -14,16 +14,19 @@ import {
   LockKeyhole,
   Mail,
   MapPin,
+  Moon,
   Phone,
   ShieldCheck,
   Sparkles,
   Store,
+  Sun,
   Tag,
   UserRound,
 } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import Modal from '@/components/ui/Modal';
 import { authApi, publicApi } from '@/services/api';
+import { useThemeStore } from '@/stores/themeStore';
 import {
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_SECONDARY_COLOR,
@@ -34,11 +37,12 @@ import {
   formatDateTime,
   formatDurationLabel,
   getApiError,
+  getPlanLimitError,
   getPublicAppOrigin,
   hexToRgbString,
   normalizeHexColor,
 } from '@/utils';
-import type { PublicCheckoutSession, TenantPublicProfile } from '@/types';
+import type { PromoCodeValidateResponse, PublicCheckoutSession, TenantPublicProfile } from '@/types';
 
 type CheckoutForm = {
   plan_id: string;
@@ -171,6 +175,7 @@ export default function TenantStorefrontPage() {
   const { slug = '' } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { isDark, toggle: toggleTheme } = useThemeStore();
   const [showCheckout, setShowCheckout] = useState(false);
   const [form, setForm] = useState<CheckoutForm>(emptyForm);
   const [accountMode, setAccountMode] = useState<AccountMode>('create');
@@ -183,6 +188,10 @@ export default function TenantStorefrontPage() {
   const [checkoutVerifyToken, setCheckoutVerifyToken] = useState('');
   const [checkoutVerifyLoading, setCheckoutVerifyLoading] = useState(false);
   const [checkoutVerifyError, setCheckoutVerifyError] = useState('');
+  const [checkoutPlanLimitError, setCheckoutPlanLimitError] = useState('');
+  const [promoInputByPlan, setPromoInputByPlan] = useState<Record<string, string>>({});
+  const [promoResultByPlan, setPromoResultByPlan] = useState<Record<string, PromoCodeValidateResponse | null>>({});
+  const [promoValidatingPlan, setPromoValidatingPlan] = useState<string | null>(null);
   const checkoutVerifyCodeRef = useRef<HTMLInputElement>(null);
   const isHostResolvedStorefront = !slug;
   const hostStorefrontKey = typeof window === 'undefined' ? '' : window.location.hostname;
@@ -243,6 +252,13 @@ export default function TenantStorefrontPage() {
   const hasMultiplePlans = featuredPlans.length > 1;
   const discountedSelectedPrice = getDiscountedPrice(selectedPlan);
   const selectedSavings = getDiscountAmount(selectedPlan);
+  const selectedPromoResult = selectedPlan ? promoResultByPlan[selectedPlan.id] ?? null : null;
+  const selectedFinalCheckoutPrice = selectedPromoResult?.valid
+    ? (selectedPromoResult.final_price ?? discountedSelectedPrice)
+    : discountedSelectedPrice;
+  const selectedPromoDiscountAmount = selectedPromoResult?.valid
+    ? (selectedPromoResult.discount_amount ?? 0)
+    : 0;
   const passwordMismatch = accountMode === 'create'
     && form.customer_password.length > 0
     && form.customer_password_confirm.length > 0
@@ -267,6 +283,30 @@ export default function TenantStorefrontPage() {
         : { ...current, plan_id: defaultPlan.id }
     ));
   }, [defaultPlan]);
+
+  async function validatePromoCode(planId: string) {
+    const code = (promoInputByPlan[planId] ?? '').trim();
+    if (!code) {
+      return;
+    }
+    setPromoValidatingPlan(planId);
+    try {
+      const response = isHostResolvedStorefront
+        ? await publicApi.validateStorefrontPromoCode(code, planId)
+        : await publicApi.validateTenantPromoCode(slug, code, planId);
+      const result = response.data as PromoCodeValidateResponse;
+      setPromoResultByPlan((current) => ({ ...current, [planId]: result }));
+      if (result.valid) {
+        toast.success('Código promocional aplicado.');
+      } else {
+        toast.error(result.reason ?? 'Código promocional no válido.');
+      }
+    } catch (error) {
+      toast.error(getApiError(error, 'No se pudo validar el código promocional.'));
+    } finally {
+      setPromoValidatingPlan(null);
+    }
+  }
 
   const handleCheckoutSendCode = async () => {
     const email = form.customer_email.trim().toLowerCase();
@@ -324,6 +364,7 @@ export default function TenantStorefrontPage() {
         verification_token: accountMode === 'create' && checkoutVerifyToken ? checkoutVerifyToken : undefined,
         success_url: `${storefrontUrl}?checkout=success`,
         cancel_url: `${storefrontUrl}?checkout=cancelled`,
+        ...(selectedPromoResult?.valid && selectedPromoResult.promo_code_id ? { promo_code_id: selectedPromoResult.promo_code_id } : {}),
       };
       const response = isHostResolvedStorefront
         ? await publicApi.createStorefrontCheckoutSession(payload)
@@ -347,6 +388,10 @@ export default function TenantStorefrontPage() {
       window.location.assign(payload.checkout_url);
     },
     onError: (error: unknown) => {
+      const limitError = getPlanLimitError(error);
+      if (limitError) {
+        setCheckoutPlanLimitError(limitError.detail);
+      }
       toast.error(getApiError(error, 'No se pudo iniciar la compra'));
     },
   });
@@ -361,18 +406,18 @@ export default function TenantStorefrontPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#f8f5ef] px-4 py-8 sm:px-6 lg:px-10">
-        <div className="mx-auto h-[620px] max-w-6xl rounded-[2rem] border border-surface-200/70 bg-white/80 shimmer" />
+      <div className="min-h-screen bg-[#f8f5ef] px-4 py-8 dark:bg-surface-950 sm:px-6 lg:px-10">
+        <div className="mx-auto h-[620px] max-w-6xl rounded-[2rem] border border-surface-200/70 bg-white/80 shimmer dark:border-surface-800/70 dark:bg-surface-900/80" />
       </div>
     );
   }
 
   if (isError || !data) {
     return (
-      <div className="min-h-screen bg-[#f8f5ef] px-4 py-10 text-surface-900">
-        <div className="mx-auto max-w-4xl rounded-[2rem] border border-surface-200 bg-white p-8 text-center shadow-sm">
+      <div className="min-h-screen bg-[#f8f5ef] px-4 py-10 text-surface-900 dark:bg-surface-950 dark:text-white">
+        <div className="mx-auto max-w-4xl rounded-[2rem] border border-surface-200 bg-white p-8 text-center shadow-sm dark:border-surface-800 dark:bg-surface-900">
           <h1 className="text-3xl font-bold font-display">Tienda no disponible</h1>
-          <p className="mt-3 text-surface-600">
+          <p className="mt-3 text-surface-600 dark:text-surface-300">
             No encontramos el gimnasio solicitado o su compra online aún no está habilitada.
           </p>
         </div>
@@ -384,7 +429,7 @@ export default function TenantStorefrontPage() {
   const checkoutActionLabel = accountMode === 'create' ? 'Crear cuenta y continuar al pago' : 'Continuar al pago';
 
   return (
-    <div className="min-h-screen bg-[#f8f5ef] text-surface-900">
+    <div className="min-h-screen bg-[#f8f5ef] text-surface-900 dark:bg-surface-950 dark:text-surface-100">
       <section className="relative overflow-hidden px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
         <div
           className="absolute inset-0"
@@ -394,15 +439,26 @@ export default function TenantStorefrontPage() {
         />
 
         <div className="relative mx-auto max-w-7xl space-y-8">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="btn-secondary border-white/70 bg-white/75 backdrop-blur-xl dark:border-surface-700 dark:bg-surface-900/85"
+            >
+              {isDark ? <Sun size={16} className="text-amber-500" /> : <Moon size={16} className="text-surface-600" />}
+              {isDark ? 'Modo claro' : 'Modo oscuro'}
+            </button>
+          </div>
+
           <div className="grid gap-8 xl:grid-cols-[minmax(0,1.08fr)_minmax(340px,0.92fr)] xl:gap-10">
             <div className="space-y-6">
-              <div className="rounded-[2rem] border border-white/60 bg-white/85 p-6 shadow-[0_30px_80px_-45px_rgba(15,23,42,0.35)] backdrop-blur-xl sm:p-8">
+              <div className="rounded-[2rem] border border-white/60 bg-white/85 p-6 shadow-[0_30px_80px_-45px_rgba(15,23,42,0.35)] backdrop-blur-xl dark:border-surface-800/70 dark:bg-surface-900/88 sm:p-8">
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
                   {data.branding.logo_url ? (
                     <img
                       src={data.branding.logo_url}
                       alt={data.tenant_name}
-                      className="h-16 w-16 shrink-0 rounded-2xl border border-surface-200 bg-white object-contain p-2"
+                      className="h-16 w-16 shrink-0 rounded-2xl border border-surface-200 bg-white object-contain p-2 dark:border-surface-700 dark:bg-surface-900"
                       onError={(event) => {
                         (event.target as HTMLImageElement).style.display = 'none';
                       }}
@@ -417,43 +473,43 @@ export default function TenantStorefrontPage() {
                   )}
 
                   <div className="min-w-0 flex-1">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-surface-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-600">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-surface-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-600 dark:border-surface-700 dark:bg-surface-800/80 dark:text-surface-300">
                       <Store size={14} />
                       Compra online
                     </div>
                     <h1 className="mt-4 max-w-3xl text-4xl font-bold font-display leading-tight sm:text-5xl">
                       {data.branding.marketplace_headline || `Compra tu plan en ${data.tenant_name}`}
                     </h1>
-                    <p className="mt-4 max-w-2xl text-base leading-7 text-surface-600">
+                    <p className="mt-4 max-w-2xl text-base leading-7 text-surface-600 dark:text-surface-300">
                       {data.branding.marketplace_description || 'Elige tu plan, completa tus datos y continúa al pago seguro en pocos pasos.'}
                     </p>
 
                     <div className="mt-6 grid gap-3 sm:grid-cols-3">
                       {storefrontSummary.map((item) => (
-                        <div key={item.label} className="rounded-[1.35rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">{item.label}</p>
-                          <p className="mt-2 text-2xl font-bold font-display text-surface-900">{item.value}</p>
+                        <div key={item.label} className="rounded-[1.35rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4 dark:border-surface-700 dark:bg-surface-800/70">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">{item.label}</p>
+                          <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{item.value}</p>
                         </div>
                       ))}
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-6 flex flex-wrap gap-3 text-sm text-surface-600">
+                <div className="mt-6 flex flex-wrap gap-3 text-sm text-surface-600 dark:text-surface-300">
                   {data.city ? (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-white px-4 py-2">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-white px-4 py-2 dark:border-surface-700 dark:bg-surface-900/80">
                       <MapPin size={15} />
                       {data.city}
                     </span>
                   ) : null}
                   {data.phone ? (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-white px-4 py-2">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-white px-4 py-2 dark:border-surface-700 dark:bg-surface-900/80">
                       <Phone size={15} />
                       {data.phone}
                     </span>
                   ) : null}
                   {data.email ? (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-white px-4 py-2">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-surface-200 bg-white px-4 py-2 dark:border-surface-700 dark:bg-surface-900/80">
                       <Mail size={15} />
                       {data.email}
                     </span>
@@ -461,27 +517,27 @@ export default function TenantStorefrontPage() {
                 </div>
 
                 <div className="mt-8 grid gap-4 md:grid-cols-3">
-                  <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5">
-                    <p className="text-sm font-semibold text-surface-900">1. Elige tu plan</p>
-                    <p className="mt-2 text-sm leading-6 text-surface-600">Compara duración, ahorro y beneficios sin perderte en detalles técnicos.</p>
+                  <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                    <p className="text-sm font-semibold text-surface-900 dark:text-white">1. Elige tu plan</p>
+                    <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">Compara duración, ahorro y beneficios sin perderte en detalles técnicos.</p>
                   </div>
-                  <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5">
-                    <p className="text-sm font-semibold text-surface-900">2. Crea tu acceso</p>
-                    <p className="mt-2 text-sm leading-6 text-surface-600">Deja tu correo, teléfono y, si quieres, tu contraseña para entrar apenas se confirme el pago.</p>
+                  <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                    <p className="text-sm font-semibold text-surface-900 dark:text-white">2. Crea tu acceso</p>
+                    <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">Deja tu correo, teléfono y, si quieres, tu contraseña para entrar apenas se confirme el pago.</p>
                   </div>
-                  <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5">
-                    <p className="text-sm font-semibold text-surface-900">3. Paga y empieza</p>
-                    <p className="mt-2 text-sm leading-6 text-surface-600">Te llevamos a un pago seguro y, si lo interrumpes, podrás retomar la compra desde aquí.</p>
+                  <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                    <p className="text-sm font-semibold text-surface-900 dark:text-white">3. Paga y empieza</p>
+                    <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">Te llevamos a un pago seguro y, si lo interrumpes, podrás retomar la compra desde aquí.</p>
                   </div>
                 </div>
               </div>
 
               {hasMultiplePlans ? (
-                <div className="rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
+                <div className="rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-xl dark:border-surface-800/70 dark:bg-surface-900/82">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h2 className="text-2xl font-bold font-display">Elige tu plan</h2>
-                      <p className="mt-1 text-sm text-surface-600">Te dejamos claro cuánto pagas hoy, cuánto ahorras y por cuánto tiempo te cubre.</p>
+                      <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">Te dejamos claro cuánto pagas hoy, cuánto ahorras y por cuánto tiempo te cubre.</p>
                     </div>
                     <span className="badge badge-neutral">{featuredPlans.length} opciones</span>
                   </div>
@@ -501,13 +557,13 @@ export default function TenantStorefrontPage() {
                           className={`rounded-[1.5rem] border p-5 text-left transition-all ${
                             isSelected
                               ? 'border-transparent text-white shadow-xl shadow-surface-900/10'
-                              : 'border-surface-200 bg-[#fcfbf7] hover:-translate-y-0.5 hover:border-surface-300 hover:bg-white'
+                              : 'border-surface-200 bg-[#fcfbf7] hover:-translate-y-0.5 hover:border-surface-300 hover:bg-white dark:border-surface-700 dark:bg-surface-800/70 dark:hover:border-surface-600 dark:hover:bg-surface-800/90'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-3">
                             <div>
-                              <p className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-surface-900'}`}>{plan.name}</p>
-                              <p className={`mt-1 text-sm ${isSelected ? 'text-surface-300' : 'text-surface-600'}`}>
+                              <p className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-surface-900 dark:text-white'}`}>{plan.name}</p>
+                              <p className={`mt-1 text-sm ${isSelected ? 'text-surface-300' : 'text-surface-600 dark:text-surface-300'}`}>
                                 {plan.description || 'Plan listo para contratar online.'}
                               </p>
                             </div>
@@ -558,24 +614,24 @@ export default function TenantStorefrontPage() {
                               plan.discount_pct ? 'lg:grid-cols-3' : 'lg:grid-cols-2',
                             )}>
                               {plan.discount_pct ? (
-                                <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-emerald-100 bg-emerald-50/90'}`}>
+                                <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-emerald-100 bg-emerald-50/90 dark:border-emerald-900/40 dark:bg-emerald-950/25'}`}>
                                   <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'text-white/70' : 'text-emerald-700'}`}>Ahorro</p>
-                                  <p className={`mt-1 text-sm font-semibold ${isSelected ? 'text-white' : 'text-surface-900'}`}>
+                                  <p className={`mt-1 text-sm font-semibold ${isSelected ? 'text-white' : 'text-surface-900 dark:text-white'}`}>
                                     {formatCurrency(savings, plan.currency)}
                                   </p>
                                 </div>
                               ) : null}
 
-                              <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-surface-200 bg-white/90'}`}>
-                                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'text-white/70' : 'text-surface-500'}`}>Vigencia</p>
-                                <p className={`mt-1 text-sm font-semibold ${isSelected ? 'text-white' : 'text-surface-900'}`}>
+                              <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-surface-200 bg-white/90 dark:border-surface-700 dark:bg-surface-900/80'}`}>
+                                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'text-white/70' : 'text-surface-500 dark:text-surface-400'}`}>Vigencia</p>
+                                <p className={`mt-1 text-sm font-semibold ${isSelected ? 'text-white' : 'text-surface-900 dark:text-white'}`}>
                                   {formatDurationLabel(plan.duration_type, plan.duration_days)}
                                 </p>
                               </div>
 
-                              <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-surface-200 bg-white/90'}`}>
-                                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'text-white/70' : 'text-surface-500'}`}>Compra</p>
-                                <p className={`mt-1 text-sm font-semibold ${isSelected ? 'text-white' : 'text-surface-900'}`}>
+                              <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-surface-200 bg-white/90 dark:border-surface-700 dark:bg-surface-900/80'}`}>
+                                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'text-white/70' : 'text-surface-500 dark:text-surface-400'}`}>Compra</p>
+                                <p className={`mt-1 text-sm font-semibold ${isSelected ? 'text-white' : 'text-surface-900 dark:text-white'}`}>
                                   Online y segura
                                 </p>
                               </div>
@@ -591,19 +647,20 @@ export default function TenantStorefrontPage() {
               {(data.upcoming_classes.length > 0 || data.branches.length > 0) ? (
                 <div className="grid gap-6 lg:grid-cols-2">
                   {data.upcoming_classes.length > 0 ? (
-                    <div className="rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
+                    <div className="rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-xl dark:border-surface-800/70 dark:bg-surface-900/82">
                       <h2 className="text-2xl font-bold font-display">Próximas clases</h2>
                       <div className="mt-5 space-y-3">
                         {data.upcoming_classes.slice(0, 3).map((item) => (
-                          <div key={item.id} className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4">
+                          <div key={item.id} className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4 dark:border-surface-700 dark:bg-surface-800/70">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                               <div>
-                                <p className="font-semibold text-surface-900">{item.name}</p>
-                                <p className="mt-1 text-sm text-surface-600">
+                                <p className="font-semibold text-surface-900 dark:text-white">{item.name}</p>
+                                <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">
                                   {item.class_type || 'Clase general'} · {formatClassModalityLabel(item.modality)}
+                                  {item.branch_name ? ` · ${item.branch_name}` : ''}
                                 </p>
                               </div>
-                              <div className="text-sm text-surface-600">
+                              <div className="text-sm text-surface-600 dark:text-surface-300">
                                 <div className="flex items-center gap-2">
                                   <CalendarDays size={15} />
                                   {formatDateTime(item.start_time)}
@@ -618,14 +675,14 @@ export default function TenantStorefrontPage() {
                   ) : null}
 
                   {data.branches.length > 0 ? (
-                    <div className="rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
+                    <div className="rounded-[2rem] border border-white/60 bg-white/80 p-6 shadow-sm backdrop-blur-xl dark:border-surface-800/70 dark:bg-surface-900/82">
                       <h2 className="text-2xl font-bold font-display">Dónde encontrarnos</h2>
                       <div className="mt-5 space-y-3">
                         {data.branches.slice(0, 3).map((branch) => (
-                          <div key={branch.id} className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4">
-                            <p className="font-semibold text-surface-900">{branch.name}</p>
-                            <p className="mt-1 text-sm text-surface-600">{branch.address || 'Dirección por confirmar'}</p>
-                            <p className="mt-1 text-sm text-surface-500">
+                          <div key={branch.id} className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4 dark:border-surface-700 dark:bg-surface-800/70">
+                            <p className="font-semibold text-surface-900 dark:text-white">{branch.name}</p>
+                            <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">{branch.address || 'Dirección por confirmar'}</p>
+                            <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">
                               {branch.city || 'Ciudad por confirmar'}{branch.phone ? ` · ${branch.phone}` : ''}
                             </p>
                           </div>
@@ -638,21 +695,21 @@ export default function TenantStorefrontPage() {
             </div>
 
             <div className="space-y-6 xl:sticky xl:top-6 xl:self-start">
-              <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-[0_40px_100px_-55px_rgba(15,23,42,0.4)]">
+              <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-[0_40px_100px_-55px_rgba(15,23,42,0.4)] dark:border-surface-800 dark:bg-surface-900">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-surface-500">Tu selección</p>
+                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-surface-500 dark:text-surface-400">Tu selección</p>
                     <h2 className="mt-2 text-3xl font-bold font-display">{selectedPlan?.name || 'Plan disponible'}</h2>
-                    <p className="mt-2 text-sm leading-6 text-surface-600">
+                    <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                       {selectedPlan?.description || 'Plan listo para comprar online y activar con el gimnasio.'}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 text-left sm:min-w-[180px] sm:text-right">
-                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">
+                  <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 text-left sm:min-w-[180px] sm:text-right dark:border-surface-700 dark:bg-surface-800/80">
+                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">
                       {selectedPlan ? formatDurationLabel(selectedPlan.duration_type, selectedPlan.duration_days) : 'Disponible'}
                     </p>
                     <p className="mt-1 text-2xl font-bold font-display">
-                      {selectedPlan ? formatCurrency(discountedSelectedPrice, selectedPlan.currency) : '--'}
+                      {selectedPlan ? formatCurrency(selectedFinalCheckoutPrice, selectedPlan.currency) : '--'}
                     </p>
                     {selectedPlan?.discount_pct ? (
                       <>
@@ -668,34 +725,93 @@ export default function TenantStorefrontPage() {
                 </div>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Hoy pagas</p>
-                    <p className="mt-2 text-lg font-bold font-display text-surface-900">
-                      {selectedPlan ? formatCurrency(discountedSelectedPrice, selectedPlan.currency) : '--'}
+                  <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4 dark:border-surface-700 dark:bg-surface-800/70">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Hoy pagas</p>
+                    <p className="mt-2 text-lg font-bold font-display text-surface-900 dark:text-white">
+                      {selectedPlan ? formatCurrency(selectedFinalCheckoutPrice, selectedPlan.currency) : '--'}
                     </p>
                   </div>
-                  <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Vigencia</p>
-                    <p className="mt-2 text-lg font-bold font-display text-surface-900">
+                  <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4 dark:border-surface-700 dark:bg-surface-800/70">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Vigencia</p>
+                    <p className="mt-2 text-lg font-bold font-display text-surface-900 dark:text-white">
                       {selectedPlan ? formatDurationLabel(selectedPlan.duration_type, selectedPlan.duration_days) : '--'}
                     </p>
                   </div>
-                  <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Acceso</p>
-                    <p className="mt-2 text-lg font-bold font-display text-surface-900">Desde cualquier dispositivo</p>
+                  <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4 dark:border-surface-700 dark:bg-surface-800/70">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Acceso</p>
+                    <p className="mt-2 text-lg font-bold font-display text-surface-900 dark:text-white">Desde cualquier dispositivo</p>
                   </div>
                 </div>
 
-                <div className="mt-5 rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5">
-                  <div className="flex items-center gap-3 text-sm text-surface-600">
+                <div className="mt-5 rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
+                    <Tag size={16} className="text-brand-600" />
+                    Código promocional
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    <input
+                      type="text"
+                      className="input flex-1 uppercase"
+                      placeholder="Ej. BIENVENIDA10"
+                      value={selectedPlan ? (promoInputByPlan[selectedPlan.id] ?? '') : ''}
+                      onChange={(event) => {
+                        if (!selectedPlan) return;
+                        const nextValue = event.target.value.toUpperCase();
+                        setPromoInputByPlan((current) => ({ ...current, [selectedPlan.id]: nextValue }));
+                        if (promoResultByPlan[selectedPlan.id]) {
+                          setPromoResultByPlan((current) => ({ ...current, [selectedPlan.id]: null }));
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && selectedPlan) {
+                          event.preventDefault();
+                          void validatePromoCode(selectedPlan.id);
+                        }
+                      }}
+                      maxLength={50}
+                      disabled={!selectedPlan}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedPlan) return;
+                        void validatePromoCode(selectedPlan.id);
+                      }}
+                      disabled={!selectedPlan || promoValidatingPlan === selectedPlan.id || !(selectedPlan ? (promoInputByPlan[selectedPlan.id] ?? '').trim() : '')}
+                      className="btn-secondary whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {promoValidatingPlan === selectedPlan?.id ? 'Aplicando...' : 'Aplicar'}
+                    </button>
+                  </div>
+                  {selectedPlan && selectedPromoResult?.valid ? (
+                    <div className="mt-3 rounded-[1.1rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+                      <p className="font-semibold">
+                        {selectedPromoResult.discount_type === 'percent'
+                          ? `${selectedPromoResult.discount_value}% de descuento adicional`
+                          : `${formatCurrency(selectedPromoDiscountAmount, selectedPlan.currency)} de descuento adicional`}
+                      </p>
+                      <p className="mt-1 text-xs">
+                        Total con promo: {formatCurrency(selectedFinalCheckoutPrice, selectedPlan.currency)}
+                      </p>
+                    </div>
+                  ) : null}
+                  {selectedPlan && selectedPromoResult && !selectedPromoResult.valid ? (
+                    <div className="mt-3 rounded-[1.1rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                      {selectedPromoResult.reason || 'Este código no se pudo aplicar al plan seleccionado.'}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-5 rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                  <div className="flex items-center gap-3 text-sm text-surface-600 dark:text-surface-300">
                     <ShieldCheck size={18} className="text-emerald-600" />
                     Pago seguro y confirmación del intento de compra en el momento
                   </div>
-                  <div className="mt-3 flex items-center gap-3 text-sm text-surface-600">
-                    <Clock3 size={18} className="text-surface-500" />
+                  <div className="mt-3 flex items-center gap-3 text-sm text-surface-600 dark:text-surface-300">
+                    <Clock3 size={18} className="text-surface-500 dark:text-surface-400" />
                     Flujo guiado para crear tu acceso y pagar sin vueltas
                   </div>
-                  <div className="mt-3 flex items-center gap-3 text-sm text-surface-600">
+                  <div className="mt-3 flex items-center gap-3 text-sm text-surface-600 dark:text-surface-300">
                     <BadgeCheck size={18} className="text-brand-600" />
                     Si ya tienes cuenta con este correo, mantendremos tu acceso actual
                   </div>
@@ -717,6 +833,7 @@ export default function TenantStorefrontPage() {
                       return;
                     }
 
+                    setCheckoutPlanLimitError('');
                     setForm((current) => ({ ...current, plan_id: selectedPlan.id }));
                     setShowCheckout(true);
                   }}
@@ -728,7 +845,7 @@ export default function TenantStorefrontPage() {
                   {checkoutReady ? 'Crear cuenta y pagar' : 'Compra online no disponible'}
                 </button>
 
-                <p className="mt-3 text-center text-sm text-surface-500">
+                <p className="mt-3 text-center text-sm text-surface-500 dark:text-surface-400">
                   {checkoutReady
                     ? 'Primero completarás tus datos y luego te llevaremos al pago seguro.'
                     : 'Este gimnasio aún no tiene la compra online habilitada.'}
@@ -736,21 +853,21 @@ export default function TenantStorefrontPage() {
               </div>
 
               {resumeSession ? (
-                <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-sm">
+                <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-sm dark:border-surface-800 dark:bg-surface-900">
                   <h3 className="text-xl font-bold font-display">Retomar compra</h3>
-                  <p className="mt-2 text-sm leading-6 text-surface-600">
+                  <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                     Tienes una compra pendiente para {resumePlan?.name ?? 'tu plan seleccionado'}. Puedes seguir desde donde la dejaste.
                   </p>
-                  <a href={resumeSession.checkout_url} className="mt-5 btn-secondary w-full bg-surface-900 text-white hover:bg-surface-800">
+                  <a href={resumeSession.checkout_url} className="mt-5 btn-primary w-full py-3">
                     Continuar al pago
                     <ArrowRight size={16} />
                   </a>
                 </div>
               ) : null}
 
-              <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-sm">
+              <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-sm dark:border-surface-800 dark:bg-surface-900">
                 <h3 className="text-xl font-bold font-display">Antes de pagar</h3>
-                <ul className="mt-4 space-y-3 text-sm leading-6 text-surface-600">
+                <ul className="mt-4 space-y-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
                   <li className="flex items-start gap-3">
                     <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
                     Verifica bien tu correo para recibir acceso e instrucciones del gimnasio.
@@ -788,6 +905,7 @@ export default function TenantStorefrontPage() {
             setCheckoutVerifyCode('');
             setCheckoutVerifyToken('');
             setCheckoutVerifyError('');
+            setCheckoutPlanLimitError('');
           }
         }}
       >
@@ -795,7 +913,7 @@ export default function TenantStorefrontPage() {
         {accountMode === 'create' && checkoutVerifyStep !== 'done' ? (
           <div className="space-y-5 py-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700">
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-200">
                 {checkoutVerifyStep === 'email' ? 'Tu correo electrónico' : 'Código de verificación'}
               </label>
               {checkoutVerifyStep === 'email' ? (
@@ -848,7 +966,7 @@ export default function TenantStorefrontPage() {
                   <button
                     type="button"
                     onClick={() => { setCheckoutVerifyStep('email'); setCheckoutVerifyCode(''); setCheckoutVerifyError(''); }}
-                    className="text-center text-sm text-surface-500 hover:text-surface-700"
+                    className="text-center text-sm text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200"
                   >
                     Cambiar correo o reenviar código
                   </button>
@@ -857,7 +975,7 @@ export default function TenantStorefrontPage() {
               <button
                 type="button"
                 onClick={() => { setAccountMode('existing'); setCheckoutVerifyStep('done'); setCheckoutVerifyToken(''); }}
-                className="text-center text-sm text-surface-500 hover:text-surface-700"
+                className="text-center text-sm text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200"
               >
                 Ya tengo una cuenta, continuar con acceso existente
               </button>
@@ -868,6 +986,7 @@ export default function TenantStorefrontPage() {
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();
+            setCheckoutPlanLimitError('');
             if (accountMode === 'create' && form.customer_password.trim().length < 8) {
               toast.error('Crea una contraseña de al menos 8 caracteres.');
               return;
@@ -879,10 +998,15 @@ export default function TenantStorefrontPage() {
             checkoutMutation.mutate();
           }}
         >
+          {checkoutPlanLimitError ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/10 dark:text-amber-200">
+              {checkoutPlanLimitError}
+            </div>
+          ) : null}
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
             <div className="space-y-5">
-              <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-surface-900">
+              <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
                   <UserRound size={16} className="text-brand-600" />
                   Tus datos
                 </div>
@@ -928,17 +1052,17 @@ export default function TenantStorefrontPage() {
                       value={form.customer_date_of_birth}
                       onChange={(event) => setForm((current) => ({ ...current, customer_date_of_birth: event.target.value }))}
                     />
-                    <span className="mt-1.5 block text-xs text-surface-500">Opcional. Nos ayuda a personalizar recordatorios y cumpleaños.</span>
+                    <span className="mt-1.5 block text-xs text-surface-500 dark:text-surface-400">Opcional. Nos ayuda a personalizar recordatorios y cumpleaños.</span>
                   </label>
                 </div>
               </div>
 
-              <div className="rounded-[1.5rem] border border-surface-200 bg-white p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-surface-900">
+              <div className="rounded-[1.5rem] border border-surface-200 bg-white p-5 dark:border-surface-800 dark:bg-surface-900">
+                <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
                   <LockKeyhole size={16} className="text-brand-600" />
                   Tu acceso
                 </div>
-                <p className="mt-2 text-sm leading-6 text-surface-600">
+                <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                   Puedes dejar tu cuenta lista ahora o seguir con tu acceso actual si ya habías usado este correo.
                 </p>
 
@@ -949,15 +1073,15 @@ export default function TenantStorefrontPage() {
                     className={cn(
                       'rounded-[1.35rem] border p-4 text-left transition-all',
                       accountMode === 'create'
-                        ? 'border-brand-300 bg-brand-50 shadow-sm'
-                        : 'border-surface-200 bg-[#fcfbf7] hover:border-surface-300',
+                        ? 'border-brand-300 bg-gradient-to-br from-brand-50 to-cyan-50 shadow-sm ring-1 ring-brand-100'
+                        : 'border-surface-200 bg-[#fcfbf7] hover:border-surface-300 dark:border-surface-700 dark:bg-surface-800/70 dark:hover:border-surface-600',
                     )}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold text-surface-900">Crear mi cuenta ahora</p>
+                      <p className="font-semibold text-surface-900 dark:text-white">Crear mi cuenta ahora</p>
                       <Sparkles size={16} className={accountMode === 'create' ? 'text-brand-600' : 'text-surface-400'} />
                     </div>
-                    <p className="mt-2 text-sm leading-6 text-surface-600">
+                    <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                       Dejas tu contraseña lista y, después del pago, ya puedes entrar con este correo.
                     </p>
                   </button>
@@ -970,17 +1094,17 @@ export default function TenantStorefrontPage() {
                     className={cn(
                       'rounded-[1.35rem] border p-4 text-left transition-all',
                       accountMode === 'existing'
-                        ? 'border-surface-900 bg-surface-900 text-white shadow-sm'
-                        : 'border-surface-200 bg-[#fcfbf7] hover:border-surface-300',
+                        ? 'border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm ring-1 ring-amber-100'
+                        : 'border-surface-200 bg-[#fcfbf7] hover:border-surface-300 dark:border-surface-700 dark:bg-surface-800/70 dark:hover:border-surface-600',
                     )}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <p className={accountMode === 'existing' ? 'font-semibold text-white' : 'font-semibold text-surface-900'}>
+                      <p className="font-semibold text-surface-900 dark:text-white">
                         Ya tengo cuenta o la crearé después
                       </p>
-                      <BadgeCheck size={16} className={accountMode === 'existing' ? 'text-white' : 'text-surface-400'} />
+                      <BadgeCheck size={16} className={accountMode === 'existing' ? 'text-amber-600' : 'text-surface-400'} />
                     </div>
-                    <p className={accountMode === 'existing' ? 'mt-2 text-sm leading-6 text-surface-200' : 'mt-2 text-sm leading-6 text-surface-600'}>
+                    <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                       Mantendremos tu acceso actual si este correo ya existe. Si aún no existe, te ayudaremos después del pago.
                     </p>
                   </button>
@@ -999,7 +1123,7 @@ export default function TenantStorefrontPage() {
                         autoComplete="new-password"
                         required={accountMode === 'create'}
                       />
-                      <span className="mt-1.5 block text-xs text-surface-500">Úsala para entrar apenas se confirme el pago.</span>
+                      <span className="mt-1.5 block text-xs text-surface-500 dark:text-surface-400">Úsala para entrar apenas se confirme el pago.</span>
                     </label>
                     <label className="block">
                       <span className="mb-1.5 block text-sm font-medium text-surface-700">Confirmar contraseña</span>
@@ -1015,33 +1139,33 @@ export default function TenantStorefrontPage() {
                       {passwordMismatch ? (
                         <span className="mt-1.5 block text-xs font-medium text-red-600">Las contraseñas deben coincidir.</span>
                       ) : (
-                        <span className="mt-1.5 block text-xs text-surface-500">Si este correo ya tenía cuenta, mantendremos esa clave actual.</span>
+                        <span className="mt-1.5 block text-xs text-surface-500 dark:text-surface-400">Si este correo ya tenía cuenta, mantendremos esa clave actual.</span>
                       )}
                     </label>
                   </div>
                 ) : null}
               </div>
 
-              <div className="rounded-[1.25rem] border border-surface-200 bg-surface-50 px-4 py-4 text-sm text-surface-600">
+              <div className="rounded-[1.25rem] border border-brand-100 bg-gradient-to-r from-brand-50 to-cyan-50 px-4 py-4 text-sm text-surface-700 dark:border-brand-900/50 dark:from-brand-950/30 dark:to-cyan-950/20 dark:text-surface-200">
                 Al continuar, prepararemos tu compra y te redirigiremos a una pantalla segura para pagar.
               </div>
             </div>
 
             <div className="space-y-4">
               {selectedPlan ? (
-                <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5">
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-surface-500">Resumen de tu compra</p>
-                  <p className="mt-3 text-lg font-semibold text-surface-900">{selectedPlan.name}</p>
-                  <p className="mt-2 text-sm leading-6 text-surface-600">
+                <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
+                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Resumen de tu compra</p>
+                  <p className="mt-3 text-lg font-semibold text-surface-900 dark:text-white">{selectedPlan.name}</p>
+                  <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                     {selectedPlan.description || 'Plan listo para contratar online.'}
                   </p>
 
-                  <div className="mt-4 rounded-[1.25rem] border border-surface-200 bg-white p-4">
+                  <div className="mt-4 rounded-[1.25rem] border border-surface-200 bg-white p-4 dark:border-surface-700 dark:bg-surface-900/80">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Hoy pagas</p>
-                        <p className="mt-1 text-2xl font-bold font-display text-surface-900">
-                          {formatCurrency(discountedSelectedPrice, selectedPlan.currency)}
+                        <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Hoy pagas</p>
+                        <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                          {formatCurrency(selectedFinalCheckoutPrice, selectedPlan.currency)}
                         </p>
                         {selectedPlan.discount_pct ? (
                           <>
@@ -1053,8 +1177,13 @@ export default function TenantStorefrontPage() {
                             </p>
                           </>
                         ) : null}
+                        {selectedPromoResult?.valid ? (
+                          <p className="mt-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                            Promo aplicado: -{formatCurrency(selectedPromoDiscountAmount, selectedPlan.currency)}
+                          </p>
+                        ) : null}
                       </div>
-                      <span className="rounded-full border border-surface-200 bg-surface-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">
+                      <span className="rounded-full border border-surface-200 bg-surface-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:border-surface-700 dark:bg-surface-800 dark:text-surface-400">
                         {formatDurationLabel(selectedPlan.duration_type, selectedPlan.duration_days)}
                       </span>
                     </div>
@@ -1062,9 +1191,9 @@ export default function TenantStorefrontPage() {
                 </div>
               ) : null}
 
-              <div className="rounded-[1.5rem] border border-surface-200 bg-white p-5">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-surface-500">Qué pasará después</p>
-                <ul className="mt-4 space-y-3 text-sm leading-6 text-surface-600">
+              <div className="rounded-[1.5rem] border border-surface-200 bg-white p-5 dark:border-surface-800 dark:bg-surface-900">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Qué pasará después</p>
+                <ul className="mt-4 space-y-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
                   <li className="flex items-start gap-3">
                     <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
                     Confirmaremos tu intento de compra y te llevaremos al pago seguro.

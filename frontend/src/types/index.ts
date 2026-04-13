@@ -33,18 +33,18 @@ export interface SaaSPlan {
   key: string;
   name: string;
   description: string;
-  license_type: 'monthly' | 'annual' | 'perpetual';
+  license_type: 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'perpetual';
   currency: string;
   price: number;
   discount_pct?: number | null;
-  billing_interval: 'month' | 'year' | 'manual';
+  billing_interval: 'month' | 'quarter' | 'semi_annual' | 'year' | 'manual';
   trial_days: number;
   max_members: number;
   max_branches: number;
   features: string[];
   highlighted: boolean;
   checkout_enabled: boolean;
-  checkout_provider?: 'stripe' | 'fintoc' | null;
+  checkout_provider?: 'stripe' | 'fintoc' | 'webpay' | null;
 }
 
 export interface SaaSSignupRequest extends RegisterGymRequest {
@@ -57,6 +57,7 @@ export interface AdminSaaSPlan extends SaaSPlan {
   id: string;
   stripe_price_id?: string;
   fintoc_enabled: boolean;
+  webpay_enabled: boolean;
   is_active: boolean;
   is_public: boolean;
   sort_order: number;
@@ -68,17 +69,18 @@ export interface AdminSaaSPlanCreateRequest {
   key: string;
   name: string;
   description: string;
-  license_type: 'monthly' | 'annual' | 'perpetual';
+  license_type: 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'perpetual';
   currency: string;
   price: number;
   discount_pct?: number | null;
-  billing_interval: 'month' | 'year' | 'manual';
+  billing_interval: 'month' | 'quarter' | 'semi_annual' | 'year' | 'manual';
   trial_days: number;
   max_members: number;
   max_branches: number;
   features: string[];
   stripe_price_id?: string | null;
   fintoc_enabled: boolean;
+  webpay_enabled: boolean;
   highlighted: boolean;
   is_active: boolean;
   is_public: boolean;
@@ -88,17 +90,18 @@ export interface AdminSaaSPlanCreateRequest {
 export interface AdminSaaSPlanUpdateRequest {
   name?: string;
   description?: string;
-  license_type?: 'monthly' | 'annual' | 'perpetual';
+  license_type?: 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'perpetual';
   currency?: string;
   price?: number;
   discount_pct?: number | null;
-  billing_interval?: 'month' | 'year' | 'manual';
+  billing_interval?: 'month' | 'quarter' | 'semi_annual' | 'year' | 'manual';
   trial_days?: number;
   max_members?: number;
   max_branches?: number;
   features?: string[];
   stripe_price_id?: string | null;
   fintoc_enabled?: boolean;
+  webpay_enabled?: boolean;
   highlighted?: boolean;
   is_active?: boolean;
   is_public?: boolean;
@@ -116,7 +119,7 @@ export interface SaaSSignupResponse {
   checkout_required: boolean;
   checkout_url?: string;
   checkout_session_id?: string;
-  checkout_provider?: 'stripe' | 'fintoc' | null;
+  checkout_provider?: 'stripe' | 'fintoc' | 'webpay' | null;
   widget_token?: string;
   next_action: string;
   message: string;
@@ -139,6 +142,12 @@ export interface TenantBilling {
   is_active: boolean;
   max_members?: number;
   max_branches?: number;
+  usage_active_clients: number;
+  usage_active_branches: number;
+  remaining_client_slots: number;
+  remaining_branch_slots: number;
+  over_client_limit: boolean;
+  over_branch_limit: boolean;
   features: string[];
   owner_email?: string;
   owner_name?: string;
@@ -202,6 +211,10 @@ export interface Branch {
   address?: string;
   city?: string;
   phone?: string;
+  email?: string;
+  opening_time?: string; // "HH:MM:SS"
+  closing_time?: string; // "HH:MM:SS"
+  capacity?: number;
   is_active: boolean;
   created_at: string;
 }
@@ -236,6 +249,7 @@ export interface GymClass {
   instructor_id?: string;
   instructor_name?: string;
   branch_id?: string;
+  branch_name?: string;
   start_time: string;
   end_time: string;
   max_capacity: number;
@@ -293,6 +307,7 @@ export interface CheckIn {
 export interface Payment {
   id: string;
   user_id: string;
+  membership_id?: string;
   amount: number;
   currency: string;
   status: 'pending' | 'completed' | 'failed' | 'refunded' | 'cancelled';
@@ -417,6 +432,25 @@ export interface Membership {
   created_at: string;
   user_name?: string;
   plan_name?: string;
+}
+
+export interface MembershipManualSaleRequest {
+  user_id: string;
+  plan_id: string;
+  starts_at: string;
+  expires_at?: string | null;
+  payment_method: 'cash' | 'transfer';
+  amount?: number | null;
+  currency: string;
+  description?: string | null;
+  notes?: string | null;
+  auto_renew?: boolean;
+}
+
+export interface MembershipManualSaleResult {
+  membership: Membership;
+  payment: Payment;
+  replaced_membership_ids: string[];
 }
 
 export interface SupportInteraction {
@@ -609,6 +643,8 @@ export interface TenantPublicProfile {
     class_type?: string;
     start_time: string;
     modality: string;
+    branch_id?: string;
+    branch_name?: string;
     capacity: number;
     bookings: number;
   }>;

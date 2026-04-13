@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlsplit
 
 import httpx
@@ -16,6 +16,7 @@ settings = get_settings()
 logger = structlog.get_logger()
 
 FINTOC_API_BASE = "https://api.fintoc.com"
+FINTOC_SUPPORTED_ACCOUNT_TYPES = {"checking_account", "sight_account"}
 
 
 class FintocService:
@@ -27,9 +28,66 @@ class FintocService:
     def is_configured(self) -> bool:
         return bool(settings.FINTOC_SECRET_KEY)
 
-    def _headers(self) -> dict:
+    def normalize_recipient_account(self, recipient_account: Optional[dict[str, Any]]) -> Optional[dict[str, str]]:
+        if recipient_account is None:
+            return None
+        if not isinstance(recipient_account, dict):
+            raise ValueError("Fintoc requiere una cuenta receptora valida para bank_transfer.")
+
+        holder_id = str(recipient_account.get("holder_id") or "").strip()
+        number = str(recipient_account.get("number") or "").strip()
+        account_type = str(recipient_account.get("type") or "").strip().lower()
+        institution_id = str(recipient_account.get("institution_id") or "").strip()
+
+        if not any((holder_id, number, account_type, institution_id)):
+            return None
+
+        missing_fields = [
+            field_name
+            for field_name, value in (
+                ("holder_id", holder_id),
+                ("number", number),
+                ("type", account_type),
+                ("institution_id", institution_id),
+            )
+            if not value
+        ]
+        if missing_fields:
+            raise ValueError(
+                "Fintoc requiere recipient_account con holder_id, number, type e institution_id."
+            )
+
+        if account_type not in FINTOC_SUPPORTED_ACCOUNT_TYPES:
+            raise ValueError("Fintoc solo admite cuentas checking_account o sight_account.")
+
         return {
-            "Authorization": settings.FINTOC_SECRET_KEY,
+            "holder_id": holder_id,
+            "number": number,
+            "type": account_type,
+            "institution_id": institution_id,
+        }
+
+    def get_platform_recipient_account(self, *, required: bool = False) -> Optional[dict[str, str]]:
+        raw_recipient_account = {
+            "holder_id": settings.FINTOC_RECIPIENT_HOLDER_ID,
+            "number": settings.FINTOC_RECIPIENT_ACCOUNT_NUMBER,
+            "type": settings.FINTOC_RECIPIENT_ACCOUNT_TYPE,
+            "institution_id": settings.FINTOC_RECIPIENT_INSTITUTION_ID,
+        }
+        recipient_account = self.normalize_recipient_account(raw_recipient_account)
+        if required and recipient_account is None:
+            raise ValueError(
+                "Fintoc requiere una cuenta receptora para la plataforma. "
+                "Si tu organizacion tiene 'collection' activado en Fintoc, deja estos campos vacios "
+                "(Fintoc ya tiene la cuenta preset). De lo contrario, configura "
+                "FINTOC_RECIPIENT_HOLDER_ID, FINTOC_RECIPIENT_ACCOUNT_NUMBER, "
+                "FINTOC_RECIPIENT_ACCOUNT_TYPE y FINTOC_RECIPIENT_INSTITUTION_ID en backend/.env."
+            )
+        return recipient_account
+
+    def _headers(self, secret_key: Optional[str] = None) -> dict:
+        return {
+            "Authorization": secret_key or settings.FINTOC_SECRET_KEY,
             "Content-Type": "application/json",
         }
 
@@ -65,25 +123,35 @@ class FintocService:
         success_url: str = "",
         cancel_url: str = "",
         metadata: Optional[dict] = None,
+        recipient_account: Optional[dict[str, Any]] = None,
+        secret_key: Optional[str] = None,
     ) -> dict:
         """
         Create a Checkout Session and return the hosted redirect URL.
         The customer completes the transfer on Fintoc's checkout domain.
         """
-        if not self.is_configured():
+        effective_key = (secret_key or "").strip() or None
+        if not effective_key and not self.is_configured():
             raise RuntimeError("Fintoc no esta configurado. Agrega FINTOC_SECRET_KEY al .env")
 
         self._validate_return_url(success_url, "success_url")
         self._validate_return_url(cancel_url, "cancel_url")
 
-        payload: dict = {
+        payload: dict[str, Any] = {
             "amount": amount,
             "currency": currency.upper(),
             "success_url": success_url,
             "cancel_url": cancel_url,
-            # We already selected the provider in our checkout UI.
-            "payment_method_types": ["bank_transfer"],
         }
+        normalized_recipient_account = self.normalize_recipient_account(recipient_account)
+        if normalized_recipient_account:
+            # Non-collection account: specify bank_transfer + recipient explicitly.
+            payload["payment_method_types"] = ["bank_transfer"]
+            payload["payment_method_options"] = {
+                "bank_transfer": {"recipient_account": normalized_recipient_account}
+            }
+        # Collection-activated account: omit payment_method_types and payment_method_options
+        # entirely — Fintoc routes to the preset account automatically.
         if customer_name or customer_email:
             payload["customer"] = {
                 **({"name": customer_name} if customer_name else {}),
@@ -95,7 +163,7 @@ class FintocService:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(
                 f"{FINTOC_API_BASE}/v2/checkout_sessions",
-                headers=self._headers(),
+                headers=self._headers(effective_key),
                 json=payload,
             )
 

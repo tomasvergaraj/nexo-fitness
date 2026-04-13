@@ -79,7 +79,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   const payload = readPushPayload(event);
   const title = payload.title || 'Nexo Fitness';
-  const targetUrl = payload.url || payload.action_url || '/member?tab=notifications';
+  const targetUrl = payload.url || '/';
 
   event.waitUntil(
     Promise.all([
@@ -103,7 +103,7 @@ self.addEventListener('push', (event) => {
 });
 
 self.addEventListener('notificationclick', (event) => {
-  const targetUrl = event.notification.data?.url || '/member?tab=notifications';
+  const targetUrl = event.notification.data?.url || '/';
   event.notification.close();
 
   event.waitUntil(

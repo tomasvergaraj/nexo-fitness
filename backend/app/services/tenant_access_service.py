@@ -18,6 +18,7 @@ from app.models.platform import SaaSPlan
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserRole
 from app.services.saas_plan_service import SaaSPlanDefinition, definition_from_record, default_saas_plan_definitions
+from app.services.webpay_checkout_service import create_platform_webpay_transaction
 
 settings = get_settings()
 logger = structlog.get_logger()
@@ -150,6 +151,27 @@ async def create_reactivation_checkout(
 
     if provider == "fintoc":
         return await create_reactivation_fintoc_checkout(db, tenant, user, plan=plan)
+    if provider == "webpay":
+        transaction = await create_platform_webpay_transaction(
+            db,
+            tenant=tenant,
+            user=user,
+            amount=plan.price,
+            currency=plan.currency or "CLP",
+            flow_type="saas_reactivation",
+            flow_reference=plan.key,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "tenant_id": str(tenant.id),
+                "tenant_slug": tenant.slug,
+                "owner_user_id": str(user.id),
+                "owner_email": user.email,
+                "saas_plan_key": plan.key,
+            },
+        )
+        await db.flush()
+        return transaction.checkout_url
 
     # Stripe
     customer_id = tenant.stripe_customer_id
@@ -215,6 +237,7 @@ async def create_reactivation_fintoc_checkout(
             "owner_user_id": str(user.id),
             "saas_plan_key": plan.key,
         },
+        recipient_account=None,
     )
     return session.get("redirect_url")
 

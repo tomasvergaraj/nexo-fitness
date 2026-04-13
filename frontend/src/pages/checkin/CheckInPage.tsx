@@ -390,7 +390,7 @@ export default function CheckInPage() {
   const quickStats = useMemo(
     () => [
       { label: 'Check-ins hoy', value: String(metrics?.checkins_today ?? recentCheckins.length), icon: UserCheck, color: 'brand' },
-      { label: 'Clientes activos', value: String(metrics?.active_members ?? 0), icon: Clock, color: 'amber' },
+      { label: 'Membresías activas', value: String(metrics?.active_members ?? 0), icon: Clock, color: 'amber' },
       { label: 'Reservas hoy', value: String(metrics?.reservations_today ?? 0), icon: CheckCircle2, color: 'emerald' },
     ],
     [metrics?.active_members, metrics?.checkins_today, metrics?.reservations_today, recentCheckins.length],

@@ -8,12 +8,12 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
-import { classesApi } from '@/services/api';
+import { branchesApi, classesApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import {
   classStatusColor, cn, formatDateTime, formatTime, getApiError, occupancyColor,
 } from '@/utils';
-import type { ClassReservationDetail, GymClass, PaginatedResponse } from '@/types';
+import type { Branch, ClassReservationDetail, GymClass, PaginatedResponse } from '@/types';
 
 type ViewMode = 'cards' | 'list' | 'calendar';
 type StatusFilter = 'all' | 'scheduled' | 'cancelled';
@@ -22,6 +22,7 @@ type ClassFormState = {
   name: string;
   class_type: string;
   modality: 'in_person' | 'online' | 'hybrid';
+  branch_id: string;
   start_time: string;
   duration_minutes: string;
   max_capacity: string;
@@ -106,11 +107,12 @@ function applyClassTypeChange(
   return nextState;
 }
 
-function createInitialForm(_date: Date): ClassFormState {
+function createInitialForm(_date: Date, defaultBranchId = ''): ClassFormState {
   return {
     name: '',
     class_type: '',
     modality: 'in_person',
+    branch_id: defaultBranchId,
     start_time: '09:00',
     duration_minutes: '60',
     max_capacity: '20',
@@ -169,6 +171,7 @@ export default function ClassesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [selectedDay, setSelectedDay] = useState(0);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [selectedBranchId, setSelectedBranchId] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedClass, setSelectedClass] = useState<GymClass | null>(null);
   const [classToCancel, setClassToCancel] = useState<GymClass | null>(null);
@@ -185,7 +188,16 @@ export default function ClassesPage() {
   }, []);
 
   const selectedDate = weekDates[selectedDay];
-  const [form, setForm] = useState<ClassFormState>(() => createInitialForm(selectedDate));
+  const { data: branches = [] } = useQuery<Branch[]>({
+    queryKey: ['branches'],
+    queryFn: async () => (await branchesApi.list()).data,
+  });
+  const activeBranches = useMemo(
+    () => branches.filter((branch) => branch.is_active),
+    [branches],
+  );
+  const defaultBranchId = activeBranches.length === 1 ? activeBranches[0].id : '';
+  const [form, setForm] = useState<ClassFormState>(() => createInitialForm(selectedDate, defaultBranchId));
 
   const dateFrom = new Date(selectedDate);
   dateFrom.setHours(0, 0, 0, 0);
@@ -212,8 +224,15 @@ export default function ClassesPage() {
     }
   }, [form.modality, form.online_link]);
 
+  useEffect(() => {
+    if (!showCreateModal || form.branch_id || !defaultBranchId) {
+      return;
+    }
+    setForm((current) => ({ ...current, branch_id: defaultBranchId }));
+  }, [defaultBranchId, form.branch_id, showCreateModal]);
+
   const { data, isLoading, isError } = useQuery<PaginatedResponse<GymClass>>({
-    queryKey: ['classes', selectedDate.toISOString(), statusFilter],
+    queryKey: ['classes', selectedDate.toISOString(), statusFilter, selectedBranchId],
     queryFn: async () => {
       const response = await classesApi.list({
         page: 1,
@@ -221,6 +240,7 @@ export default function ClassesPage() {
         date_from: dateFrom.toISOString(),
         date_to: dateTo.toISOString(),
         ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+        ...(selectedBranchId ? { branch_id: selectedBranchId } : {}),
       });
       return response.data;
     },
@@ -246,11 +266,15 @@ export default function ClassesPage() {
       if (!Number.isFinite(Number(form.max_capacity)) || Number(form.max_capacity) < 1) {
         throw new Error('La capacidad debe ser mayor a cero');
       }
+      if (form.modality !== 'online' && !form.branch_id) {
+        throw new Error(activeBranches.length ? 'Selecciona una sede para esta clase.' : 'Necesitas al menos una sede activa para agendar clases presenciales o híbridas.');
+      }
 
       const response = await classesApi.create({
         name: form.name,
         class_type: form.class_type || null,
         modality: form.modality,
+        branch_id: form.branch_id || null,
         start_time: computedStartDate.toISOString(),
         end_time: computedEndDate.toISOString(),
         max_capacity: Number(form.max_capacity),
@@ -264,7 +288,7 @@ export default function ClassesPage() {
     onSuccess: () => {
       toast.success('Clase creada');
       setShowCreateModal(false);
-      setForm(createInitialForm(selectedDate));
+      setForm(createInitialForm(selectedDate, defaultBranchId));
       queryClient.invalidateQueries({ queryKey: ['classes'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
     },
@@ -312,7 +336,19 @@ export default function ClassesPage() {
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Clases</h1>
           <p className="mt-1 text-sm text-surface-500">Agenda real para {dayLabel}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {activeBranches.length > 1 ? (
+            <select
+              value={selectedBranchId}
+              onChange={(event) => setSelectedBranchId(event.target.value)}
+              className="input min-w-[210px] text-sm"
+            >
+              <option value="">Todas las sedes</option>
+              {activeBranches.map((branch) => (
+                <option key={branch.id} value={branch.id}>{branch.name}</option>
+              ))}
+            </select>
+          ) : null}
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -325,7 +361,7 @@ export default function ClassesPage() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
-              setForm(createInitialForm(selectedDate));
+              setForm(createInitialForm(selectedDate, defaultBranchId));
               setShowCreateModal(true);
             }}
             className="btn-primary text-sm"
@@ -421,7 +457,9 @@ export default function ClassesPage() {
             <div className="col-span-full rounded-2xl border border-dashed border-surface-300 bg-surface-50 px-6 py-10 text-center dark:border-surface-700 dark:bg-surface-900/30">
               <CalendarDays size={28} className="mx-auto mb-3 text-surface-300 dark:text-surface-700" />
               <p className="font-medium text-surface-700 dark:text-surface-200">No hay clases para este día</p>
-              <p className="mt-1 text-sm text-surface-500">Prueba otro día o crea una nueva clase.</p>
+              <p className="mt-1 text-sm text-surface-500">
+                {selectedBranchId ? 'Prueba otra sede o crea una nueva clase.' : 'Prueba otro día o crea una nueva clase.'}
+              </p>
             </div>
           ) : null}
 
@@ -464,6 +502,12 @@ export default function ClassesPage() {
                     {gymClass.modality === 'online' ? <Video size={14} /> : <MapPin size={14} />}
                     <span>{formatClassModalityLabel(gymClass.modality)}</span>
                   </div>
+                  {gymClass.branch_name ? (
+                    <div className="flex items-center gap-2">
+                      <MapPin size={14} />
+                      <span>{gymClass.branch_name}</span>
+                    </div>
+                  ) : null}
                   <div className="flex items-center gap-2">
                     <Users size={14} />
                     <span>{gymClass.current_bookings}/{gymClass.max_capacity} reservas</span>
@@ -541,7 +585,12 @@ export default function ClassesPage() {
                   <span className={cn('badge', classStatusColor(gymClass.status))}>{formatClassStatusLabel(gymClass.status)}</span>
                 </div>
                 <p className="text-sm text-surface-500">
-                  {formatDateTime(gymClass.start_time)} · {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')} · {gymClass.current_bookings}/{gymClass.max_capacity}
+                  {formatDateTime(gymClass.start_time)}
+                  {' · '}
+                  {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')}
+                  {gymClass.branch_name ? ` · ${gymClass.branch_name}` : ''}
+                  {' · '}
+                  {gymClass.current_bookings}/{gymClass.max_capacity}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -596,7 +645,10 @@ export default function ClassesPage() {
                     <span className={cn('badge', classStatusColor(gymClass.status))}>{formatClassStatusLabel(gymClass.status)}</span>
                   </div>
                   <p className="mt-1 text-sm text-surface-500">
-                    {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')} · {gymClass.current_bookings}/{gymClass.max_capacity} reservas
+                    {gymClass.class_type === 'personal_training' ? '⚡ Sesión 1:1' : (gymClass.class_type || 'Clase general')}
+                    {gymClass.branch_name ? ` · ${gymClass.branch_name}` : ''}
+                    {' · '}
+                    {gymClass.current_bookings}/{gymClass.max_capacity} reservas
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -767,6 +819,7 @@ export default function ClassesPage() {
                 <p>Término estimado: {formatTime(computedEndDate)}</p>
                 <p>Duración: {durationMinutes || 0} minutos</p>
                 <p>Modalidad: {formatClassModalityLabel(form.modality)}</p>
+                <p>Sede: {activeBranches.find((branch) => branch.id === form.branch_id)?.name || (form.modality === 'online' ? 'Sin sede física' : 'Por definir')}</p>
                 <p>Cupos: {form.max_capacity || 0}</p>
               </div>
             </div>
@@ -799,6 +852,32 @@ export default function ClassesPage() {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Sede
+              <span className="ml-2 text-xs font-normal text-surface-400">
+                {form.modality === 'online' ? 'Opcional para clases online' : 'Obligatoria para clases presenciales e híbridas'}
+              </span>
+            </label>
+            <select
+              className="input"
+              value={form.branch_id}
+              onChange={(event) => setForm((current) => ({ ...current, branch_id: event.target.value }))}
+              required={form.modality !== 'online'}
+              disabled={!activeBranches.length}
+            >
+              <option value="">{form.modality === 'online' ? 'Sin sede física' : 'Selecciona una sede'}</option>
+              {activeBranches.map((branch) => (
+                <option key={branch.id} value={branch.id}>{branch.name}</option>
+              ))}
+            </select>
+            {!activeBranches.length ? (
+              <p className="mt-2 text-xs text-amber-600 dark:text-amber-300">
+                Necesitas al menos una sede activa para programar clases presenciales o híbridas.
+              </p>
+            ) : null}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
@@ -917,7 +996,7 @@ export default function ClassesPage() {
       <Modal
         open={Boolean(selectedClass)}
         title={selectedClass ? `Inscritos en ${selectedClass.name}` : 'Inscritos'}
-        description={selectedClass ? `${formatDateTime(selectedClass.start_time)} · ${selectedClass.current_bookings}/${selectedClass.max_capacity} reservas activas` : ''}
+        description={selectedClass ? `${formatDateTime(selectedClass.start_time)}${selectedClass.branch_name ? ` · ${selectedClass.branch_name}` : ''} · ${selectedClass.current_bookings}/${selectedClass.max_capacity} reservas activas` : ''}
         onClose={() => setSelectedClass(null)}
         size="lg"
       >

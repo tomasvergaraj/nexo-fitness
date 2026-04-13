@@ -1,5 +1,6 @@
 """Additional tenant operations endpoints for the complete gym platform."""
 
+import asyncio
 import json
 import os
 from datetime import date, datetime, time, timedelta, timezone
@@ -63,6 +64,8 @@ from app.schemas.platform import (
     CampaignOverviewResponse,
     CampaignUpdateRequest,
     MembershipCreateRequest,
+    MembershipManualSaleRequest,
+    MembershipManualSaleResponse,
     MembershipResponse,
     MobileSupportInteractionCreateRequest,
     NotificationBroadcastRecipientResponse,
@@ -119,11 +122,18 @@ from app.services.branding_service import (
     coerce_brand_color,
     normalize_brand_color,
 )
+from app.services.membership_sale_service import create_manual_membership_sale
 from app.services.push_notification_service import NotificationDispatchResult, create_and_dispatch_notification
 from app.services.push_notification_service import get_notification_dispatch_result, refresh_push_receipts
 from app.services.push_notification_service import record_notification_engagement
 from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
+from app.services.promo_code_service import resolve_tenant_promo_pricing
 from app.services.support_contact_service import resolve_tenant_support_contacts
+from app.services.tenant_quota_service import assert_can_create_branch
+from app.services.webpay_checkout_service import (
+    normalize_payment_account_metadata,
+    sanitize_payment_account_metadata,
+)
 
 branches_router = APIRouter(prefix="/branches", tags=["Branches"])
 memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
@@ -168,6 +178,45 @@ def _loads_list(raw_value: Optional[str]) -> list[Any]:
     except json.JSONDecodeError:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _validate_payment_account_configuration(
+    *,
+    provider: str,
+    status: str,
+    metadata: dict[str, Any],
+    checkout_base_url: Optional[str],
+) -> dict[str, Any]:
+    try:
+        normalized_metadata = normalize_payment_account_metadata(provider, metadata)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if provider == "webpay" and status == "connected":
+        if not normalized_metadata.get("commerce_code") or not normalized_metadata.get("api_key"):
+            raise HTTPException(
+                status_code=400,
+                detail="Webpay conectado requiere commerce code y API key.",
+            )
+
+    if provider == "fintoc" and status == "connected":
+        secret_key = str(normalized_metadata.get("secret_key") or "").strip()
+        if not secret_key:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Fintoc conectado requiere la API key secreta de tu cuenta Fintoc. "
+                    "Encuéntrala en el dashboard de Fintoc bajo 'API Keys'."
+                ),
+            )
+
+    if provider in {"stripe", "mercadopago", "manual"} and status == "connected" and not (checkout_base_url or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=f"El proveedor {provider} requiere checkout_base_url cuando se marca como conectado.",
+        )
+
+    return normalized_metadata
 
 
 def _feature_map(tenant: Tenant) -> dict[str, Any]:
@@ -473,7 +522,7 @@ def _payment_account_payload(account: TenantPaymentProviderAccount) -> PaymentPr
         account_label=account.account_label,
         public_identifier=account.public_identifier,
         checkout_base_url=account.checkout_base_url,
-        metadata=_loads_dict(account.metadata_json),
+        metadata=sanitize_payment_account_metadata(_loads_dict(account.metadata_json)),
         is_default=account.is_default,
         created_at=account.created_at,
         updated_at=account.updated_at,
@@ -521,6 +570,10 @@ async def create_branch(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin")),
 ):
+    if not ctx.tenant:
+        raise HTTPException(status_code=403, detail="No hay tenant activo para crear sucursales")
+
+    await assert_can_create_branch(db, ctx.tenant)
     branch = Branch(tenant_id=ctx.tenant_id, **data.model_dump())
     db.add(branch)
     await db.flush()
@@ -540,7 +593,13 @@ async def update_branch(
     if not branch or branch.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=404, detail="Sede no encontrada")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    if update_data.get("is_active") is True and not branch.is_active:
+        if not ctx.tenant:
+            raise HTTPException(status_code=403, detail="No hay tenant activo para reactivar sucursales")
+        await assert_can_create_branch(db, ctx.tenant)
+
+    for field, value in update_data.items():
         setattr(branch, field, value)
 
     await db.flush()
@@ -631,6 +690,48 @@ async def create_membership(
     await db.flush()
     await db.refresh(membership)
     return _membership_payload(membership, user, plan)
+
+
+@memberships_router.post("/manual-sale", response_model=MembershipManualSaleResponse, status_code=201)
+async def create_manual_membership_sale_endpoint(
+    data: MembershipManualSaleRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    if not ctx.tenant:
+        raise HTTPException(status_code=403, detail="No hay tenant activo para registrar ventas manuales")
+
+    user = await db.get(User, data.user_id)
+    if not user or user.tenant_id != ctx.tenant_id or user.role != UserRole.CLIENT:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    plan = await db.get(Plan, data.plan_id)
+    if not plan or plan.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
+    if not plan.is_active:
+        raise HTTPException(status_code=400, detail="Solo puedes asignar planes activos")
+
+    result = await create_manual_membership_sale(
+        db,
+        tenant=ctx.tenant,
+        client=user,
+        plan=plan,
+        starts_at=data.starts_at,
+        expires_at=data.expires_at,
+        payment_method=data.payment_method,
+        amount=data.amount,
+        currency=data.currency,
+        description=data.description,
+        notes=data.notes,
+        auto_renew=data.auto_renew,
+    )
+
+    return MembershipManualSaleResponse(
+        membership=_membership_payload(result.membership, user, plan),
+        payment=result.payment,
+        replaced_membership_ids=result.replaced_membership_ids,
+    )
 
 
 @memberships_router.patch("/{membership_id}", response_model=MembershipResponse)
@@ -1612,6 +1713,16 @@ async def create_payment_account(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin")),
 ):
+    normalized_metadata = _validate_payment_account_configuration(
+        provider=data.provider,
+        status=data.status,
+        metadata=data.metadata,
+        checkout_base_url=data.checkout_base_url,
+    )
+    public_identifier = (data.public_identifier or "").strip() or None
+    if data.provider == "webpay" and not public_identifier:
+        public_identifier = str(normalized_metadata.get("commerce_code") or "").strip() or None
+
     if data.is_default:
         existing_accounts = (
             await db.execute(
@@ -1626,9 +1737,9 @@ async def create_payment_account(
         provider=data.provider,
         status=data.status,
         account_label=data.account_label,
-        public_identifier=data.public_identifier,
-        checkout_base_url=data.checkout_base_url,
-        metadata_json=json.dumps(data.metadata),
+        public_identifier=public_identifier,
+        checkout_base_url=(data.checkout_base_url or "").strip() or None,
+        metadata_json=json.dumps(normalized_metadata),
         is_default=data.is_default,
     )
     db.add(account)
@@ -1650,6 +1761,19 @@ async def update_payment_account(
         raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
 
     payload = data.model_dump(exclude_unset=True)
+    merged_metadata = _loads_dict(account.metadata_json)
+    if "metadata" in payload and payload["metadata"] is not None:
+        merged_metadata.update(payload["metadata"])
+
+    normalized_status = payload.get("status", account.status)
+    normalized_checkout_base_url = payload.get("checkout_base_url", account.checkout_base_url)
+    normalized_metadata = _validate_payment_account_configuration(
+        provider=account.provider,
+        status=normalized_status,
+        metadata=merged_metadata,
+        checkout_base_url=normalized_checkout_base_url,
+    )
+
     if payload.get("is_default"):
         existing_accounts = (
             await db.execute(
@@ -1660,13 +1784,53 @@ async def update_payment_account(
             existing.is_default = existing.id == account.id
 
     if "metadata" in payload:
-        account.metadata_json = json.dumps(payload.pop("metadata"))
+        payload.pop("metadata")
+        account.metadata_json = json.dumps(normalized_metadata)
+
+    if account.provider == "webpay" and "public_identifier" not in payload:
+        auto_identifier = str(normalized_metadata.get("commerce_code") or "").strip()
+        if auto_identifier and not (account.public_identifier or "").strip():
+            account.public_identifier = auto_identifier
+
     for field, value in payload.items():
+        if field in {"account_label", "public_identifier", "checkout_base_url"}:
+            value = (value or "").strip() or None
         setattr(account, field, value)
 
     await db.flush()
     await db.refresh(account)
     return _payment_account_payload(account)
+
+
+@payment_accounts_router.delete("/{account_id}", status_code=204, response_class=Response)
+async def delete_payment_account(
+    account_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    account = await db.get(TenantPaymentProviderAccount, account_id)
+    if not account or account.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
+
+    was_default = account.is_default
+    await db.delete(account)
+    await db.flush()
+
+    if was_default:
+        replacement = (
+            await db.execute(
+                select(TenantPaymentProviderAccount)
+                .where(TenantPaymentProviderAccount.tenant_id == ctx.tenant_id)
+                .order_by(TenantPaymentProviderAccount.created_at.asc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if replacement:
+            replacement.is_default = True
+            await db.flush()
+
+    return Response(status_code=204)
 
 
 @mobile_router.get("/wallet", response_model=MobileMembershipWalletResponse)
@@ -2112,7 +2276,7 @@ async def create_mobile_push_preview(
         title=data.title,
         message=data.message,
         type=data.type,
-        action_url=data.action_url or "nexofitness://account/profile",
+        action_url=data.action_url,
         send_push=True,
     )
     return _notification_dispatch_payload(result)
@@ -2417,56 +2581,23 @@ async def validate_promo_code(
     db: AsyncSession = Depends(get_db),
 ) -> PromoCodeValidateResponse:
     """Validate a promo code for a given plan. Returns discount info if valid."""
-    result = await db.execute(
-        select(PromoCode).where(
-            PromoCode.tenant_id == tenant.id,
-            PromoCode.code == body.code.upper().strip(),
-            PromoCode.is_active.is_(True),
-        )
+    pricing = await resolve_tenant_promo_pricing(
+        db,
+        tenant_id=tenant.id,
+        plan_id=body.plan_id,
+        promo_code=body.code,
     )
-    promo = result.scalars().first()
+    if not pricing.valid or pricing.promo is None:
+        return PromoCodeValidateResponse(valid=False, reason=pricing.reason)
 
-    def _invalid(reason: str) -> PromoCodeValidateResponse:
-        return PromoCodeValidateResponse(valid=False, reason=reason)
-
-    if not promo:
-        return _invalid("Código no válido o inactivo.")
-
-    now = datetime.now(timezone.utc)
-    if promo.expires_at and promo.expires_at < now:
-        return _invalid("El código ha expirado.")
-
-    if promo.max_uses is not None and promo.uses_count >= promo.max_uses:
-        return _invalid("El código ha alcanzado su límite de usos.")
-
-    # Check plan restriction
-    if promo.plan_ids:
-        allowed_ids = json.loads(promo.plan_ids)
-        if str(body.plan_id) not in allowed_ids:
-            return _invalid("Este código no aplica para el plan seleccionado.")
-
-    # Fetch plan price to compute discounted amount
-    plan_result = await db.execute(
-        select(Plan).where(Plan.id == body.plan_id, Plan.tenant_id == tenant.id)
-    )
-    plan = plan_result.scalars().first()
-    if not plan:
-        return _invalid("Plan no encontrado.")
-
-    base_price = float(plan.price)
-    if promo.discount_type == "percent":
-        discount_amount = round(base_price * float(promo.discount_value) / 100, 2)
-    else:
-        discount_amount = min(round(float(promo.discount_value), 2), base_price)
-    final_price = round(base_price - discount_amount, 2)
-
+    promo = pricing.promo
     return PromoCodeValidateResponse(
         valid=True,
         promo_code_id=promo.id,
         discount_type=promo.discount_type,
         discount_value=float(promo.discount_value),
-        discount_amount=discount_amount,
-        final_price=final_price,
+        discount_amount=float(pricing.promo_discount_amount or 0),
+        final_price=float(pricing.final_price or 0),
     )
 
 
@@ -2671,8 +2802,35 @@ async def owner_list_personal_records(
 
 # ─── Progress Photos ──────────────────────────────────────────────────────────
 
-_MAX_PHOTO_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_PHOTO_BYTES = 15 * 1024 * 1024  # 15 MB raw input limit (compressed output will be ~200-500 KB)
+_MAX_PHOTO_BYTES_COMPRESSED = 1 * 1024 * 1024  # 1 MB target after compression
+_MAX_PHOTOS_PER_USER = 30
 _PHOTO_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_WEBP_RIFF = b"RIFF"
+_WEBP_ID = b"WEBP"
+_PHOTO_MAX_SIDE = 1920  # px — longest side after resize
+
+
+def _compress_photo(raw: bytes) -> bytes:
+    """Resize to max 1920px on longest side, re-encode as JPEG at 82% quality.
+
+    Returns compressed JPEG bytes. Raises ValueError if the data is not a valid image.
+    """
+    import io
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+    except UnidentifiedImageError:
+        raise ValueError("El archivo no es una imagen válida.")
+
+    img = img.convert("RGB")  # strip alpha channel, normalise to RGB
+    img.thumbnail((_PHOTO_MAX_SIDE, _PHOTO_MAX_SIDE), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=82, optimize=True)
+    return buf.getvalue()
 
 
 def _photo_to_response(p: ProgressPhoto, request: Request) -> ProgressPhotoResponse:
@@ -2720,14 +2878,39 @@ async def upload_progress_photo(
     if content_type not in _PHOTO_ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail="Solo se aceptan imágenes JPEG, PNG o WebP.")
 
-    data = await file.read()
-    if len(data) > _MAX_PHOTO_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el tamaño máximo de 10 MB.")
+    raw = await file.read()
+    if len(raw) > _MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el tamaño máximo de 15 MB.")
 
-    ext = content_type.split("/")[-1].replace("jpeg", "jpg")
+    # Validate magic bytes — don't trust Content-Type header alone
+    is_valid_image = (
+        raw[:3] == _JPEG_MAGIC
+        or raw[:4] == _PNG_MAGIC
+        or (len(raw) >= 12 and raw[:4] == _WEBP_RIFF and raw[8:12] == _WEBP_ID)
+    )
+    if not is_valid_image:
+        raise HTTPException(status_code=400, detail="El archivo no es una imagen válida.")
+
+    # Enforce per-user photo limit
+    photo_count = (await db.execute(
+        select(func.count()).select_from(ProgressPhoto)
+        .where(ProgressPhoto.user_id == current_user.id, ProgressPhoto.tenant_id == tenant.id)
+    )).scalar_one()
+    if photo_count >= _MAX_PHOTOS_PER_USER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Límite de {_MAX_PHOTOS_PER_USER} fotos alcanzado. Elimina algunas para continuar.",
+        )
+
+    # Compress: resize to max 1920px, re-encode as JPEG ~82% — ~90% less disk space
+    try:
+        data = await asyncio.to_thread(_compress_photo, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     photo_dir = _UPLOADS_ROOT / "progress_photos" / str(tenant.id) / str(current_user.id)
     photo_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{uuid4().hex}.{ext}"
+    filename = f"{uuid4().hex}.jpg"  # always JPEG after compression
     (photo_dir / filename).write_bytes(data)
     file_path = f"/uploads/progress_photos/{tenant.id}/{current_user.id}/{filename}"
 
@@ -2771,8 +2954,11 @@ async def delete_progress_photo(
         raise HTTPException(status_code=404, detail="Foto no encontrada.")
     # Delete from disk
     try:
-        disk_path = _UPLOADS_ROOT / photo.file_path.lstrip("/uploads/")
-        disk_path.unlink(missing_ok=True)
+        relative = photo.file_path.removeprefix("/uploads/")
+        disk_path = (_UPLOADS_ROOT / relative).resolve()
+        uploads_root = _UPLOADS_ROOT.resolve()
+        if str(disk_path).startswith(str(uploads_root)):
+            disk_path.unlink(missing_ok=True)
     except Exception:
         pass
     await db.delete(photo)

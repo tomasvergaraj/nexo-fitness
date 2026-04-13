@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { ArrowRight, CalendarCheck2, Building2, Store, Smartphone, Check, Zap } from 'lucide-react';
-import NexoBrand from '@/components/branding/NexoBrand';
+import NexoBrand, { NEXO_BRAND_VALUE_PROP } from '@/components/branding/NexoBrand';
 import { publicApi, billingApi } from '@/services/api';
 import { getApiError } from '@/utils';
 
@@ -85,13 +85,13 @@ export default function PublicLandingPage() {
             <div className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-surface-300">
                 <CalendarCheck2 size={14} />
-                Funnel comercial de Nexo
+                Más ventas para tu negocio fitness
               </div>
               <h1 className="max-w-4xl text-4xl font-bold font-display leading-tight sm:text-5xl">
-                Vende tu gimnasio mejor y opera todo desde una sola plataforma.
+                Vende más planes, llena tus clases y haz crecer tu negocio fitness desde un solo lugar.
               </h1>
               <p className="max-w-3xl text-base leading-7 text-surface-300">
-                Nexo Fitness reúne la gestión de tu gimnasio, la venta online de planes y la app para clientes en un solo lugar.
+                {NEXO_BRAND_VALUE_PROP}
               </p>
 
               <div className="grid gap-4 sm:grid-cols-3">
@@ -195,7 +195,7 @@ export default function PublicLandingPage() {
                 </div>
                 <h3 className="text-xl font-bold">Plan Completo</h3>
               </div>
-              <p className="text-sm text-surface-400 mb-6">Todo lo que necesita tu gimnasio.</p>
+              <p className="text-sm text-surface-400 mb-6">Todo lo que necesita tu negocio fitness.</p>
 
               <div className="flex items-end gap-2 mb-2">
                 <span className="text-5xl font-extrabold font-display">

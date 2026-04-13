@@ -1,59 +1,83 @@
 import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Menu, Search, Bell, Moon, Sun, LogOut, User, ChevronDown, ArrowUpRight, CheckCircle2,
+  Menu, Search, Bell, Moon, Sun, LogOut, User, ChevronDown, ArrowUpRight, CheckCircle2, Inbox,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { notificationsApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
-import { cn } from '@/utils';
+import type { AppNotification } from '@/types';
+import { cn, formatRelative } from '@/utils';
+import { getNotificationActionLabel, resolveNotificationDestination } from '@/utils/notificationActions';
 
 interface TopbarProps {
   onMenuToggle: () => void;
 }
 
-const notifications = [
-  {
-    id: 'payments',
-    title: 'Pagos pendientes por revisar',
-    description: 'Hay membresias con cobro pendiente.',
-    path: '/reports',
-  },
-  {
-    id: 'checkins',
-    title: 'El modulo de check-in esta listo',
-    description: 'Puedes registrar ingresos manuales.',
-    path: '/checkin',
-  },
-  {
-    id: 'support',
-    title: 'Soporte tiene interacciones abiertas',
-    description: 'Revisa tickets recientes del equipo.',
-    path: '/support',
-  },
-];
-
 export default function Topbar({ onMenuToggle }: TopbarProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user, logout } = useAuthStore();
   const { isDark, toggle: toggleTheme } = useThemeStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const notificationsList = user?.role === 'superadmin'
-    ? [
-        {
-          id: 'tenants',
-          title: 'Revisa el pipeline SaaS',
-          description: 'Monitorea pruebas, activaciones y cuentas con riesgo.',
-          path: '/platform/tenants',
-        },
-      ]
-    : notifications;
+
+  const { data: notifications = [], isLoading: isLoadingNotifications } = useQuery<AppNotification[]>({
+    queryKey: ['topbar-notifications', user?.id],
+    enabled: Boolean(user?.id && user.role !== 'superadmin'),
+    staleTime: 30_000,
+    queryFn: async () => (await notificationsApi.list({ limit: 6 })).data,
+  });
+
+  const notificationMutation = useMutation({
+    mutationFn: async ({
+      notificationId,
+      payload,
+    }: {
+      notificationId: string;
+      payload: Record<string, unknown>;
+    }) => notificationsApi.update(notificationId, payload),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['topbar-notifications', user?.id] });
+      await queryClient.invalidateQueries({ queryKey: ['member-notifications'] });
+    },
+  });
+
+  const unreadNotifications = notifications.filter((item) => !item.is_read).length;
 
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const openNotification = async (notification: AppNotification) => {
+    const destination = resolveNotificationDestination(notification.action_url, user?.role);
+
+    try {
+      await notificationMutation.mutateAsync({
+        notificationId: notification.id,
+        payload: {
+          is_read: true,
+          mark_opened: true,
+          mark_clicked: destination.kind !== 'none',
+        },
+      });
+    } catch {
+      // Keep navigation resilient even if the read-state update fails.
+    }
+
+    setShowNotifications(false);
+
+    if (destination.kind === 'external') {
+      window.open(destination.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (destination.kind === 'internal') {
+      navigate(destination.href);
+    }
   };
 
   return (
@@ -140,11 +164,15 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           className="relative p-2.5 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
         >
           <Bell size={18} className="text-surface-600 dark:text-surface-400" />
-          <motion.span
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"
-          />
+          {unreadNotifications > 0 ? (
+            <motion.span
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white"
+            >
+              {unreadNotifications > 9 ? '9+' : unreadNotifications}
+            </motion.span>
+          ) : null}
         </motion.button>
 
         <AnimatePresence>
@@ -162,35 +190,92 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -8, scale: 0.95 }}
                 transition={{ duration: 0.15 }}
-                className="absolute right-16 top-14 z-50 w-[320px] overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-xl dark:border-surface-700 dark:bg-surface-800"
+                className="absolute right-16 top-14 z-50 w-[340px] overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-xl dark:border-surface-700 dark:bg-surface-800"
               >
                 <div className="border-b border-surface-100 px-4 py-3 dark:border-surface-700">
                   <p className="text-sm font-semibold text-surface-900 dark:text-white">Notificaciones</p>
-                  <p className="text-xs text-surface-500">Acciones rapidas del sistema</p>
+                  <p className="text-xs text-surface-500">
+                    {user?.role === 'superadmin'
+                      ? 'Las alertas del panel se muestran por tenant.'
+                      : unreadNotifications > 0
+                        ? `${unreadNotifications} pendiente${unreadNotifications === 1 ? '' : 's'} por revisar`
+                        : 'Actividad reciente y acciones pendientes'}
+                  </p>
                 </div>
-                <div className="p-2">
-                  {notificationsList.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        setShowNotifications(false);
-                        navigate(item.path);
-                      }}
-                      className="w-full rounded-xl px-3 py-3 text-left transition-colors hover:bg-surface-50 dark:hover:bg-surface-700"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-500 dark:bg-brand-950/40">
-                          <CheckCircle2 size={16} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-surface-900 dark:text-white">{item.title}</p>
-                          <p className="mt-0.5 text-xs text-surface-500">{item.description}</p>
-                        </div>
-                        <ArrowUpRight size={14} className="mt-1 text-surface-400" />
+                <div className="max-h-[420px] overflow-y-auto p-2">
+                  {isLoadingNotifications ? (
+                    <div className="px-3 py-8 text-center text-sm text-surface-500">
+                      Cargando notificaciones...
+                    </div>
+                  ) : user?.role === 'superadmin' ? (
+                    <div className="px-3 py-8 text-center">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-2xl bg-surface-100 text-surface-400 dark:bg-surface-700/60">
+                        <Inbox size={18} />
                       </div>
-                    </button>
-                  ))}
+                      <p className="mt-3 text-sm font-medium text-surface-900 dark:text-white">Sin notificaciones globales</p>
+                      <p className="mt-1 text-xs text-surface-500">
+                        Cuando necesites revisar actividad SaaS, usa los módulos de tenants, planes o leads.
+                      </p>
+                    </div>
+                  ) : notifications.length === 0 ? (
+                    <div className="px-3 py-8 text-center">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-2xl bg-surface-100 text-surface-400 dark:bg-surface-700/60">
+                        <Inbox size={18} />
+                      </div>
+                      <p className="mt-3 text-sm font-medium text-surface-900 dark:text-white">Sin avisos para esta cuenta</p>
+                      <p className="mt-1 text-xs text-surface-500">
+                        Cuando tengas novedades o acciones pendientes, aparecerán aquí.
+                      </p>
+                    </div>
+                  ) : (
+                    notifications.map((item) => {
+                      const destination = resolveNotificationDestination(item.action_url, user?.role);
+                      const actionLabel = getNotificationActionLabel(item.action_url, user?.role);
+
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => void openNotification(item)}
+                          className="w-full rounded-xl px-3 py-3 text-left transition-colors hover:bg-surface-50 dark:hover:bg-surface-700"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={cn(
+                              'mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg',
+                              item.is_read
+                                ? 'bg-surface-100 text-surface-500 dark:bg-surface-700/70 dark:text-surface-300'
+                                : 'bg-brand-50 text-brand-500 dark:bg-brand-950/40'
+                            )}>
+                              <CheckCircle2 size={16} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="truncate text-sm font-medium text-surface-900 dark:text-white">{item.title}</p>
+                                <span className="shrink-0 text-[11px] text-surface-400">
+                                  {formatRelative(item.created_at)}
+                                </span>
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs text-surface-500">
+                                {item.message || 'Aviso del sistema sin mensaje adicional.'}
+                              </p>
+                              <div className="mt-2 flex items-center gap-2">
+                                <span className={cn(
+                                  'inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium',
+                                  destination.kind === 'none'
+                                    ? 'bg-surface-100 text-surface-500 dark:bg-surface-700/70 dark:text-surface-300'
+                                    : 'bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300'
+                                )}>
+                                  {actionLabel}
+                                </span>
+                                {!item.is_read ? <span className="text-[11px] font-medium text-brand-500">Nuevo</span> : null}
+                              </div>
+                            </div>
+                            {destination.kind !== 'none' ? <ArrowUpRight size={14} className="mt-1 text-surface-400" /> : null}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </motion.div>
             </>

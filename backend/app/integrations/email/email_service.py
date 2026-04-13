@@ -1,5 +1,6 @@
-"""Email service for transactional and marketing emails."""
+"""Email service for transactional and marketing emails via Resend."""
 
+import asyncio
 from typing import Optional, List
 
 import structlog
@@ -7,12 +8,39 @@ import structlog
 from app.core.config import get_settings
 
 logger = structlog.get_logger()
-
 settings = get_settings()
 
 
+def _send_sync(to_email: str, subject: str, html_content: str, from_addr: str) -> bool:
+    """Blocking Resend call — run in a thread via asyncio.to_thread."""
+    import resend
+
+    resend.api_key = settings.RESEND_API_KEY
+    if not resend.api_key:
+        logger.warning("email_skipped_no_api_key", to=to_email, subject=subject)
+        return False
+
+    try:
+        params: resend.Emails.SendParams = {
+            "from": from_addr,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content,
+        }
+        email = resend.Emails.send(params)
+        return bool(email.get("id"))
+    except Exception as e:
+        logger.error("email_send_failed", to=to_email, subject=subject, exc_info=e)
+        return False
+
+
 class EmailService:
-    """Sends transactional emails via SendGrid or similar provider."""
+    """Sends transactional emails via Resend."""
+
+    @property
+    def _from_addr(self) -> str:
+        name = settings.EMAIL_FROM_NAME or "Nexo Fitness"
+        return f"{name} <{settings.EMAIL_FROM}>"
 
     async def send(
         self,
@@ -22,22 +50,10 @@ class EmailService:
         from_email: Optional[str] = None,
         from_name: Optional[str] = None,
     ) -> bool:
-        try:
-            from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail
-
-            message = Mail(
-                from_email=from_email or settings.EMAIL_FROM,
-                to_emails=to_email,
-                subject=subject,
-                html_content=html_content,
-            )
-            sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
-            response = sg.send(message)
-            return response.status_code in (200, 202)
-        except Exception as e:
-            logger.error("email_send_failed", to=to_email, subject=subject, exc_info=e)
-            return False
+        name = from_name or settings.EMAIL_FROM_NAME or "Nexo Fitness"
+        addr = from_email or settings.EMAIL_FROM
+        from_addr = f"{name} <{addr}>"
+        return await asyncio.to_thread(_send_sync, to_email, subject, html_content, from_addr)
 
     async def send_bulk(
         self,
@@ -102,7 +118,6 @@ class EmailService:
         days_remaining: int,
         checkout_url: str,
     ) -> bool:
-        """Aviso de trial por vencer: se llama a 7 días y a 1 día de la expiración."""
         urgency_color = "#dc2626" if days_remaining <= 1 else "#d97706"
         days_label = "menos de 1 día" if days_remaining < 1 else f"{days_remaining} día{'s' if days_remaining != 1 else ''}"
         html = f"""
@@ -134,7 +149,7 @@ class EmailService:
         </div>
         """
         subject = (
-            f"⚠️ Tu prueba de Nexo Fitness vence mañana — activa tu plan"
+            "⚠️ Tu prueba de Nexo Fitness vence mañana — activa tu plan"
             if days_remaining <= 1
             else f"Tu prueba de Nexo Fitness vence en {days_label} — activa tu plan"
         )
@@ -142,20 +157,28 @@ class EmailService:
 
     async def send_password_reset(self, to_email: str, reset_url: str) -> bool:
         html = f"""
-        <div style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="padding: 30px;">
-                <h2>Recuperar contraseña</h2>
-                <p>Haz clic en el siguiente enlace para restablecer tu contraseña:</p>
-                <a href="{reset_url}" style="display: inline-block; background: #06b6d4; color: white;
-                   padding: 12px 24px; border-radius: 8px; text-decoration: none;">Restablecer</a>
-                <p style="color: #6b7280; font-size: 14px; margin-top: 20px;">
-                    Este enlace expira en 1 hora. Si no solicitaste este cambio, ignora este correo.
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);padding:40px;text-align:center;border-radius:12px 12px 0 0;">
+                <h1 style="color:white;margin:0;font-size:26px;font-weight:700;">Recuperar contraseña</h1>
+                <p style="color:rgba(255,255,255,0.85);margin:10px 0 0;font-size:15px;">Nexo Fitness</p>
+            </div>
+            <div style="padding:40px;background:#f9fafb;">
+                <p style="font-size:16px;color:#374151;">Haz clic en el siguiente botón para restablecer tu contraseña:</p>
+                <div style="text-align:center;margin:32px 0;">
+                    <a href="{reset_url}"
+                       style="display:inline-block;background:linear-gradient(135deg,#0f766e,#0891b2);color:white;
+                              padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:16px;">
+                        Restablecer contraseña →
+                    </a>
+                </div>
+                <p style="color:#6b7280;font-size:14px;text-align:center;">
+                    Este enlace expira en <strong>1 hora</strong>.<br>
+                    Si no solicitaste este cambio, ignora este correo.
                 </p>
             </div>
         </div>
         """
         return await self.send(to_email, "Recuperar contraseña — Nexo Fitness", html)
-
 
     async def send_email_verification(self, to_email: str, code: str) -> bool:
         html = f"""

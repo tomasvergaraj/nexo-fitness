@@ -26,7 +26,7 @@ def _ensure_bcrypt_metadata() -> None:
 
 
 _ensure_bcrypt_metadata()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 
 
 def hash_password(password: str) -> str:
@@ -71,7 +71,7 @@ def create_refresh_token(subject: str, tenant_id: Optional[str] = None) -> str:
 
 
 def create_password_reset_token(user_id: str) -> str:
-    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=15)
     payload = {"sub": user_id, "exp": expires, "type": "password_reset"}
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 

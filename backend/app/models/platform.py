@@ -34,6 +34,7 @@ class SaaSPlan(Base):
     features: Mapped[Optional[str]] = mapped_column(Text)  # JSON array
     stripe_price_id: Mapped[Optional[str]] = mapped_column(String(255))
     fintoc_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    webpay_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     highlighted: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -93,6 +94,61 @@ class TenantPaymentProviderAccount(Base):
     checkout_base_url: Mapped[Optional[str]] = mapped_column(String(500))
     metadata_json: Mapped[Optional[str]] = mapped_column(Text)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class WebpayTransaction(Base):
+    __tablename__ = "webpay_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    payment_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenant_payment_provider_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    flow_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    flow_reference: Mapped[Optional[str]] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(30), default="created", index=True)
+    buy_order: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    token: Mapped[Optional[str]] = mapped_column(String(128), unique=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    currency: Mapped[str] = mapped_column(String(3), default="CLP")
+    commerce_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    environment: Mapped[str] = mapped_column(String(20), default="integration")
+    provider_url: Mapped[Optional[str]] = mapped_column(String(500))
+    checkout_url: Mapped[Optional[str]] = mapped_column(String(500))
+    success_url: Mapped[Optional[str]] = mapped_column(String(500))
+    cancel_url: Mapped[Optional[str]] = mapped_column(String(500))
+    return_url: Mapped[Optional[str]] = mapped_column(String(500))
+    authorization_code: Mapped[Optional[str]] = mapped_column(String(20))
+    response_code: Mapped[Optional[int]] = mapped_column(Integer)
+    transaction_status: Mapped[Optional[str]] = mapped_column(String(40))
+    external_id: Mapped[Optional[str]] = mapped_column(String(255))
+    committed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text)
+    provider_response_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

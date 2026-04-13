@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, ArrowRight, Loader2 } from 'lucide-react';
-import NexoBrand from '@/components/branding/NexoBrand';
+import NexoBrand, { NEXO_BRAND_VALUE_PROP } from '@/components/branding/NexoBrand';
 import { useAuthStore } from '@/stores/authStore';
 import { authApi, billingApi } from '@/services/api';
 import { cn } from '@/utils';
@@ -189,8 +189,7 @@ export default function LoginPage() {
             transition={{ delay: 0.6 }}
             className="text-xl text-surface-400 leading-relaxed mb-8"
           >
-            La plataforma SaaS más completa para gestionar tu gimnasio.
-            Clases, reservas, pagos, marketing y más — todo en un solo lugar.
+            {NEXO_BRAND_VALUE_PROP}
           </motion.p>
 
           <motion.div

@@ -7,8 +7,10 @@ import pytest
 
 from app.models.business import Campaign, CampaignChannel, CampaignStatus, Notification
 from app.models.platform import PushSubscription
+from app.models.user import UserRole
 from app.services import push_notification_service
 from app.services.push_notification_service import (
+    _resolve_webpush_target_url,
     record_notification_engagement,
     send_notification_via_expo,
     send_notification_via_push,
@@ -103,6 +105,19 @@ def make_subscription(token: str, **overrides) -> PushSubscription:
     for key, value in overrides.items():
         setattr(subscription, key, value)
     return subscription
+
+
+def test_resolve_webpush_target_url_maps_client_actions_to_member_routes() -> None:
+    assert _resolve_webpush_target_url("nexofitness://payments", UserRole.CLIENT) == "/member?tab=payments"
+    assert _resolve_webpush_target_url("?tab=agenda&class=123", UserRole.CLIENT) == "/member?tab=agenda&class=123"
+    assert _resolve_webpush_target_url(None, UserRole.CLIENT) == "/member?tab=notifications"
+
+
+def test_resolve_webpush_target_url_maps_owner_actions_to_panel_routes() -> None:
+    assert _resolve_webpush_target_url("nexofitness://account/profile", UserRole.OWNER) == "/settings"
+    assert _resolve_webpush_target_url("?tab=plans", UserRole.OWNER) == "/plans"
+    assert _resolve_webpush_target_url("nexofitness://agenda/class/123", UserRole.OWNER) == "/classes"
+    assert _resolve_webpush_target_url(None, UserRole.OWNER) == "/dashboard"
 
 
 @pytest.mark.asyncio

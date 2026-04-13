@@ -18,7 +18,7 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import engine
-from app.core.exceptions import ActionRequiredError
+from app.core.exceptions import ActionRequiredError, PlanLimitReachedError
 from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, external, operations, public
 from app.middleware.tenant import TenantMiddleware
 
@@ -114,6 +114,20 @@ async def value_error_handler(request: Request, exc: ValueError):
 @app.exception_handler(ActionRequiredError)
 async def action_required_error_handler(request: Request, exc: ActionRequiredError):
     logger.warning("action_required", path=request.url.path, detail=exc.detail, next_action=exc.next_action)
+    return JSONResponse(status_code=exc.status_code, content=exc.to_response())
+
+
+@app.exception_handler(PlanLimitReachedError)
+async def plan_limit_reached_handler(request: Request, exc: PlanLimitReachedError):
+    logger.warning(
+        "plan_limit_reached",
+        path=request.url.path,
+        detail=exc.detail,
+        resource=exc.resource,
+        current_usage=exc.current_usage,
+        limit=exc.limit,
+        plan_key=exc.plan_key,
+    )
     return JSONResponse(status_code=exc.status_code, content=exc.to_response())
 
 

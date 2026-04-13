@@ -1,11 +1,11 @@
 """Authentication API endpoints."""
 
+import hashlib
 import json
-import random
-import string
+import secrets
 import structlog
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,8 +49,20 @@ async def refresh_token(data: RefreshRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/register-gym")
-async def register_gym(data: TenantOnboardingRequest, db: AsyncSession = Depends(get_db)):
+async def register_gym(request: Request, data: TenantOnboardingRequest, db: AsyncSession = Depends(get_db)):
     """Public endpoint for gym onboarding."""
+    client_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    redis = await _get_redis()
+    rate_key = f"reg_rate:{client_ip}"
+    count = await redis.incr(rate_key)
+    if count == 1:
+        await redis.expire(rate_key, 3600)
+    await redis.aclose()
+    if count > 5:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos de registro desde esta dirección. Intenta de nuevo en una hora.",
+        )
     try:
         return await AuthService.register_tenant(db, data)
     except ValueError as e:
@@ -95,10 +107,23 @@ async def forgot_password(data: PasswordResetRequest, db: AsyncSession = Depends
 
 @router.post("/reset-password")
 async def reset_password(data: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
+    token_hash = hashlib.sha256(data.token.encode()).hexdigest()
+    redis = await _get_redis()
+    already_used = await redis.exists(f"pwd_reset_used:{token_hash}")
+    if already_used:
+        await redis.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este enlace ya fue utilizado. Solicita un nuevo correo de recuperación.",
+        )
     try:
         await AuthService.confirm_password_reset(db, data.token, data.new_password)
     except ValueError as e:
+        await redis.aclose()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    # Burn the token — TTL matches the 15-min expiry of the JWT
+    await redis.set(f"pwd_reset_used:{token_hash}", "1", ex=900)
+    await redis.aclose()
     return {"detail": "Contraseña actualizada correctamente. Ya puedes iniciar sesión."}
 
 
@@ -139,9 +164,22 @@ async def send_email_verification(
     if existing.scalar_one_or_none():
         return {"exists": True}
 
-    code = "".join(random.choices(string.digits, k=6))
-
     redis = await _get_redis()
+
+    # Rate limit: max 3 OTP sends per email per 10 minutes
+    rate_key = f"otp_rate:{email}"
+    send_count = await redis.incr(rate_key)
+    if send_count == 1:
+        await redis.expire(rate_key, 600)
+    if send_count > 3:
+        await redis.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiadas solicitudes. Espera 10 minutos antes de solicitar otro código.",
+        )
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+
     key = _redis_otp_key(email)
     payload = json.dumps({"code": code, "attempts": 0})
     await redis.set(key, payload, ex=600)  # 10 minutes

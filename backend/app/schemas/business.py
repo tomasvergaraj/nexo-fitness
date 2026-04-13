@@ -134,6 +134,7 @@ class GymClassResponse(BaseModel):
     instructor_id: Optional[UUID] = None
     instructor_name: Optional[str] = None
     branch_id: Optional[UUID] = None
+    branch_name: Optional[str] = None
     start_time: datetime
     end_time: datetime
     max_capacity: int

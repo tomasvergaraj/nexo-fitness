@@ -54,8 +54,8 @@ class Settings(BaseSettings):
         return list(dict.fromkeys(origins))
 
     # Email
-    SENDGRID_API_KEY: str = ""
-    EMAIL_FROM: str = "noreply@nexofitness.com"
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "noreply@nexofitness.cl"
     EMAIL_FROM_NAME: str = "Nexo Fitness"
 
     # Payments
@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     MERCADOPAGO_ACCESS_TOKEN: str = ""
     FINTOC_SECRET_KEY: str = ""
     FINTOC_WEBHOOK_SECRET: str = ""
+    FINTOC_RECIPIENT_HOLDER_ID: str = ""
+    FINTOC_RECIPIENT_ACCOUNT_NUMBER: str = ""
+    FINTOC_RECIPIENT_ACCOUNT_TYPE: str = "checking_account"
+    FINTOC_RECIPIENT_INSTITUTION_ID: str = ""
     WEBPAY_ENVIRONMENT: str = "integration"
     WEBPAY_COMMERCE_CODE: str = ""
     WEBPAY_API_KEY: str = ""
@@ -102,8 +106,12 @@ class Settings(BaseSettings):
     SAAS_TRIAL_DAYS: int = 14
     SAAS_CURRENCY: str = "CLP"
     SAAS_MONTHLY_PRICE: int = 34990
+    SAAS_QUARTERLY_PRICE: int = 94990
+    SAAS_SEMI_ANNUAL_PRICE: int = 184990
     SAAS_ANNUAL_PRICE: int = 349900
     STRIPE_SAAS_MONTHLY_PRICE_ID: str = ""
+    STRIPE_SAAS_QUARTERLY_PRICE_ID: str = ""
+    STRIPE_SAAS_SEMI_ANNUAL_PRICE_ID: str = ""
     STRIPE_SAAS_ANNUAL_PRICE_ID: str = ""
 
     # Observability
