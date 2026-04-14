@@ -4,6 +4,7 @@ import {
   LayoutDashboard, CalendarDays, Users, CreditCard,
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
   ChevronLeft, ShieldCheck, WalletCards, CalendarCheck2, Tag,
+  ShoppingCart, Package, TrendingDown,
 } from 'lucide-react';
 import NexoBrand, { NEXO_BRAND_SLOGAN } from '@/components/branding/NexoBrand';
 import { cn } from '@/utils';
@@ -32,6 +33,9 @@ const tenantNavItems: NavItemDef[] = [
   { label: 'Programas', path: '/programs', icon: <Dumbbell size={20} />, roles: ['owner', 'admin', 'trainer'] },
   { label: 'Marketing', path: '/marketing', icon: <Megaphone size={20} />, roles: ['owner', 'admin', 'marketing'] },
   { label: 'Reportes', path: '/reports', icon: <BarChart3 size={20} />, roles: ['owner', 'admin'] },
+  { label: 'Caja POS', path: '/pos', icon: <ShoppingCart size={20} />, roles: ['owner', 'admin', 'reception'] },
+  { label: 'Inventario', path: '/inventory', icon: <Package size={20} />, roles: ['owner', 'admin'] },
+  { label: 'Gastos', path: '/expenses', icon: <TrendingDown size={20} />, roles: ['owner', 'admin'] },
   { label: 'Soporte', path: '/support', icon: <HelpCircle size={20} />, roles: ['owner', 'admin', 'reception'] },
   { label: 'Configuración', path: '/settings', icon: <Settings size={20} />, roles: ['owner', 'admin'] },
 ];
@@ -47,6 +51,8 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
   const user = useAuthStore((s) => s.user);
   const userRole = user?.role;
   const homePath = userRole === 'superadmin' ? '/platform/tenants' : '/dashboard';
+  const userDisplayName = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim() || user?.email || 'Usuario';
+  const userInitials = [user?.first_name?.[0], user?.last_name?.[0]].filter(Boolean).join('').toUpperCase() || '?';
 
   const filteredItems = (userRole === 'superadmin' ? superadminNavItems : tenantNavItems).filter(
     (item) => !item.roles || (userRole && item.roles.includes(userRole))
@@ -142,11 +148,11 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-400 to-brand-600
                               flex items-center justify-center text-white text-xs font-bold shadow-md">
-                {user.first_name[0]}{user.last_name[0]}
+                {userInitials}
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-surface-900 dark:text-white truncate">
-                  {user.first_name} {user.last_name}
+                  {userDisplayName}
                 </p>
                 <p className="text-xs text-brand-600 dark:text-brand-400 capitalize">{user.role}</p>
               </div>

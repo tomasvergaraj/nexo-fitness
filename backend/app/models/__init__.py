@@ -12,6 +12,13 @@ from app.models.business import (
     SupportInteraction, InteractionChannel,
     AuditLog, Notification, TrainingProgram, TrainingProgramEnrollment,
 )
+from app.models.pos import (
+    ProductCategory, Product, ProductUnit,
+    Inventory, InventoryMovement, InventoryMovementType,
+    Supplier, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
+    POSTransaction, POSTransactionItem, POSTransactionStatus,
+    Expense, ExpenseCategory,
+)
 
 __all__ = [
     "Tenant", "TenantStatus", "LicenseType",
@@ -24,4 +31,10 @@ __all__ = [
     "Campaign", "CampaignStatus", "CampaignChannel",
     "SupportInteraction", "InteractionChannel",
     "AuditLog", "Notification", "TrainingProgram", "TrainingProgramEnrollment",
+    # POS
+    "ProductCategory", "Product", "ProductUnit",
+    "Inventory", "InventoryMovement", "InventoryMovementType",
+    "Supplier", "PurchaseOrder", "PurchaseOrderItem", "PurchaseOrderStatus",
+    "POSTransaction", "POSTransactionItem", "POSTransactionStatus",
+    "Expense", "ExpenseCategory",
 ]

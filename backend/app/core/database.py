@@ -23,6 +23,9 @@ async_session_factory = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# Backward-compatible alias used by existing Celery tasks.
+AsyncSessionLocal = async_session_factory
+
 
 class Base(DeclarativeBase):
     pass

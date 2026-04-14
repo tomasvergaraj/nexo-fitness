@@ -99,7 +99,7 @@ async def _run_auto_renewals() -> dict:
                     amount=Decimal(str(plan.price)),
                     currency=(plan.currency or "CLP").upper(),
                     status=PaymentStatus.PENDING,
-                    method=PaymentMethod.MANUAL,
+                    method=PaymentMethod.OTHER,
                     description=f"Renovación automática — {plan.name}",
                 )
                 db.add(renewal_payment)
@@ -110,7 +110,11 @@ async def _run_auto_renewals() -> dict:
                     tenant_id=membership.tenant_id,
                     user_id=membership.user_id,
                     title="Tu membresía fue renovada",
-                    message=f"Tu plan "{plan.name}" se renovó hasta el {new_expires.strftime('%d/%m/%Y')}. Si aún no has pagado, contacta al gimnasio.",
+                    message=(
+                        f'Tu plan "{plan.name}" se renovó hasta el '
+                        f"{new_expires.strftime('%d/%m/%Y')}. "
+                        "Si aún no has pagado, contacta al gimnasio."
+                    ),
                     type="success",
                     action_url="?tab=plans",
                 )

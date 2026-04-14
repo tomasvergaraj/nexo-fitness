@@ -310,6 +310,26 @@ class AuthService:
         await db.flush()
 
     @staticmethod
+    async def change_password(
+        db: AsyncSession,
+        user: User,
+        *,
+        current_password: str,
+        new_password: str,
+    ) -> dict[str, Any]:
+        if not verify_password(current_password, user.hashed_password):
+            raise ValueError("La contraseña actual es incorrecta")
+
+        if current_password == new_password:
+            raise ValueError("La nueva contraseña debe ser distinta a la actual")
+
+        user.hashed_password = hash_password(new_password)
+        user.password_changed_at = datetime.now(timezone.utc)
+        tokens = AuthService._build_auth_payload(user)
+        await db.flush()
+        return tokens
+
+    @staticmethod
     async def register_tenant(db: AsyncSession, data: TenantOnboardingRequest) -> dict:
         """Full tenant onboarding: creates tenant, owner user, default branch."""
         import structlog

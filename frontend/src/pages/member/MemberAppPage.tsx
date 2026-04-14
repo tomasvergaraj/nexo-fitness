@@ -2015,17 +2015,41 @@ export default function MemberAppPage() {
 
                       <div className="mt-4 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
                         <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Horario semanal</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="mt-3 grid gap-3">
                           {program.schedule.length ? program.schedule.map((entry, index) => {
                             const day = typeof entry.day === 'string' && entry.day.trim() ? entry.day : `Día ${index + 1}`;
                             const focus = typeof entry.focus === 'string' && entry.focus.trim() ? entry.focus : 'Trabajo general';
+                            const exercises = Array.isArray(entry.exercises)
+                              ? entry.exercises.filter((exercise) => typeof exercise.name === 'string' && exercise.name.trim().length > 0)
+                              : [];
+
                             return (
-                              <span
+                              <div
                                 key={`${program.id}-${day}-${index}`}
-                                className="rounded-full border border-surface-200 bg-white px-3 py-1.5 text-xs font-medium text-surface-600 dark:border-white/10 dark:bg-white/5 dark:text-surface-300"
+                                className="rounded-2xl border border-surface-200 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/5"
                               >
-                                {day}: {focus}
-                              </span>
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-sm font-semibold text-surface-900 dark:text-white">{day}</p>
+                                  {exercises.length ? (
+                                    <span className="badge badge-neutral">
+                                      {exercises.length} ejercicio{exercises.length !== 1 ? 's' : ''}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">{focus}</p>
+                                {exercises.length ? (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {exercises.map((exercise, exerciseIndex) => (
+                                      <span
+                                        key={`${program.id}-${day}-${exercise.name}-${exerciseIndex}`}
+                                        className="rounded-full border border-surface-200 bg-surface-50 px-3 py-1 text-xs font-medium text-surface-600 dark:border-white/10 dark:bg-surface-950/60 dark:text-surface-300"
+                                      >
+                                        {exercise.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
                             );
                           }) : (
                             <span className="text-sm text-surface-500">El gimnasio aún no definió una rutina semanal visible.</span>

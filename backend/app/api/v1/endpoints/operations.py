@@ -48,6 +48,7 @@ from app.models.business import (
     TrainingProgramEnrollment,
 )
 from app.models.platform import PushDelivery, PushSubscription, TenantPaymentProviderAccount
+from app.models.pos import Expense, POSTransaction, POSTransactionItem, POSTransactionStatus
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.business import (
@@ -84,6 +85,8 @@ from app.schemas.platform import (
     PaymentProviderAccountUpdateRequest,
     PersonalRecordCreate,
     PersonalRecordResponse,
+    ProgramExerciseLibraryItemCreateRequest,
+    ProgramExerciseLibraryItemResponse,
     ProgressPhotoResponse,
     PromoCodeCreate,
     PromoCodeUpdate,
@@ -95,6 +98,8 @@ from app.schemas.platform import (
     PushSubscriptionResponse,
     ReportsOverviewResponse,
     ReportSeriesPoint,
+    TopProductPoint,
+    ExpenseCategoryPoint,
     SupportInteractionCreateRequest,
     SupportInteractionResponse,
     SupportInteractionUpdateRequest,
@@ -158,6 +163,78 @@ _SUPPORT_STAFF_ROLES = (
     UserRole.TRAINER,
     UserRole.MARKETING,
 )
+_PROGRAM_EXERCISE_LIBRARY_FEATURE_KEY = "program_exercise_library"
+_DEFAULT_PROGRAM_EXERCISE_GROUPS: list[tuple[str, str]] = [
+    ("Pecho", "Press banca"),
+    ("Pecho", "Press inclinado con mancuernas"),
+    ("Pecho", "Press declinado"),
+    ("Pecho", "Aperturas con mancuernas"),
+    ("Pecho", "Cruce de poleas"),
+    ("Pecho", "Fondos en paralelas"),
+    ("Pecho", "Flexiones"),
+    ("Espalda", "Dominadas"),
+    ("Espalda", "Jalon al pecho"),
+    ("Espalda", "Remo con barra"),
+    ("Espalda", "Remo con mancuerna"),
+    ("Espalda", "Remo sentado en polea"),
+    ("Espalda", "Pullover en polea"),
+    ("Espalda", "Peso muerto"),
+    ("Piernas", "Sentadilla trasera"),
+    ("Piernas", "Sentadilla frontal"),
+    ("Piernas", "Prensa de piernas"),
+    ("Piernas", "Zancadas caminando"),
+    ("Piernas", "Peso muerto rumano"),
+    ("Piernas", "Curl femoral"),
+    ("Piernas", "Extension de cuadriceps"),
+    ("Piernas", "Elevaciones de gemelos"),
+    ("Piernas", "Bulgarian split squat"),
+    ("Gluteos", "Hip thrust"),
+    ("Gluteos", "Patada de gluteo en polea"),
+    ("Gluteos", "Puente de gluteos"),
+    ("Gluteos", "Abduccion de cadera"),
+    ("Hombros", "Press militar"),
+    ("Hombros", "Press Arnold"),
+    ("Hombros", "Elevaciones laterales"),
+    ("Hombros", "Elevaciones frontales"),
+    ("Hombros", "Pajaros"),
+    ("Hombros", "Face pull"),
+    ("Hombros", "Remo al menton"),
+    ("Brazos", "Curl con barra"),
+    ("Brazos", "Curl martillo"),
+    ("Brazos", "Curl concentrado"),
+    ("Brazos", "Curl Scott"),
+    ("Brazos", "Extension de triceps en cuerda"),
+    ("Brazos", "Press cerrado"),
+    ("Brazos", "Fondos en banco"),
+    ("Core", "Plancha frontal"),
+    ("Core", "Plancha lateral"),
+    ("Core", "Crunch en polea"),
+    ("Core", "Elevaciones de piernas"),
+    ("Core", "Russian twist"),
+    ("Core", "Hollow hold"),
+    ("Core", "Rueda abdominal"),
+    ("Cardio", "Caminata en cinta"),
+    ("Cardio", "Sprints en cinta"),
+    ("Cardio", "Remo ergometro"),
+    ("Cardio", "Bicicleta estatica"),
+    ("Cardio", "Cuerda para saltar"),
+    ("Cardio", "Burpees"),
+    ("Cardio", "Battle ropes"),
+    ("Movilidad", "Movilidad de cadera"),
+    ("Movilidad", "Movilidad de hombros"),
+    ("Movilidad", "Estiramiento de isquiotibiales"),
+    ("Movilidad", "Estiramiento de pectoral"),
+    ("Movilidad", "Foam roller"),
+    ("Movilidad", "Respiracion diafragmatica"),
+]
+_DEFAULT_PROGRAM_EXERCISE_LIBRARY = [
+    {
+        "id": f"default-{index:03d}",
+        "name": name,
+        "group": group,
+    }
+    for index, (group, name) in enumerate(_DEFAULT_PROGRAM_EXERCISE_GROUPS, start=1)
+]
 
 
 def _loads_dict(raw_value: Optional[str]) -> dict[str, Any]:
@@ -227,6 +304,59 @@ def _save_feature_map(tenant: Tenant, values: dict[str, Any]) -> None:
     current = _feature_map(tenant)
     current.update(values)
     tenant.features = json.dumps(current)
+
+
+def _copy_program_exercise_library(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [dict(item) for item in items]
+
+
+def _normalize_program_exercise_value(raw_value: Any) -> str:
+    return " ".join(str(raw_value or "").strip().split())
+
+
+def _normalize_program_exercise_library(items: list[Any]) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+
+    for index, raw_item in enumerate(items, start=1):
+        if not isinstance(raw_item, dict):
+            continue
+
+        item_id = _normalize_program_exercise_value(raw_item.get("id")) or f"custom-{index:03d}"
+        name = _normalize_program_exercise_value(raw_item.get("name"))
+        group = _normalize_program_exercise_value(raw_item.get("group"))
+        if not name or not group or item_id in seen_ids:
+            continue
+
+        seen_ids.add(item_id)
+        normalized.append({
+            "id": item_id,
+            "name": name,
+            "group": group,
+        })
+
+    return normalized
+
+
+def _get_program_exercise_library(tenant: Tenant) -> list[dict[str, str]]:
+    features = _feature_map(tenant)
+    if _PROGRAM_EXERCISE_LIBRARY_FEATURE_KEY not in features:
+        return _copy_program_exercise_library(_DEFAULT_PROGRAM_EXERCISE_LIBRARY)
+
+    raw_items = features.get(_PROGRAM_EXERCISE_LIBRARY_FEATURE_KEY)
+    if not isinstance(raw_items, list):
+        return []
+
+    return _normalize_program_exercise_library(raw_items)
+
+
+def _save_program_exercise_library(tenant: Tenant, items: list[dict[str, str]]) -> None:
+    _save_feature_map(
+        tenant,
+        {
+            _PROGRAM_EXERCISE_LIBRARY_FEATURE_KEY: _normalize_program_exercise_library(items),
+        },
+    )
 
 
 async def _ensure_custom_domain_is_available(
@@ -1098,6 +1228,66 @@ async def upload_logo(
 
 # ─── Programs Router ──────────────────────────────────────────────────────────
 
+@programs_router.get("/exercise-library", response_model=list[ProgramExerciseLibraryItemResponse])
+async def list_program_exercise_library(
+    tenant: Tenant = Depends(get_current_tenant),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    return _get_program_exercise_library(tenant)
+
+
+@programs_router.post("/exercise-library", response_model=ProgramExerciseLibraryItemResponse, status_code=201)
+async def create_program_exercise_library_item(
+    data: ProgramExerciseLibraryItemCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    items = _get_program_exercise_library(tenant)
+    name = _normalize_program_exercise_value(data.name)
+    group = _normalize_program_exercise_value(data.group)
+    duplicate_key = f"{group.lower()}::{name.lower()}"
+
+    if any(f"{item['group'].lower()}::{item['name'].lower()}" == duplicate_key for item in items):
+        raise HTTPException(status_code=400, detail="Ese ejercicio ya existe en la biblioteca")
+
+    item = {
+        "id": str(uuid4()),
+        "name": name,
+        "group": group,
+    }
+    items.append(item)
+    _save_program_exercise_library(tenant, items)
+    await db.flush()
+    return item
+
+
+@programs_router.delete("/exercise-library/{exercise_id}", status_code=204)
+async def delete_program_exercise_library_item(
+    exercise_id: str,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    items = _get_program_exercise_library(tenant)
+    filtered_items = [item for item in items if item["id"] != exercise_id]
+    if len(filtered_items) == len(items):
+        raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+
+    _save_program_exercise_library(tenant, filtered_items)
+    await db.flush()
+    return Response(status_code=204)
+
+
 @programs_router.get("", response_model=PaginatedResponse)
 async def list_programs(
     page: int = Query(1, ge=1),
@@ -1203,6 +1393,22 @@ async def update_program(
         )
     ).scalar() or 0
     return _program_payload(program, trainer, enrolled_count=enrolled_count)
+
+
+@programs_router.delete("/{program_id}", status_code=204)
+async def delete_program(
+    program_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    program = await db.get(TrainingProgram, program_id)
+    if not program or program.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
+
+    await db.delete(program)
+    await db.flush()
+    return Response(status_code=204)
 
 
 @programs_router.get("/{program_id}/enrollments", response_model=list[TrainingProgramEnrollmentResponse])
@@ -1439,6 +1645,93 @@ async def get_reports_overview(
         for index, (name, value) in enumerate(sorted(plan_revenue.items(), key=lambda item: item[1], reverse=True))
     ]
 
+    # ── POS data ──────────────────────────────────────────────────────────────
+    pos_txs = (
+        await db.execute(
+            select(POSTransaction).where(
+                POSTransaction.tenant_id == ctx.tenant_id,
+                POSTransaction.sold_at >= since,
+                POSTransaction.status == POSTransactionStatus.COMPLETED,
+            )
+        )
+    ).scalars().all()
+
+    pos_tx_ids = [tx.id for tx in pos_txs]
+    pos_items: list[POSTransactionItem] = []
+    if pos_tx_ids:
+        pos_items = (
+            await db.execute(
+                select(POSTransactionItem).where(POSTransactionItem.transaction_id.in_(pos_tx_ids))
+            )
+        ).scalars().all()
+
+    pos_revenue = sum(tx.total for tx in pos_txs) if pos_txs else Decimal("0")
+    pos_cogs = sum(item.unit_cost * item.quantity for item in pos_items) if pos_items else Decimal("0")
+    pos_gross_profit = pos_revenue - pos_cogs
+    pos_gross_margin_pct = round(float(pos_gross_profit / pos_revenue) * 100, 1) if pos_revenue else 0.0
+
+    # POS revenue buckets (same month_keys)
+    pos_revenue_buckets: dict[str, float] = {key: 0.0 for key in month_keys}
+    for tx in pos_txs:
+        key = tx.sold_at.strftime("%b")
+        if key in pos_revenue_buckets:
+            pos_revenue_buckets[key] += float(tx.total)
+
+    # Top 5 products by revenue
+    product_revenue: dict[str, dict] = {}
+    for item in pos_items:
+        pid = str(item.product_id)
+        if pid not in product_revenue:
+            product_revenue[pid] = {"name": item.product_name, "revenue": Decimal("0"), "units": 0}
+        product_revenue[pid]["revenue"] += item.unit_price * item.quantity
+        product_revenue[pid]["units"] += item.quantity
+    top_products = [
+        TopProductPoint(name=v["name"], revenue=v["revenue"], units_sold=v["units"])
+        for v in sorted(product_revenue.values(), key=lambda x: x["revenue"], reverse=True)[:5]
+    ]
+
+    # ── Expense data ──────────────────────────────────────────────────────────
+    expenses = (
+        await db.execute(
+            select(Expense).where(
+                Expense.tenant_id == ctx.tenant_id,
+                Expense.expense_date >= since.date(),
+            )
+        )
+    ).scalars().all()
+
+    total_expenses = sum(e.amount for e in expenses) if expenses else Decimal("0")
+
+    expense_category_labels = {
+        "rent": "Arriendo", "utilities": "Servicios", "equipment": "Equipamiento",
+        "supplies": "Insumos", "payroll": "Nómina", "maintenance": "Mantención",
+        "marketing": "Marketing", "other": "Otro",
+    }
+    exp_by_cat: dict[str, Decimal] = {}
+    for exp in expenses:
+        cat = str(exp.category.value) if hasattr(exp.category, "value") else str(exp.category)
+        exp_by_cat[cat] = exp_by_cat.get(cat, Decimal("0")) + exp.amount
+    expenses_by_category = [
+        ExpenseCategoryPoint(
+            category=cat,
+            label=expense_category_labels.get(cat, cat),
+            amount=amount,
+        )
+        for cat, amount in sorted(exp_by_cat.items(), key=lambda x: x[1], reverse=True)
+    ]
+
+    # Expense buckets per period
+    expense_buckets: dict[str, float] = {key: 0.0 for key in month_keys}
+    for exp in expenses:
+        key = exp.expense_date.strftime("%b")
+        if key in expense_buckets:
+            expense_buckets[key] += float(exp.amount)
+
+    # ── P&L consolidado ───────────────────────────────────────────────────────
+    total_revenue = Decimal(str(revenue_total)) + pos_revenue
+    net_profit = total_revenue - pos_cogs - total_expenses
+    net_margin_pct = round(float(net_profit / total_revenue) * 100, 1) if total_revenue else 0.0
+
     return ReportsOverviewResponse(
         revenue_total=revenue_total,
         active_members=active_members,
@@ -1449,6 +1742,21 @@ async def get_reports_overview(
         revenue_by_plan=revenue_by_plan,
         attendance_by_day=[ReportSeriesPoint(label=label, value=value) for label, value in attendance.items()],
         occupancy_by_class=occupancy_points,
+        # POS
+        pos_revenue=pos_revenue,
+        pos_revenue_series=[ReportSeriesPoint(label=l, value=v) for l, v in pos_revenue_buckets.items()],
+        pos_cogs=pos_cogs,
+        pos_gross_profit=pos_gross_profit,
+        pos_gross_margin_pct=pos_gross_margin_pct,
+        top_products=top_products,
+        # Gastos
+        total_expenses=total_expenses,
+        expenses_by_category=expenses_by_category,
+        expense_series=[ReportSeriesPoint(label=l, value=v) for l, v in expense_buckets.items()],
+        # P&L
+        total_revenue=total_revenue,
+        net_profit=net_profit,
+        net_margin_pct=net_margin_pct,
     )
 
 

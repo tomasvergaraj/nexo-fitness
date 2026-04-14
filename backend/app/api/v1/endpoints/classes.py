@@ -615,6 +615,43 @@ async def cancel_reservation(
     await db.flush()
 
 
+@router.patch("/reservations/{reservation_id}", response_model=ReservationResponse)
+async def update_reservation_status(
+    reservation_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
+    status: str = Query(..., description="Nuevo estado: no_show | attended"),
+):
+    """Staff can mark a reservation as no_show or attended."""
+    allowed_transitions = {ReservationStatus.NO_SHOW, ReservationStatus.ATTENDED}
+    try:
+        new_status = ReservationStatus(status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Estado no válido. Opciones: {[s.value for s in allowed_transitions]}")
+    if new_status not in allowed_transitions:
+        raise HTTPException(status_code=400, detail="Solo se permite marcar no_show o attended")
+
+    result = await db.execute(
+        select(Reservation).where(
+            Reservation.id == reservation_id,
+            Reservation.tenant_id == ctx.tenant_id,
+        )
+    )
+    reservation = result.scalar_one_or_none()
+    if not reservation:
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    if reservation.status not in (ReservationStatus.CONFIRMED, ReservationStatus.ATTENDED, ReservationStatus.NO_SHOW):
+        raise HTTPException(status_code=400, detail="Solo se puede actualizar reservas confirmadas")
+
+    reservation.status = new_status
+    if new_status == ReservationStatus.ATTENDED:
+        reservation.attended_at = datetime.now(timezone.utc)
+    await db.flush()
+    await db.refresh(reservation)
+    return ReservationResponse.model_validate(reservation)
+
+
 # ─── Check-in ─────────────────────────────────────────────────────────────────
 
 @router.post("/checkins", response_model=CheckInResponse, status_code=201)

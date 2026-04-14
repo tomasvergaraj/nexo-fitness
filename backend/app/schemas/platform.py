@@ -349,6 +349,17 @@ class TrainingProgramResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProgramExerciseLibraryItemCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    group: str = Field(min_length=1, max_length=80)
+
+
+class ProgramExerciseLibraryItemResponse(BaseModel):
+    id: str
+    name: str
+    group: str
+
+
 class TrainingProgramEnrollmentResponse(BaseModel):
     id: UUID
     program_id: UUID
@@ -462,7 +473,20 @@ class ClassOccupancyPoint(BaseModel):
     occupancy: float
 
 
+class TopProductPoint(BaseModel):
+    name: str
+    revenue: Decimal
+    units_sold: int
+
+
+class ExpenseCategoryPoint(BaseModel):
+    category: str
+    label: str
+    amount: Decimal
+
+
 class ReportsOverviewResponse(BaseModel):
+    # ── Membresías (existente) ────────────────────────────────────────────────
     revenue_total: Decimal = Decimal("0")
     active_members: int = 0
     renewal_rate: float = 0
@@ -472,6 +496,21 @@ class ReportsOverviewResponse(BaseModel):
     revenue_by_plan: list[PlanRevenueShare] = Field(default_factory=list)
     attendance_by_day: list[ReportSeriesPoint] = Field(default_factory=list)
     occupancy_by_class: list[ClassOccupancyPoint] = Field(default_factory=list)
+    # ── POS ──────────────────────────────────────────────────────────────────
+    pos_revenue: Decimal = Decimal("0")
+    pos_revenue_series: list[ReportSeriesPoint] = Field(default_factory=list)
+    pos_cogs: Decimal = Decimal("0")
+    pos_gross_profit: Decimal = Decimal("0")
+    pos_gross_margin_pct: float = 0.0
+    top_products: list[TopProductPoint] = Field(default_factory=list)
+    # ── Gastos ────────────────────────────────────────────────────────────────
+    total_expenses: Decimal = Decimal("0")
+    expenses_by_category: list[ExpenseCategoryPoint] = Field(default_factory=list)
+    expense_series: list[ReportSeriesPoint] = Field(default_factory=list)
+    # ── P&L consolidado ──────────────────────────────────────────────────────
+    total_revenue: Decimal = Decimal("0")
+    net_profit: Decimal = Decimal("0")
+    net_margin_pct: float = 0.0
 
 
 class TenantBranding(BaseModel):

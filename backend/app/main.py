@@ -19,7 +19,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import engine
 from app.core.exceptions import ActionRequiredError, PlanLimitReachedError
-from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, external, operations, public
+from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, external, operations, public, pos
 from app.middleware.tenant import TenantMiddleware
 
 settings = get_settings()
@@ -205,6 +205,7 @@ app.include_router(external.api_clients_router, prefix=prefix)
 app.include_router(external.external_router, prefix=prefix)
 app.include_router(public.public_router, prefix=prefix)
 app.include_router(public.platform_router, prefix=prefix)
+app.include_router(pos.pos_router, prefix=prefix)
 
 # Serve uploaded files (logos, etc.) — in prod nginx handles this directly
 _uploads_dir = Path(os.getenv("UPLOADS_DIR", "uploads"))

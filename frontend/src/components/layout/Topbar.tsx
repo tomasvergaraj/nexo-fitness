@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Menu, Search, Bell, Moon, Sun, LogOut, User, ChevronDown, ArrowUpRight, CheckCircle2, Inbox,
+  Menu, Search, Bell, Moon, Sun, LogOut, User, ChevronDown, ArrowUpRight, CheckCircle2, Inbox, Download,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import ProfileSettingsModal from '@/components/profile/ProfileSettingsModal';
+import Tooltip from '@/components/ui/Tooltip';
 import { notificationsApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
@@ -14,9 +16,17 @@ import { getNotificationActionLabel, resolveNotificationDestination } from '@/ut
 
 interface TopbarProps {
   onMenuToggle: () => void;
+  showInstallShortcut?: boolean;
+  installShortcutTooltip?: string;
+  onInstallShortcut?: () => void;
 }
 
-export default function Topbar({ onMenuToggle }: TopbarProps) {
+export default function Topbar({
+  onMenuToggle,
+  showInstallShortcut = false,
+  installShortcutTooltip = 'Instalar app',
+  onInstallShortcut,
+}: TopbarProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, logout } = useAuthStore();
@@ -24,6 +34,9 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const userDisplayName = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim() || user?.email || 'Usuario';
+  const userInitials = [user?.first_name?.[0], user?.last_name?.[0]].filter(Boolean).join('').toUpperCase() || '?';
 
   const { data: notifications = [], isLoading: isLoadingNotifications } = useQuery<AppNotification[]>({
     queryKey: ['topbar-notifications', user?.id],
@@ -133,6 +146,20 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-2">
+        {showInstallShortcut ? (
+          <Tooltip content={installShortcutTooltip}>
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={onInstallShortcut}
+              className="inline-flex items-center gap-2 rounded-full border border-brand-200/70 bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-100 dark:border-brand-900/50 dark:bg-brand-950/30 dark:text-brand-300 dark:hover:bg-brand-950/50"
+            >
+              <Download size={15} />
+              <span className="hidden sm:inline">Instalar app</span>
+            </motion.button>
+          </Tooltip>
+        ) : null}
+
         {/* Theme toggle */}
         <motion.button
           whileHover={{ scale: 1.05 }}
@@ -297,7 +324,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600
                             flex items-center justify-center text-white text-xs font-bold
                             shadow-md shadow-brand-500/20">
-              {user ? `${user.first_name[0]}${user.last_name[0]}` : '?'}
+              {userInitials}
             </div>
             <span className="hidden md:block text-sm font-medium text-surface-700 dark:text-surface-300">
               {user?.first_name}
@@ -330,7 +357,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                 >
                   <div className="p-3 border-b border-surface-100 dark:border-surface-700">
                     <p className="text-sm font-semibold text-surface-900 dark:text-white">
-                      {user?.first_name} {user?.last_name}
+                      {userDisplayName}
                     </p>
                     <p className="text-xs text-surface-500 truncate">{user?.email}</p>
                   </div>
@@ -339,7 +366,7 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
                       type="button"
                       onClick={() => {
                         setShowUserMenu(false);
-                        navigate('/settings');
+                        setShowProfileModal(true);
                       }}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-lg
                                  text-surface-600 dark:text-surface-400
@@ -362,6 +389,11 @@ export default function Topbar({ onMenuToggle }: TopbarProps) {
           </AnimatePresence>
         </div>
       </div>
+
+      <ProfileSettingsModal
+        open={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
     </header>
   );
 }

@@ -93,16 +93,16 @@ async def _run_trial_warnings() -> dict:
                 skipped += 1
                 continue
 
-            # Intentar obtener URL de checkout para reactivación
-            checkout_url = settings.FRONTEND_URL + "/billing/expired"
             try:
-                checkout_info = await create_reactivation_checkout(db, tenant)
-                if checkout_info and checkout_info.get("checkout_url"):
-                    checkout_url = checkout_info["checkout_url"]
-            except Exception:
-                pass  # Fallback a la billing wall
+                # Intentar obtener URL de checkout para reactivación
+                checkout_url = settings.FRONTEND_URL + "/billing/expired"
+                try:
+                    generated_checkout_url = await create_reactivation_checkout(db, tenant, owner)
+                    if generated_checkout_url:
+                        checkout_url = generated_checkout_url
+                except Exception:
+                    pass  # Fallback a la billing wall
 
-            try:
                 ok = await email_service.send_trial_expiring(
                     to_email=owner.email,
                     first_name=owner.first_name or "Usuario",

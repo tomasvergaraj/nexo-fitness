@@ -18,7 +18,8 @@ from app.models.user import User
 from app.schemas.auth import (
     LoginRequest, LoginResponse, RefreshRequest, RegisterRequest,
     TenantOnboardingRequest, UserResponse,
-    PasswordResetRequest, PasswordResetConfirm, UserSelfUpdate,
+    PasswordResetRequest, PasswordResetConfirm, PasswordChangeRequest,
+    PasswordChangeResponse, UserSelfUpdate,
 )
 from app.integrations.email.email_service import email_service
 from app.services.auth_service import AuthService
@@ -125,6 +126,30 @@ async def reset_password(data: PasswordResetConfirm, db: AsyncSession = Depends(
     await redis.set(f"pwd_reset_used:{token_hash}", "1", ex=900)
     await redis.aclose()
     return {"detail": "Contraseña actualizada correctamente. Ya puedes iniciar sesión."}
+
+
+@router.post("/change-password", response_model=PasswordChangeResponse)
+async def change_password(
+    data: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        tokens = await AuthService.change_password(
+            db,
+            current_user,
+            current_password=data.current_password,
+            new_password=data.new_password,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return PasswordChangeResponse(
+        detail="Contraseña actualizada correctamente.",
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        token_type=tokens["token_type"],
+    )
 
 
 # ── Email verification (OTP) ─────────────────────────────────────────────────

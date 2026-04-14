@@ -120,7 +120,9 @@ class GymClassUpdate(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     max_capacity: Optional[int] = None
+    waitlist_enabled: Optional[bool] = None
     online_link: Optional[str] = None
+    color: Optional[str] = None
     status: Optional[str] = None
     program_id: Optional[UUID] = None
 

@@ -3,6 +3,8 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import OwnerDesktopInstallPrompt from '@/components/dashboard/OwnerDesktopInstallPrompt';
+import { useOwnerDesktopInstallPrompt } from '@/hooks/useOwnerDesktopInstallPrompt';
 import { billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -74,6 +76,7 @@ export default function AppLayout() {
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const desktopInstall = useOwnerDesktopInstallPrompt(user);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -127,7 +130,24 @@ export default function AppLayout() {
       <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <Topbar onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
+        <Topbar
+          onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
+          showInstallShortcut={desktopInstall.canShowInstallEntry}
+          installShortcutTooltip={desktopInstall.shortcutTooltip}
+          onInstallShortcut={() => {
+            void desktopInstall.requestInstall();
+          }}
+        />
+
+        <OwnerDesktopInstallPrompt
+          open={desktopInstall.isSuggestionOpen}
+          installCopy={desktopInstall.installCopy}
+          canPromptInstall={desktopInstall.canPromptInstall}
+          onDismiss={desktopInstall.dismissSuggestion}
+          onInstall={() => {
+            void desktopInstall.requestInstall();
+          }}
+        />
 
         <AnimatePresence>
           {showTrialBanner && (

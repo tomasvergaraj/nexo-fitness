@@ -81,6 +81,8 @@ export const authApi = {
   me: () => api.get('/auth/me'),
   updateMe: (data: { first_name?: string; last_name?: string; phone?: string }) =>
     api.patch('/auth/me', data),
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    api.post('/auth/change-password', data),
   logout: () => api.post('/auth/logout'),
   refresh: (refreshToken: string) =>
     api.post('/auth/refresh', { refresh_token: refreshToken }),
@@ -119,13 +121,20 @@ export const classesApi = {
   listReservations: (id: string) => api.get(`/classes/${id}/reservations`),
   create: (data: Record<string, unknown>) => api.post('/classes', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/classes/${id}`, data),
-  cancel: (id: string, cancelReason?: string) =>
-    api.delete(`/classes/${id}`, { params: cancelReason ? { cancel_reason: cancelReason } : undefined }),
+  cancel: (id: string, options?: { cancelReason?: string; series?: boolean }) =>
+    api.delete(`/classes/${id}`, {
+      params: {
+        ...(options?.cancelReason ? { cancel_reason: options.cancelReason } : {}),
+        ...(options?.series ? { series: true } : {}),
+      },
+    }),
 };
 
 export const reservationsApi = {
   list: (params?: Record<string, unknown>) => api.get('/reservations', { params }),
   create: (data: { gym_class_id: string; user_id?: string }) => api.post('/reservations', data),
+  updateStatus: (id: string, status: 'no_show' | 'attended') =>
+    api.patch(`/reservations/${id}`, null, { params: { status } }),
   cancel: (id: string, cancelReason?: string) =>
     api.delete(`/reservations/${id}`, { params: cancelReason ? { cancel_reason: cancelReason } : undefined }),
 };
@@ -200,6 +209,10 @@ export const programsApi = {
   list: (params?: Record<string, unknown>) => api.get('/programs', { params }),
   create: (data: Record<string, unknown>) => api.post('/programs', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/programs/${id}`, data),
+  delete: (id: string) => api.delete(`/programs/${id}`),
+  listExerciseLibrary: () => api.get('/programs/exercise-library'),
+  createExerciseLibraryItem: (data: { name: string; group: string }) => api.post('/programs/exercise-library', data),
+  deleteExerciseLibraryItem: (id: string) => api.delete(`/programs/exercise-library/${id}`),
   listEnrollments: (id: string) => api.get(`/programs/${id}/enrollments`),
 };
 
@@ -287,4 +300,49 @@ export const promoCodesApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/promo-codes/${id}`, data),
   delete: (id: string) => api.delete(`/promo-codes/${id}`),
   validate: (code: string, planId: string) => api.post('/promo-codes/validate', { code, plan_id: planId }),
+};
+
+export const posApi = {
+  // Categories
+  listCategories: () => api.get('/pos/categories'),
+  createCategory: (data: Record<string, unknown>) => api.post('/pos/categories', data),
+  updateCategory: (id: string, data: Record<string, unknown>) => api.put(`/pos/categories/${id}`, data),
+  deleteCategory: (id: string) => api.delete(`/pos/categories/${id}`),
+
+  // Products
+  listProducts: (params?: Record<string, unknown>) => api.get('/pos/products', { params }),
+  getProduct: (id: string) => api.get(`/pos/products/${id}`),
+  createProduct: (data: Record<string, unknown>) => api.post('/pos/products', data),
+  updateProduct: (id: string, data: Record<string, unknown>) => api.put(`/pos/products/${id}`, data),
+  deleteProduct: (id: string) => api.delete(`/pos/products/${id}`),
+
+  // Inventory
+  listInventory: (params?: Record<string, unknown>) => api.get('/pos/inventory', { params }),
+  adjustStock: (productId: string, data: Record<string, unknown>) => api.put(`/pos/inventory/${productId}`, data),
+  listMovements: (params?: Record<string, unknown>) => api.get('/pos/inventory/movements', { params }),
+
+  // Suppliers
+  listSuppliers: () => api.get('/pos/suppliers'),
+  createSupplier: (data: Record<string, unknown>) => api.post('/pos/suppliers', data),
+  updateSupplier: (id: string, data: Record<string, unknown>) => api.put(`/pos/suppliers/${id}`, data),
+  deleteSupplier: (id: string) => api.delete(`/pos/suppliers/${id}`),
+
+  // Purchase orders
+  listPurchaseOrders: () => api.get('/pos/purchase-orders'),
+  getPurchaseOrder: (id: string) => api.get(`/pos/purchase-orders/${id}`),
+  createPurchaseOrder: (data: Record<string, unknown>) => api.post('/pos/purchase-orders', data),
+  receivePurchaseOrder: (id: string, data: Record<string, unknown>) => api.post(`/pos/purchase-orders/${id}/receive`, data),
+  deletePurchaseOrder: (id: string) => api.delete(`/pos/purchase-orders/${id}`),
+
+  // Transactions
+  listTransactions: (params?: Record<string, unknown>) => api.get('/pos/transactions', { params }),
+  getTransaction: (id: string) => api.get(`/pos/transactions/${id}`),
+  createTransaction: (data: Record<string, unknown>) => api.post('/pos/transactions', data),
+  refundTransaction: (id: string) => api.post(`/pos/transactions/${id}/refund`, {}),
+
+  // Expenses
+  listExpenses: (params?: Record<string, unknown>) => api.get('/pos/expenses', { params }),
+  createExpense: (data: Record<string, unknown>) => api.post('/pos/expenses', data),
+  updateExpense: (id: string, data: Record<string, unknown>) => api.put(`/pos/expenses/${id}`, data),
+  deleteExpense: (id: string) => api.delete(`/pos/expenses/${id}`),
 };

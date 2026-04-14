@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.security import hash_password, verify_password
 from app.core.exceptions import ActionRequiredError
 from app.models.tenant import LicenseType, Tenant, TenantStatus
 from app.models.user import User, UserRole
@@ -83,4 +84,60 @@ async def test_ensure_user_tenant_access_allows_active_tenant() -> None:
 
     await AuthService._ensure_user_tenant_access(db, user)
 
+    assert db.flushed is False
+
+
+@pytest.mark.asyncio
+async def test_change_password_updates_hash_and_rotates_refresh_token() -> None:
+    db = DummyDb(None)
+    user = User(
+        id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        email="owner@nexogym.cl",
+        hashed_password=hash_password("Actual123"),
+        first_name="Owner",
+        last_name="User",
+        role=UserRole.OWNER,
+        is_active=True,
+        is_verified=True,
+    )
+
+    result = await AuthService.change_password(
+        db,
+        user,
+        current_password="Actual123",
+        new_password="NuevaClave123",
+    )
+
+    assert verify_password("NuevaClave123", user.hashed_password)
+    assert user.password_changed_at is not None
+    assert user.refresh_token == result["refresh_token"]
+    assert result["access_token"]
+    assert db.flushed is True
+
+
+@pytest.mark.asyncio
+async def test_change_password_rejects_incorrect_current_password() -> None:
+    db = DummyDb(None)
+    user = User(
+        id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        email="owner@nexogym.cl",
+        hashed_password=hash_password("Actual123"),
+        first_name="Owner",
+        last_name="User",
+        role=UserRole.OWNER,
+        is_active=True,
+        is_verified=True,
+    )
+
+    with pytest.raises(ValueError, match="contraseña actual es incorrecta"):
+        await AuthService.change_password(
+            db,
+            user,
+            current_password="Incorrecta123",
+            new_password="NuevaClave123",
+        )
+
+    assert verify_password("Actual123", user.hashed_password)
     assert db.flushed is False

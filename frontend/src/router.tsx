@@ -24,6 +24,9 @@ import PlatformLeadsPage from '@/pages/platform/PlatformLeadsPage';
 import PublicLandingPage from '@/pages/public/PublicLandingPage';
 import TenantStorefrontPage from '@/pages/public/TenantStorefrontPage';
 import MemberAppPage from '@/pages/member/MemberAppPage';
+import POSPage from '@/pages/pos/POSPage';
+import InventoryPage from '@/pages/inventory/InventoryPage';
+import ExpensesPage from '@/pages/expenses/ExpensesPage';
 import TermsPage from '@/pages/legal/TermsPage';
 import PrivacyPage from '@/pages/legal/PrivacyPage';
 import { useAuthStore } from '@/stores/authStore';
@@ -108,6 +111,30 @@ export const router = createBrowserRouter([
       { path: 'programs', element: <ProgramsPage /> },
       { path: 'marketing', element: <MarketingPage /> },
       { path: 'reports', element: <ReportsPage /> },
+      {
+        path: 'pos',
+        element: (
+          <AuthGuard roles={['owner', 'admin', 'reception']}>
+            <POSPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'inventory',
+        element: (
+          <AuthGuard roles={['owner', 'admin']}>
+            <InventoryPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'expenses',
+        element: (
+          <AuthGuard roles={['owner', 'admin']}>
+            <ExpensesPage />
+          </AuthGuard>
+        ),
+      },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'support', element: <SupportPage /> },
       {

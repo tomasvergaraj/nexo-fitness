@@ -76,4 +76,4 @@ class User(Base):
 
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}"
+        return " ".join(part for part in [self.first_name, self.last_name] if part).strip()

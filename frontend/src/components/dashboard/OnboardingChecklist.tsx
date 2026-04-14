@@ -13,7 +13,11 @@ import { branchesApi, plansApi, clientsApi, classesApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/utils';
 
-const DISMISSED_KEY = 'nexo:onboarding:dismissed';
+const LEGACY_DISMISSED_KEY = 'nexo:onboarding:dismissed';
+
+function dismissedKeyForUser(userId?: string) {
+  return userId ? `${LEGACY_DISMISSED_KEY}:${userId}` : LEGACY_DISMISSED_KEY;
+}
 
 interface Step {
   id: string;
@@ -25,18 +29,23 @@ interface Step {
   loading: boolean;
 }
 
-function useDismissed() {
-  const [dismissed, setDismissed] = useState(() => {
+function useDismissed(userId?: string) {
+  const storageKey = dismissedKeyForUser(userId);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
     try {
-      return localStorage.getItem(DISMISSED_KEY) === 'true';
+      // Cleanup del flag global antiguo para no ocultar el checklist a cuentas nuevas.
+      localStorage.removeItem(LEGACY_DISMISSED_KEY);
+      setDismissed(localStorage.getItem(storageKey) === 'true');
     } catch {
-      return false;
+      setDismissed(false);
     }
-  });
+  }, [storageKey]);
 
   const dismiss = () => {
     try {
-      localStorage.setItem(DISMISSED_KEY, 'true');
+      localStorage.setItem(storageKey, 'true');
     } catch { /* noop */ }
     setDismissed(true);
   };
@@ -47,35 +56,37 @@ function useDismissed() {
 export default function OnboardingChecklist() {
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
-  const { dismissed, dismiss } = useDismissed();
+  const { dismissed, dismiss } = useDismissed(user?.id);
   const [expanded, setExpanded] = useState(true);
-
-  // Solo visible para owners
-  if (user?.role !== 'owner' || dismissed) return null;
+  const shouldShow = user?.role === 'owner' && !dismissed;
 
   // Consultas ligeras para detectar si cada paso ya fue hecho
   const branchesQ = useQuery({
     queryKey: ['onboarding-branches'],
     queryFn: async () => (await branchesApi.list()).data,
     staleTime: 60_000,
+    enabled: shouldShow,
   });
 
   const plansQ = useQuery({
     queryKey: ['onboarding-plans'],
     queryFn: async () => (await plansApi.list({ per_page: 1 })).data,
     staleTime: 60_000,
+    enabled: shouldShow,
   });
 
   const clientsQ = useQuery({
     queryKey: ['onboarding-clients'],
     queryFn: async () => (await clientsApi.list({ per_page: 1 })).data,
     staleTime: 60_000,
+    enabled: shouldShow,
   });
 
   const classesQ = useQuery({
     queryKey: ['onboarding-classes'],
     queryFn: async () => (await classesApi.list({ per_page: 1 })).data,
     staleTime: 60_000,
+    enabled: shouldShow,
   });
 
   const hasBranch = (branchesQ.data?.length ?? 0) > 0;
@@ -133,6 +144,8 @@ export default function OnboardingChecklist() {
       return () => clearTimeout(timer);
     }
   }, [allDone, dismissed]);
+
+  if (!shouldShow) return null;
 
   return (
     <motion.div

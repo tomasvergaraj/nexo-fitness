@@ -5,9 +5,9 @@ export function registerPwaServiceWorker() {
   }
 
   window.addEventListener('load', () => {
-    // Scope limitado a /member para que el SW no intercepte rutas del dashboard
-    // de admin ni de la landing pública.
-    void navigator.serviceWorker.register('/sw.js', { scope: '/member' }).catch((error) => {
+    // Scope global para permitir que owners y miembros instalen Nexo como app.
+    // El service worker resuelve internamente qué rutas cachear y cómo hacer fallback.
+    void navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((error) => {
       console.error('No se pudo registrar el service worker de la PWA.', error);
     });
   });

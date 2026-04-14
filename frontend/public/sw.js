@@ -1,20 +1,21 @@
-// Service Worker — Nexo Fitness Member PWA
-// Scope registrado: /member (ver frontend/src/lib/pwa.ts)
-// Solo intercepta requests bajo /member — no afecta al dashboard de admin ni rutas públicas.
+// Service Worker — Nexo Fitness PWA
+// Scope registrado: / (ver frontend/src/lib/pwa.ts)
+// Controla el shell SPA completo para que owners y miembros puedan instalar la app.
 
-const CACHE_VERSION = 'v5';
-const ICON_VERSION = '20260409-2';
+const CACHE_VERSION = 'v6';
+const ICON_VERSION = '20260414-1';
 const MANIFEST_PATH = `/manifest.webmanifest?v=${ICON_VERSION}`;
 const SYSTEM_ICON_PATH = `/icon.png?v=${ICON_VERSION}`;
 const PWA_ICON_192_PATH = `/icons/icon-192.png?v=${ICON_VERSION}`;
 const PWA_ICON_512_PATH = `/icons/icon-512.png?v=${ICON_VERSION}`;
-const APP_SHELL_CACHE = `nexo-fitness-member-shell-${CACHE_VERSION}`;
-const STATIC_CACHE = `nexo-fitness-member-static-${CACHE_VERSION}`;
-const PUBLIC_CACHE = `nexo-fitness-member-public-${CACHE_VERSION}`;
+const APP_SHELL_CACHE = `nexo-fitness-shell-${CACHE_VERSION}`;
+const STATIC_CACHE = `nexo-fitness-static-${CACHE_VERSION}`;
+const PUBLIC_CACHE = `nexo-fitness-public-${CACHE_VERSION}`;
 const KNOWN_CACHES = [APP_SHELL_CACHE, STATIC_CACHE, PUBLIC_CACHE];
 
-// Shell mínima para que la PWA cargue offline desde /member
+// Shell mínima para que la SPA pueda bootear tanto en owner/admin como en member.
 const APP_SHELL = [
+  '/',
   '/member',
   MANIFEST_PATH,
   SYSTEM_ICON_PATH,
@@ -50,10 +51,10 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // Navegación (HTML): network-first con fallback a /member
-  // Con el scope /member, solo recibimos navigates a URLs que empiezan con /member
+  // Navegación (HTML): network-first con fallback al shell raíz de la SPA.
+  // Esto evita devolver /member cuando un owner recarga /dashboard offline.
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request, APP_SHELL_CACHE, '/member'));
+    event.respondWith(networkFirst(request, APP_SHELL_CACHE, '/'));
     return;
   }
 
