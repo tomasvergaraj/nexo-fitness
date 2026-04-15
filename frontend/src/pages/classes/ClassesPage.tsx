@@ -25,6 +25,7 @@ type ClassFormState = {
   modality: 'in_person' | 'online' | 'hybrid';
   branch_id: string;
   instructor_id: string;
+  start_date: string;
   start_time: string;
   duration_minutes: string;
   max_capacity: string;
@@ -129,6 +130,7 @@ function createInitialForm(date: Date, defaultBranchId = ''): ClassFormState {
     modality: 'in_person',
     branch_id: defaultBranchId,
     instructor_id: '',
+    start_date: formatDateKey(date),
     start_time: hasExplicitTime ? formatTimeInputValue(date) : '09:00',
     duration_minutes: '60',
     max_capacity: '20',
@@ -151,6 +153,7 @@ function gymClassToFormState(gymClass: GymClass): ClassFormState {
     modality: gymClass.modality,
     branch_id: gymClass.branch_id || '',
     instructor_id: gymClass.instructor_id || '',
+    start_date: formatDateKey(start),
     start_time: formatTimeInputValue(start),
     duration_minutes: String(durationMins),
     max_capacity: String(gymClass.max_capacity),
@@ -302,7 +305,7 @@ export default function ClassesPage() {
   const [selectedDay, setSelectedDay] = useState(() => getWeekdayIndex(new Date()));
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedBranchId, setSelectedBranchId] = useState('');
-  const [selectedInstructorId] = useState('');
+  const [selectedInstructorId, setSelectedInstructorId] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createModalDate, setCreateModalDate] = useState<Date | null>(null);
   const [calendarHourStart, setCalendarHourStart] = useState(6);
@@ -428,6 +431,7 @@ export default function ClassesPage() {
           date_to: calendarRange.rangeEnd.toISOString(),
           ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
           ...(selectedBranchId ? { branch_id: selectedBranchId } : {}),
+          ...(selectedInstructorId ? { instructor_id: selectedInstructorId } : {}),
         });
         const payload = response.data as PaginatedResponse<GymClass>;
 
@@ -531,7 +535,10 @@ export default function ClassesPage() {
       if (!Number.isFinite(Number(editForm.max_capacity)) || Number(editForm.max_capacity) < 1) throw new Error('La capacidad debe ser mayor a cero');
       if (editForm.modality !== 'online' && !editForm.branch_id) throw new Error('Selecciona una sede para esta clase.');
 
-      const baseDate = new Date(editingClass.start_time);
+      // Use editForm.start_date if set (supports date change); fallback to original
+      const baseDate = editForm.start_date
+        ? new Date(`${editForm.start_date}T00:00:00`)
+        : new Date(editingClass.start_time);
       const computedStart = combineDateAndTime(baseDate, editForm.start_time);
       const computedEnd = new Date(computedStart.getTime() + durationMins * 60000);
 
@@ -756,6 +763,19 @@ export default function ClassesPage() {
                 <option value="">Todas las sedes</option>
                 {activeBranches.map((branch) => (
                   <option key={branch.id} value={branch.id}>{branch.name}</option>
+                ))}
+              </select>
+            ) : null}
+
+            {staffList.length > 0 ? (
+              <select
+                value={selectedInstructorId}
+                onChange={(event) => setSelectedInstructorId(event.target.value)}
+                className="input min-w-[210px] text-sm"
+              >
+                <option value="">Todos los instructores</option>
+                {staffList.map((staff) => (
+                  <option key={staff.id} value={staff.id}>{staff.full_name}</option>
                 ))}
               </select>
             ) : null}
@@ -1672,7 +1692,7 @@ export default function ClassesPage() {
       <Modal
         open={showEditModal}
         title={editingClass ? `Editar ${editingClass.name}` : 'Editar clase'}
-        description="Los cambios solo afectan esta instancia de la clase."
+        description="Modifica los datos de esta clase. Los cambios se aplican solo a esta instancia."
         onClose={() => {
           if (!updateClass.isPending) {
             setShowEditModal(false);
@@ -1689,6 +1709,75 @@ export default function ClassesPage() {
               updateClass.mutate();
             }}
           >
+            {/* Día y hora actuales */}
+            <div className="rounded-2xl border border-brand-200 bg-brand-50/70 p-4 dark:border-brand-900/40 dark:bg-brand-950/20">
+              <p className="text-sm font-semibold text-surface-900 dark:text-white">Fecha y hora</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-surface-500">Día de la clase</label>
+                  <input
+                    type="date"
+                    className="input text-sm"
+                    value={editForm.start_date}
+                    onChange={(event) => setEditForm((current) => ({ ...current, start_date: event.target.value }))}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-surface-500">Hora de inicio</label>
+                  <input
+                    type="time"
+                    className="input text-sm"
+                    value={editForm.start_time}
+                    onChange={(event) => setEditForm((current) => ({ ...current, start_time: event.target.value }))}
+                    required
+                  />
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {START_TIME_PRESETS.map((timeValue) => (
+                      <button
+                        key={timeValue}
+                        type="button"
+                        onClick={() => setEditForm((current) => ({ ...current, start_time: timeValue }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                          editForm.start_time === timeValue
+                            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                            : 'border-surface-200 text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:text-surface-300',
+                        )}
+                      >
+                        {timeValue}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Tipo de clase */}
+            <div>
+              <label className="mb-3 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Tipo de clase
+                <span className="ml-2 text-xs font-normal text-surface-400">Elige un preset o escribe uno personalizado</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {CLASS_TYPE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => setEditForm((current) => applyClassTypeChange(current, preset.value, preset))}
+                    className={cn(
+                      'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
+                      editForm.class_type === preset.value
+                        ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                        : 'border-surface-200 bg-white text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:bg-surface-950/20 dark:text-surface-300',
+                    )}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Nombre visible</label>
@@ -1725,27 +1814,69 @@ export default function ClassesPage() {
               />
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Hora de inicio</label>
-                <input
-                  type="time"
-                  className="input"
-                  value={editForm.start_time}
-                  onChange={(event) => setEditForm((current) => ({ ...current, start_time: event.target.value }))}
-                  required
-                />
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="space-y-4 rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-800 dark:bg-surface-950/20">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duración</label>
+                  <div className="flex flex-wrap gap-2">
+                    {DURATION_PRESETS.map((minutes) => (
+                      <button
+                        key={minutes}
+                        type="button"
+                        onClick={() => setEditForm((current) => ({ ...current, duration_minutes: String(minutes) }))}
+                        className={cn(
+                          'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                          Number(editForm.duration_minutes) === minutes
+                            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                            : 'border-surface-200 text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:text-surface-300',
+                        )}
+                      >
+                        {minutes} min
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    min="15"
+                    step="5"
+                    className="input mt-3"
+                    value={editForm.duration_minutes}
+                    onChange={(event) => setEditForm((current) => ({ ...current, duration_minutes: event.target.value }))}
+                    placeholder="Duración personalizada en minutos"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Duración (minutos)</label>
-                <input
-                  type="number"
-                  min="15"
-                  step="5"
-                  className="input"
-                  value={editForm.duration_minutes}
-                  onChange={(event) => setEditForm((current) => ({ ...current, duration_minutes: event.target.value }))}
-                />
+
+              <div className="space-y-4 rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-800 dark:bg-surface-950/20">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Capacidad</label>
+                  <div className="flex flex-wrap gap-2">
+                    {CAPACITY_PRESETS.map((cap) => (
+                      <button
+                        key={cap}
+                        type="button"
+                        onClick={() => setEditForm((current) => ({ ...current, max_capacity: String(cap) }))}
+                        className={cn(
+                          'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                          Number(editForm.max_capacity) === cap
+                            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                            : 'border-surface-200 text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:text-surface-300',
+                        )}
+                      >
+                        {cap}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="number"
+                    min="1"
+                    className="input mt-3"
+                    value={editForm.max_capacity}
+                    onChange={(event) => setEditForm((current) => ({ ...current, max_capacity: event.target.value }))}
+                    placeholder="Capacidad personalizada"
+                    required
+                  />
+                </div>
               </div>
             </div>
 
@@ -1774,22 +1905,33 @@ export default function ClassesPage() {
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
-                Sede
-                {editForm.modality !== 'online' ? <span className="ml-2 text-xs font-normal text-surface-400">Obligatoria</span> : null}
-              </label>
-              <select
-                className="input"
-                value={editForm.branch_id}
-                onChange={(event) => setEditForm((current) => ({ ...current, branch_id: event.target.value }))}
-                required={editForm.modality !== 'online'}
-              >
-                <option value="">{editForm.modality === 'online' ? 'Sin sede física' : 'Selecciona una sede'}</option>
-                {activeBranches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>{branch.name}</option>
-                ))}
-              </select>
+            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                  Sede
+                  {editForm.modality !== 'online' ? <span className="ml-2 text-xs font-normal text-surface-400">Obligatoria</span> : null}
+                </label>
+                <select
+                  className="input"
+                  value={editForm.branch_id}
+                  onChange={(event) => setEditForm((current) => ({ ...current, branch_id: event.target.value }))}
+                  required={editForm.modality !== 'online'}
+                >
+                  <option value="">{editForm.modality === 'online' ? 'Sin sede física' : 'Selecciona una sede'}</option>
+                  {activeBranches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>{branch.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color</label>
+                <input
+                  type="color"
+                  className="input h-11 w-full min-w-[88px] p-2"
+                  value={editForm.color}
+                  onChange={(event) => setEditForm((current) => ({ ...current, color: event.target.value }))}
+                />
+              </div>
             </div>
 
             {staffList.length > 0 ? (
@@ -1807,29 +1949,6 @@ export default function ClassesPage() {
                 </select>
               </div>
             ) : null}
-
-            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Capacidad máxima</label>
-                <input
-                  type="number"
-                  min="1"
-                  className="input"
-                  value={editForm.max_capacity}
-                  onChange={(event) => setEditForm((current) => ({ ...current, max_capacity: event.target.value }))}
-                  required
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color</label>
-                <input
-                  type="color"
-                  className="input h-11 w-full min-w-[88px] p-2"
-                  value={editForm.color}
-                  onChange={(event) => setEditForm((current) => ({ ...current, color: event.target.value }))}
-                />
-              </div>
-            </div>
 
             {(editForm.modality === 'online' || editForm.modality === 'hybrid') ? (
               <div>

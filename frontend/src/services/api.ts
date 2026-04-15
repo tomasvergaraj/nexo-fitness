@@ -214,6 +214,8 @@ export const programsApi = {
   createExerciseLibraryItem: (data: { name: string; group: string }) => api.post('/programs/exercise-library', data),
   deleteExerciseLibraryItem: (id: string) => api.delete(`/programs/exercise-library/${id}`),
   listEnrollments: (id: string) => api.get(`/programs/${id}/enrollments`),
+  listClasses: (id: string) => api.get(`/programs/${id}/classes`),
+  generateClasses: (id: string, data: Record<string, unknown>) => api.post(`/programs/${id}/generate-classes`, data),
 };
 
 export const settingsApi = {

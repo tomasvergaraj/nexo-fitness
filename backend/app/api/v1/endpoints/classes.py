@@ -151,6 +151,8 @@ async def list_classes(
     instructor_id: Optional[UUID] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
+    program_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
@@ -166,6 +168,9 @@ async def list_classes(
     if instructor_id:
         query = query.where(GymClass.instructor_id == instructor_id)
         count_query = count_query.where(GymClass.instructor_id == instructor_id)
+    if program_id:
+        query = query.where(GymClass.program_id == program_id)
+        count_query = count_query.where(GymClass.program_id == program_id)
     if date_from:
         query = query.where(GymClass.start_time >= date_from)
         count_query = count_query.where(GymClass.start_time >= date_from)
@@ -173,8 +178,9 @@ async def list_classes(
         query = query.where(GymClass.start_time <= date_to)
         count_query = count_query.where(GymClass.start_time <= date_to)
 
+    order_col = GymClass.start_time.asc() if sort_order == "asc" else GymClass.start_time.desc()
     total = (await db.execute(count_query)).scalar() or 0
-    query = query.order_by(GymClass.start_time.desc()).offset((page - 1) * per_page).limit(per_page)
+    query = query.order_by(order_col).offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(query)
     classes = result.scalars().all()
 
@@ -294,6 +300,7 @@ async def get_class(
 @router.get("/classes/{class_id}/reservations", response_model=list[ClassReservationDetailResponse])
 async def list_class_reservations(
     class_id: UUID,
+    include_cancelled: bool = Query(default=True, description="Incluir reservas canceladas y no-show"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
@@ -306,7 +313,7 @@ async def list_class_reservations(
     if not gym_class:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
 
-    rows = await db.execute(
+    reservation_query = (
         select(Reservation, User)
         .join(User, User.id == Reservation.user_id)
         .where(
@@ -315,13 +322,19 @@ async def list_class_reservations(
         )
         .order_by(Reservation.created_at.asc())
     )
+    if not include_cancelled:
+        reservation_query = reservation_query.where(
+            Reservation.status.notin_([ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW])
+        )
+
+    rows = await db.execute(reservation_query)
 
     status_order = {
         ReservationStatus.CONFIRMED: 0,
         ReservationStatus.ATTENDED: 1,
         ReservationStatus.WAITLISTED: 2,
-        ReservationStatus.CANCELLED: 3,
-        ReservationStatus.NO_SHOW: 4,
+        ReservationStatus.NO_SHOW: 3,
+        ReservationStatus.CANCELLED: 4,
     }
     reservation_rows = rows.all()
     reservation_rows.sort(
@@ -342,6 +355,7 @@ async def list_class_reservations(
 async def update_class(
     class_id: UUID,
     data: GymClassUpdate,
+    series: bool = Query(default=False, description="Si es True aplica los cambios a todas las futuras de la serie"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "trainer")),
@@ -364,8 +378,27 @@ async def update_class(
     )
     update_data["modality"] = effective_modality
 
-    for field, value in update_data.items():
-        setattr(gym_class, field, value)
+    # Collect classes to update: single or all future in the series
+    if series and gym_class.recurrence_group_id:
+        series_result = await db.execute(
+            select(GymClass).where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.recurrence_group_id == gym_class.recurrence_group_id,
+                GymClass.status == ClassStatus.SCHEDULED,
+                GymClass.start_time >= gym_class.start_time,
+            )
+        )
+        classes_to_update = series_result.scalars().all()
+    else:
+        classes_to_update = [gym_class]
+
+    # Fields that depend on per-instance time and should NOT be bulk-applied
+    time_fields = {"start_time", "end_time"}
+    bulk_update = {k: v for k, v in update_data.items() if k not in time_fields} if series else update_data
+
+    for cls in classes_to_update:
+        for field, value in bulk_update.items():
+            setattr(cls, field, value)
 
     await db.flush()
     await db.refresh(gym_class)
@@ -568,8 +601,23 @@ async def cancel_reservation(
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
 
     # Only owner of reservation or staff can cancel
-    if reservation.user_id != current_user.id and _role_value(current_user) not in ("owner", "admin", "reception"):
+    current_role = _role_value(current_user)
+    is_staff = current_role in ("owner", "admin", "reception")
+    if reservation.user_id != current_user.id and not is_staff:
         raise HTTPException(status_code=403, detail="No autorizado")
+
+    # Enforce cancellation deadline for clients (staff can always cancel)
+    if not is_staff and reservation.status == ReservationStatus.CONFIRMED:
+        gym_class_for_deadline = await db.get(GymClass, reservation.gym_class_id)
+        if gym_class_for_deadline and gym_class_for_deadline.cancellation_deadline_hours > 0:
+            deadline = gym_class_for_deadline.start_time - timedelta(
+                hours=gym_class_for_deadline.cancellation_deadline_hours
+            )
+            if datetime.now(timezone.utc) > deadline:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No se puede cancelar con menos de {gym_class_for_deadline.cancellation_deadline_hours} hora(s) de anticipación",
+                )
 
     was_confirmed = reservation.status == ReservationStatus.CONFIRMED
     reservation.status = ReservationStatus.CANCELLED

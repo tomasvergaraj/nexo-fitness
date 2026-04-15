@@ -495,6 +495,7 @@ export interface TrainingProgram {
   schedule: ProgramScheduleDay[];
   is_active: boolean;
   enrolled_count: number;
+  linked_class_count: number;
   is_enrolled: boolean;
   enrollment_id?: string | null;
   created_at: string;

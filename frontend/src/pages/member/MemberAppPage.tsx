@@ -6,6 +6,8 @@ import {
   Camera,
   CheckCheck,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   CreditCard,
   Download,
@@ -172,9 +174,12 @@ export default function MemberAppPage() {
   const [supportDatePreset, setSupportDatePreset] = useState<NotificationDatePreset>('30d');
   const [supportDateFrom, setSupportDateFrom] = useState(initialSupportDateRange.from);
   const [supportDateTo, setSupportDateTo] = useState(initialSupportDateRange.to);
-  const [agendaDateFilter, setAgendaDateFilter] = useState<'all' | 'today' | 'week'>('all');
+  const [agendaSelectedDay, setAgendaSelectedDay] = useState<string | null>(null);
+  const [agendaWeekOffset, setAgendaWeekOffset] = useState(0);
+  const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
   const [agendaModalityFilter, setAgendaModalityFilter] = useState<string>('all');
   const [agendaBranchFilter, setAgendaBranchFilter] = useState<string>('all');
+  const [agendaProgramFilter, setAgendaProgramFilter] = useState<string>('all');
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>('all');
   const [notificationSearch, setNotificationSearch] = useState('');
   const initialNotificationDateRange = useMemo(() => getNotificationPresetDateRange('30d'), []);
@@ -611,19 +616,22 @@ export default function MemberAppPage() {
     ).sort((left, right) => left.name.localeCompare(right.name, 'es-CL'))
   ), [classes]);
 
+  const programs = programsQuery.data ?? [];
+  const enrolledPrograms = programs.filter((program) => program.is_enrolled);
+  const enrolledProgramIds = useMemo(
+    () => new Set(enrolledPrograms.map((p) => p.id)),
+    [enrolledPrograms],
+  );
+
   const filteredClasses = useMemo(() => {
-    const now = new Date();
-    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-    const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59);
     return classes.filter((c) => {
-      const start = new Date(c.start_time);
-      if (agendaDateFilter === 'today' && start > todayEnd) return false;
-      if (agendaDateFilter === 'week' && start > weekEnd) return false;
+      if (agendaSelectedDay !== null && getAgendaDateKey(c.start_time) !== agendaSelectedDay) return false;
       if (agendaModalityFilter !== 'all' && c.modality !== agendaModalityFilter) return false;
       if (agendaBranchFilter !== 'all' && c.branch_id !== agendaBranchFilter) return false;
+      if (agendaProgramFilter !== 'all' && c.program_id !== agendaProgramFilter) return false;
       return true;
     });
-  }, [agendaBranchFilter, agendaDateFilter, agendaModalityFilter, classes]);
+  }, [agendaBranchFilter, agendaSelectedDay, agendaModalityFilter, agendaProgramFilter, classes]);
   const reservations = reservationsQuery.data?.items ?? [];
   const payments = paymentsQuery.data ?? [];
   const supportInteractions = supportInteractionsQuery.data ?? [];
@@ -633,8 +641,6 @@ export default function MemberAppPage() {
     && notificationDateFrom === initialNotificationDateRange.from
     && notificationDateTo === initialNotificationDateRange.to;
   const plans = plansQuery.data ?? [];
-  const programs = programsQuery.data ?? [];
-  const enrolledPrograms = programs.filter((program) => program.is_enrolled);
   const pushSubscriptions = pushSubscriptionsQuery.data ?? [];
   const accentColor = normalizeHexColor(profileQuery.data?.branding.primary_color, DEFAULT_PRIMARY_COLOR) ?? DEFAULT_PRIMARY_COLOR;
   const secondaryColor = normalizeHexColor(profileQuery.data?.branding.secondary_color, DEFAULT_SECONDARY_COLOR) ?? DEFAULT_SECONDARY_COLOR;
@@ -868,6 +874,34 @@ export default function MemberAppPage() {
 
     return Array.from(groups.values());
   }, [filteredClasses]);
+
+  // Week strip: 7 days starting from Monday of (today + agendaWeekOffset weeks)
+  const agendaWeekDates = useMemo(() => {
+    const today = new Date();
+    const dayOfWeek = (today.getDay() + 6) % 7; // 0=Mon
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - dayOfWeek + agendaWeekOffset * 7);
+    monday.setHours(0, 0, 0, 0);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return d;
+    });
+  }, [agendaWeekOffset]);
+
+  // Count classes (with modality/branch/program filters but without date filter) per day key
+  const classesByDayKey = useMemo(() => {
+    const map: Record<string, number> = {};
+    classes.forEach((c) => {
+      if (agendaModalityFilter !== 'all' && c.modality !== agendaModalityFilter) return;
+      if (agendaBranchFilter !== 'all' && c.branch_id !== agendaBranchFilter) return;
+      if (agendaProgramFilter !== 'all' && c.program_id !== agendaProgramFilter) return;
+      const key = getAgendaDateKey(c.start_time);
+      map[key] = (map[key] ?? 0) + 1;
+    });
+    return map;
+  }, [classes, agendaModalityFilter, agendaBranchFilter, agendaProgramFilter]);
+
   const pageBackground = isDark
     ? `radial-gradient(circle at top, ${withAlpha(accentColor, 0.28)}, transparent 28%), radial-gradient(circle at 86% 12%, ${withAlpha(secondaryColor, 0.2)}, transparent 20%), linear-gradient(180deg, #04141a 0%, #08161d 48%, #04141a 100%)`
     : `radial-gradient(circle at top, ${withAlpha(accentColor, 0.18)}, transparent 28%), radial-gradient(circle at 88% 12%, ${withAlpha(secondaryColor, 0.12)}, transparent 18%), linear-gradient(180deg, #f8fafc 0%, #eef6ff 48%, #f8fafc 100%)`;
@@ -1779,187 +1813,321 @@ export default function MemberAppPage() {
                     </div>
                   );
                 })()}
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {(['all', 'today', 'week'] as const).map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      onClick={() => setAgendaDateFilter(f)}
-                      style={agendaDateFilter === f ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
-                      className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaDateFilter === f ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
-                    >
-                      {f === 'all' ? 'Todas' : f === 'today' ? 'Hoy' : 'Esta semana'}
-                    </button>
-                  ))}
-                  {agendaModalities.length > 1 ? (
-                    <>
-                      <span className="self-center text-surface-600">|</span>
-                      <button
-                        type="button"
-                        onClick={() => setAgendaModalityFilter('all')}
-                        style={agendaModalityFilter === 'all' ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
-                        className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaModalityFilter === 'all' ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
-                      >
-                        Todas las modalidades
-                      </button>
-                      {agendaModalities.map((m) => (
+                {/* Secondary filters: modality, branch, program */}
+                {(agendaModalities.length > 1 || agendaBranches.length > 1 || enrolledPrograms.length > 0) ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {agendaModalities.length > 1 ? (
+                      <>
                         <button
-                          key={m}
                           type="button"
-                          onClick={() => setAgendaModalityFilter(m)}
-                          style={agendaModalityFilter === m ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
-                          className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaModalityFilter === m ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                          onClick={() => setAgendaModalityFilter('all')}
+                          style={agendaModalityFilter === 'all' ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                          className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaModalityFilter === 'all' ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
                         >
-                          {formatClassModalityLabel(m)}
+                          Todas las modalidades
                         </button>
-                      ))}
-                    </>
-                  ) : null}
-                  {agendaBranches.length > 1 ? (
-                    <>
-                      <span className="self-center text-surface-600">|</span>
-                      <button
-                        type="button"
-                        onClick={() => setAgendaBranchFilter('all')}
-                        style={agendaBranchFilter === 'all' ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
-                        className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaBranchFilter === 'all' ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
-                      >
-                        Todas las sedes
-                      </button>
-                      {agendaBranches.map((branch) => (
+                        {agendaModalities.map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setAgendaModalityFilter(m)}
+                            style={agendaModalityFilter === m ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaModalityFilter === m ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                          >
+                            {formatClassModalityLabel(m)}
+                          </button>
+                        ))}
+                      </>
+                    ) : null}
+                    {agendaBranches.length > 1 ? (
+                      <>
                         <button
-                          key={branch.id}
                           type="button"
-                          onClick={() => setAgendaBranchFilter(branch.id)}
-                          style={agendaBranchFilter === branch.id ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
-                          className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaBranchFilter === branch.id ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                          onClick={() => setAgendaBranchFilter('all')}
+                          style={agendaBranchFilter === 'all' ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                          className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaBranchFilter === 'all' ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
                         >
-                          {branch.name}
+                          Todas las sedes
                         </button>
-                      ))}
-                    </>
-                  ) : null}
-                </div>
+                        {agendaBranches.map((branch) => (
+                          <button
+                            key={branch.id}
+                            type="button"
+                            onClick={() => setAgendaBranchFilter(branch.id)}
+                            style={agendaBranchFilter === branch.id ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaBranchFilter === branch.id ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                          >
+                            {branch.name}
+                          </button>
+                        ))}
+                      </>
+                    ) : null}
+                    {enrolledPrograms.length > 0 ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setAgendaProgramFilter('all')}
+                          style={agendaProgramFilter === 'all' ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                          className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaProgramFilter === 'all' ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                        >
+                          Todos los programas
+                        </button>
+                        {enrolledPrograms.map((program) => (
+                          <button
+                            key={program.id}
+                            type="button"
+                            onClick={() => setAgendaProgramFilter(program.id)}
+                            style={agendaProgramFilter === program.id ? { borderColor: `${accentColor}88`, background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.28 : 0.18)}, ${withAlpha(secondaryColor, isDark ? 0.22 : 0.12)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors', agendaProgramFilter === program.id ? '' : 'border-surface-200 bg-white text-surface-500 hover:text-surface-900 dark:border-white/10 dark:bg-white/5 dark:text-surface-400 dark:hover:text-white')}
+                          >
+                            {program.name}
+                          </button>
+                        ))}
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
               </Panel>
 
+              {/* ─── Week strip ──────────────────────────────────────────── */}
+              <div className="overflow-hidden rounded-2xl border border-surface-200/80 bg-white/85 dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="flex items-center gap-1 px-2 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setAgendaWeekOffset((n) => n - 1)}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-900 dark:text-surface-400 dark:hover:bg-white/10 dark:hover:text-white"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+
+                  <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
+                    {/* "Todas" chip */}
+                    <button
+                      type="button"
+                      onClick={() => { setAgendaSelectedDay(null); setAgendaWeekOffset(0); }}
+                      style={agendaSelectedDay === null ? { background: `linear-gradient(135deg, ${withAlpha(accentColor, isDark ? 0.35 : 0.2)}, ${withAlpha(secondaryColor, isDark ? 0.28 : 0.14)})`, color: isDark ? '#e6fffb' : '#0f172a' } : undefined}
+                      className={cn(
+                        'flex shrink-0 flex-col items-center rounded-xl px-2.5 py-1.5 text-center transition-colors',
+                        agendaSelectedDay === null
+                          ? 'font-semibold'
+                          : 'text-surface-500 hover:bg-surface-100 hover:text-surface-900 dark:text-surface-400 dark:hover:bg-white/10 dark:hover:text-white',
+                      )}
+                    >
+                      <span className="text-[10px] font-medium uppercase tracking-wide">Ver</span>
+                      <span className="text-[11px] font-bold">Todas</span>
+                    </button>
+
+                    {agendaWeekDates.map((date) => {
+                      const key = getAgendaDateKey(date);
+                      const isToday = key === getAgendaDateKey(new Date());
+                      const isSelected = agendaSelectedDay === key;
+                      const count = classesByDayKey[key] ?? 0;
+                      const dayLabel = date.toLocaleDateString('es-CL', { weekday: 'short' });
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setAgendaSelectedDay(isSelected ? null : key)}
+                          style={isSelected ? { background: `linear-gradient(135deg, ${accentColor}, ${secondaryColor})`, color: '#fff' } : undefined}
+                          className={cn(
+                            'relative flex shrink-0 flex-col items-center rounded-xl px-2.5 py-1.5 text-center transition-colors',
+                            isSelected
+                              ? 'shadow-sm'
+                              : isToday
+                                ? 'font-semibold text-surface-900 dark:text-white'
+                                : 'text-surface-500 hover:bg-surface-100 hover:text-surface-900 dark:text-surface-400 dark:hover:bg-white/10 dark:hover:text-white',
+                          )}
+                        >
+                          <span className="text-[10px] font-medium uppercase tracking-wide opacity-80">{dayLabel}</span>
+                          <span className={cn('text-base font-bold leading-tight', isToday && !isSelected ? 'text-brand-600 dark:text-brand-400' : '')}>{date.getDate()}</span>
+                          <span className={cn('mt-0.5 h-1.5 w-1.5 rounded-full transition-colors', count > 0 ? (isSelected ? 'bg-white/70' : 'bg-brand-400') : 'bg-transparent')} />
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setAgendaWeekOffset((n) => n + 1)}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-900 dark:text-surface-400 dark:hover:bg-white/10 dark:hover:text-white"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* ─── Class cards (compact + expandable) ──────────────────── */}
               {agendaGroups.length ? agendaGroups.map((group) => {
                 const dayMeta = getAgendaDayMeta(group.date);
                 return (
-                  <section key={group.key} className="space-y-3">
-                    <div className="flex items-end justify-between px-1">
+                  <section key={group.key} className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
                       <div>
-                        <p className="text-lg font-semibold text-surface-900 dark:text-white">{dayMeta.title}</p>
-                        <p className="text-sm text-surface-500 dark:text-surface-400">{dayMeta.subtitle}</p>
+                        <p className="text-sm font-semibold text-surface-900 dark:text-white">{dayMeta.title}</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">{dayMeta.subtitle}</p>
                       </div>
-                      <span className="badge badge-neutral">{group.items.length} {group.items.length === 1 ? 'clase' : 'clases'}</span>
+                      <span className="badge badge-neutral">{group.items.length}</span>
                     </div>
 
                     {group.items.map((gymClass) => {
                       const reservation = reservationByClassId.get(gymClass.id);
                       const occupancyRate = Math.min(100, Math.round((gymClass.current_bookings / Math.max(gymClass.max_capacity, 1)) * 100));
                       const availableSpots = Math.max(gymClass.max_capacity - gymClass.current_bookings, 0);
+                      const isExpanded = expandedClassId === gymClass.id;
+                      const isCancelled = gymClass.status === 'cancelled';
+                      const classColor = gymClass.color || accentColor;
 
                       return (
                         <div
                           key={gymClass.id}
                           className={cn(
-                            'rounded-[1.5rem] border p-5 shadow-sm dark:shadow-none',
+                            'overflow-hidden rounded-2xl border transition-all',
                             reservation
                               ? 'border-emerald-200 bg-emerald-50/75 dark:border-emerald-400/20 dark:bg-emerald-500/10'
                               : 'border-surface-200/80 bg-white/85 dark:border-white/10 dark:bg-white/[0.04]',
                           )}
                         >
-                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                            <div className="shrink-0 rounded-[1.35rem] border border-surface-200 bg-surface-50 px-4 py-4 text-center dark:border-white/10 dark:bg-surface-950/35 sm:w-[120px]">
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">{formatDate(gymClass.start_time, { day: '2-digit', month: 'short' })}</p>
-                              <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">{formatTime(gymClass.start_time)}</p>
-                              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">Hasta {formatTime(gymClass.end_time)}</p>
+                          {/* Compact row */}
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-3 py-3 text-left"
+                            onClick={() => setExpandedClassId(isExpanded ? null : gymClass.id)}
+                          >
+                            {/* Color bar */}
+                            <div
+                              className="h-10 w-1 shrink-0 rounded-full"
+                              style={{ backgroundColor: isCancelled ? '#94a3b8' : classColor }}
+                            />
+                            {/* Time */}
+                            <div className="w-11 shrink-0 text-center">
+                              <p className={cn('text-sm font-bold leading-tight', isCancelled ? 'text-surface-400' : 'text-surface-900 dark:text-white')}>
+                                {formatTime(gymClass.start_time)}
+                              </p>
+                              <p className="text-[10px] text-surface-400">{formatTime(gymClass.end_time)}</p>
                             </div>
-
+                            {/* Name + meta + mini bar */}
                             <div className="min-w-0 flex-1">
+                              <p className={cn('truncate text-sm font-semibold', isCancelled ? 'text-surface-400 line-through' : 'text-surface-900 dark:text-white')}>
+                                {gymClass.name}
+                              </p>
+                              <p className="truncate text-xs text-surface-500 dark:text-surface-400">
+                                {[gymClass.instructor_name, gymClass.branch_name].filter(Boolean).join(' · ') || formatClassModalityLabel(gymClass.modality)}
+                              </p>
+                              {!isCancelled ? (
+                                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-100 dark:bg-white/10">
+                                  <div
+                                    className="h-full rounded-full transition-all"
+                                    style={{ width: `${occupancyRate}%`, background: `linear-gradient(90deg, ${accentColor}, ${secondaryColor})` }}
+                                  />
+                                </div>
+                              ) : null}
+                            </div>
+                            {/* Right: badge + expand icon */}
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              {reservation ? (
+                                <span className={cn('badge text-[10px]', reservation.status === 'waitlisted' ? 'badge-warning' : 'badge-success')}>
+                                  {reservation.status === 'waitlisted' ? 'En espera' : 'Reservada'}
+                                </span>
+                              ) : isCancelled ? (
+                                <span className="badge badge-danger text-[10px]">Cancelada</span>
+                              ) : availableSpots > 0 ? (
+                                <span className="text-[10px] text-surface-400">{availableSpots} cupos</span>
+                              ) : (
+                                <span className="text-[10px] text-rose-400">Sin cupos</span>
+                              )}
+                              <ChevronDown
+                                size={14}
+                                className={cn('text-surface-400 transition-transform duration-200', isExpanded ? 'rotate-180' : '')}
+                              />
+                            </div>
+                          </button>
+
+                          {/* Expanded detail */}
+                          {isExpanded ? (
+                            <div className="border-t border-surface-200/60 px-4 pb-4 pt-3 dark:border-white/10">
+                              {/* Badges */}
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className={cn('badge', classStatusColor(gymClass.status))}>{formatClassStatusLabel(gymClass.status)}</span>
                                 <span className="badge badge-neutral">{formatClassModalityLabel(gymClass.modality)}</span>
-                                {reservation ? <span className={cn('badge', reservation.status === 'waitlisted' ? 'badge-warning' : 'badge-success')}>{getReservationStatusLabel(reservation)}</span> : null}
+                                {reservation ? (
+                                  <span className={cn('badge', reservation.status === 'waitlisted' ? 'badge-warning' : 'badge-success')}>
+                                    {getReservationStatusLabel(reservation)}
+                                  </span>
+                                ) : null}
+                                {gymClass.program_id && enrolledProgramIds.has(gymClass.program_id) ? (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-semibold text-violet-700 dark:border-violet-800/50 dark:bg-violet-950/30 dark:text-violet-300">
+                                    {programs.find((p) => p.id === gymClass.program_id)?.name ?? 'Programa'}
+                                  </span>
+                                ) : null}
                               </div>
 
-                              <h3 className="mt-3 text-lg font-semibold text-surface-900 dark:text-white">{gymClass.name}</h3>
-                              <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">
-                                {gymClass.class_type || 'Clase del gimnasio'}
-                                {gymClass.instructor_name ? ` · ${gymClass.instructor_name}` : ''}
-                                {gymClass.branch_name ? ` · ${gymClass.branch_name}` : ''}
-                                {gymClass.description ? ` · ${gymClass.description}` : ''}
-                              </p>
+                              {gymClass.description ? (
+                                <p className="mt-2 text-sm text-surface-600 dark:text-surface-300">{gymClass.description}</p>
+                              ) : null}
 
-                              <div
-                                className={cn(
-                                  'mt-4 grid gap-3',
-                                  gymClass.instructor_name && gymClass.branch_name
-                                    ? 'sm:grid-cols-5'
-                                    : gymClass.instructor_name || gymClass.branch_name
-                                      ? 'sm:grid-cols-4'
-                                      : 'sm:grid-cols-3',
-                                )}
-                              >
+                              {/* Detail grid */}
+                              <div className={cn('mt-3 grid gap-3', gymClass.instructor_name && gymClass.branch_name ? 'sm:grid-cols-5' : gymClass.instructor_name || gymClass.branch_name ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
                                 <ProfileDetailItem label="Horario" value={formatAgendaTimeRange(gymClass.start_time, gymClass.end_time)} />
-                                {gymClass.instructor_name && (
-                                  <ProfileDetailItem label="Instructor" value={gymClass.instructor_name} />
-                                )}
-                                {gymClass.branch_name && (
-                                  <ProfileDetailItem label="Sede" value={gymClass.branch_name} />
-                                )}
+                                {gymClass.instructor_name ? <ProfileDetailItem label="Instructor" value={gymClass.instructor_name} /> : null}
+                                {gymClass.branch_name ? <ProfileDetailItem label="Sede" value={gymClass.branch_name} /> : null}
                                 <ProfileDetailItem label="Cupos" value={formatAgendaAvailabilityLabel(gymClass.current_bookings, gymClass.max_capacity)} />
                                 <ProfileDetailItem label="Tu estado" value={reservation ? getReservationStatusLabel(reservation) : 'Disponible para reservar'} />
                               </div>
 
-                              <div className="mt-4 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
-                                <div className="flex flex-col gap-1 min-[360px]:flex-row min-[360px]:items-center min-[360px]:justify-between">
-                                  <span className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Ocupación</span>
-                                  <span className="text-sm font-medium leading-5 text-surface-600 dark:text-surface-300 min-[360px]:text-right">
-                                    {gymClass.current_bookings} de {gymClass.max_capacity} reservados
-                                  </span>
+                              {/* Occupancy bar */}
+                              <div className="mt-3 rounded-xl border border-surface-200 bg-surface-50 px-3 py-3 dark:border-white/10 dark:bg-surface-950/35">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-surface-500">Ocupación</span>
+                                  <span className="font-medium text-surface-700 dark:text-surface-300">{gymClass.current_bookings}/{gymClass.max_capacity}</span>
                                 </div>
-                                <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-200 dark:bg-white/5">
+                                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-200 dark:bg-white/5">
                                   <div
                                     className="h-full rounded-full"
-                                    style={{
-                                      width: `${occupancyRate}%`,
-                                      background: `linear-gradient(90deg, ${accentColor}, ${secondaryColor})`,
-                                    }}
+                                    style={{ width: `${occupancyRate}%`, background: `linear-gradient(90deg, ${accentColor}, ${secondaryColor})` }}
                                   />
                                 </div>
-                                <p className="mt-3 text-sm text-surface-600 dark:text-surface-300">
+                                <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
                                   {reservation?.status === 'waitlisted'
                                     ? reservation.waitlist_position
-                                      ? `Estás en la lista de espera. Posición actual: ${reservation.waitlist_position}.`
-                                      : 'Estás en la lista de espera para esta clase.'
+                                      ? `Lista de espera · posición ${reservation.waitlist_position}.`
+                                      : 'Estás en la lista de espera.'
                                     : availableSpots > 0
-                                      ? `${availableSpots} ${availableSpots === 1 ? 'cupo disponible' : 'cupos disponibles'} en este horario.`
-                                      : 'Por ahora no quedan cupos disponibles para esta clase.'}
+                                      ? `${availableSpots} ${availableSpots === 1 ? 'cupo disponible' : 'cupos disponibles'}.`
+                                      : 'Sin cupos disponibles.'}
                                 </p>
                               </div>
 
-                              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                              {/* CTAs */}
+                              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                                 {gymClass.online_link ? (
                                   <a href={gymClass.online_link} target="_blank" rel="noreferrer" className="btn-secondary w-full justify-center sm:w-auto">
-                                    <ExternalLink size={16} />
+                                    <ExternalLink size={15} />
                                     Entrar a la clase
                                   </a>
                                 ) : null}
                                 {reservation ? (
-                                  <button type="button" className="btn-danger w-full justify-center sm:w-auto" onClick={() => { setPendingCancelReservationId(reservation.id); setCancelReasonText(''); }}>
-                                    <XCircle size={16} />
+                                  <button
+                                    type="button"
+                                    className="btn-danger w-full justify-center sm:w-auto"
+                                    onClick={() => { setPendingCancelReservationId(reservation.id); setCancelReasonText(''); }}
+                                  >
+                                    <XCircle size={15} />
                                     {reservation.status === 'waitlisted' ? 'Salir de la lista' : 'Cancelar reserva'}
                                   </button>
-                                ) : (
-                                  <button type="button" className="btn-primary w-full justify-center sm:w-auto" style={{ backgroundImage: brandGradient }} onClick={() => reserveMutation.mutate(gymClass.id)}>
-                                    <CalendarDays size={16} />
-                                    Reservar esta clase
+                                ) : !isCancelled ? (
+                                  <button
+                                    type="button"
+                                    className="btn-primary w-full justify-center sm:w-auto"
+                                    style={{ backgroundImage: brandGradient }}
+                                    onClick={() => reserveMutation.mutate(gymClass.id)}
+                                  >
+                                    <CalendarDays size={15} />
+                                    {availableSpots > 0 ? 'Reservar' : 'Unirse a lista de espera'}
                                   </button>
-                                )}
+                                ) : null}
                               </div>
                             </div>
-                          </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -1967,8 +2135,8 @@ export default function MemberAppPage() {
                 );
               }) : (
                 <EmptyState
-                  title={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' || agendaBranchFilter !== 'all' ? 'Sin clases con ese filtro' : 'Todavía no hay clases visibles'}
-                  description={agendaDateFilter !== 'all' || agendaModalityFilter !== 'all' || agendaBranchFilter !== 'all' ? 'Prueba cambiando el filtro de fecha, modalidad o sede.' : 'La agenda aparecerá aquí cuando el gimnasio publique nuevas clases.'}
+                  title={agendaSelectedDay !== null || agendaModalityFilter !== 'all' || agendaBranchFilter !== 'all' || agendaProgramFilter !== 'all' ? 'Sin clases con ese filtro' : 'Todavía no hay clases visibles'}
+                  description={agendaSelectedDay !== null || agendaModalityFilter !== 'all' || agendaBranchFilter !== 'all' || agendaProgramFilter !== 'all' ? 'Prueba otro día o cambia los filtros de modalidad, sede o programa.' : 'La agenda aparecerá aquí cuando el gimnasio publique nuevas clases.'}
                 />
               )}
             </div>
@@ -2059,15 +2227,29 @@ export default function MemberAppPage() {
 
                       <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                         {program.is_enrolled ? (
-                          <button
-                            type="button"
-                            className="btn-secondary w-full justify-center sm:w-auto"
-                            onClick={() => leaveProgramMutation.mutate(program.id)}
-                            disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
-                          >
-                            <XCircle size={16} />
-                            Salir del programa
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="btn-primary w-full justify-center sm:w-auto"
+                              style={{ backgroundImage: brandGradient }}
+                              onClick={() => {
+                                setAgendaProgramFilter(program.id);
+                                setTab(searchParams, setSearchParams, 'agenda');
+                              }}
+                            >
+                              <CalendarDays size={16} />
+                              Ver en agenda
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary w-full justify-center sm:w-auto"
+                              onClick={() => leaveProgramMutation.mutate(program.id)}
+                              disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
+                            >
+                              <XCircle size={16} />
+                              Salir del programa
+                            </button>
+                          </>
                         ) : (
                           <button
                             type="button"

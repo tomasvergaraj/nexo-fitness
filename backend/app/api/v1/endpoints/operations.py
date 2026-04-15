@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,8 +57,10 @@ from app.schemas.business import (
     BranchUpdate,
     CampaignCreate,
     CampaignResponse,
+    GymClassResponse,
     PaginatedResponse,
 )
+from app.services.class_service import build_gym_class_responses
 from app.schemas.platform import (
     BodyMeasurementCreate,
     BodyMeasurementResponse,
@@ -506,6 +508,7 @@ def _program_payload(
     *,
     enrolled_count: int = 0,
     enrollment_id: Optional[UUID] = None,
+    linked_class_count: int = 0,
 ) -> TrainingProgramResponse:
     return TrainingProgramResponse(
         id=program.id,
@@ -520,6 +523,7 @@ def _program_payload(
         updated_at=program.updated_at,
         trainer_name=trainer.full_name if trainer else None,
         enrolled_count=enrolled_count,
+        linked_class_count=linked_class_count,
         is_enrolled=enrollment_id is not None,
         enrollment_id=enrollment_id,
     )
@@ -557,6 +561,39 @@ async def _get_program_enrollment_counts(
         .group_by(TrainingProgramEnrollment.program_id)
     )
     return {row.program_id: row.count for row in rows}
+
+
+async def _get_program_linked_class_counts(
+    db: AsyncSession,
+    tenant_id: UUID,
+    program_ids: list[UUID],
+) -> dict[UUID, int]:
+    if not program_ids:
+        return {}
+    rows = await db.execute(
+        select(GymClass.program_id, func.count().label("count"))
+        .where(
+            GymClass.tenant_id == tenant_id,
+            GymClass.program_id.in_(program_ids),
+        )
+        .group_by(GymClass.program_id)
+    )
+    return {row.program_id: row.count for row in rows}
+
+
+class GenerateClassesRequest(BaseModel):
+    start_date: date
+    weeks: int = Field(default=4, ge=1, le=52)
+    class_time: str = Field(default="09:00", pattern=r"^\d{2}:\d{2}$")
+    duration_minutes: int = Field(default=60, ge=15, le=480)
+    branch_id: Optional[UUID] = None
+    instructor_id: Optional[UUID] = None
+    max_capacity: int = Field(default=20, ge=1)
+    # utc_offset_minutes: JS getTimezoneOffset() value (e.g. 180 for UTC-3).
+    # Used to convert the user's local class_time to UTC before storing.
+    utc_offset_minutes: int = Field(default=0, ge=-840, le=840)
+    color: Optional[str] = Field(default=None, max_length=20)
+    class_type: Optional[str] = Field(default=None, max_length=80)
 
 
 def _program_enrollment_payload(
@@ -1319,6 +1356,7 @@ async def list_programs(
         ).scalars().all()
     } if trainer_ids else {}
     enrollment_counts = await _get_program_enrollment_counts(db, ctx.tenant_id, program_ids)
+    linked_class_counts = await _get_program_linked_class_counts(db, ctx.tenant_id, program_ids)
 
     return PaginatedResponse(
         items=[
@@ -1326,6 +1364,7 @@ async def list_programs(
                 program,
                 trainers.get(program.trainer_id),
                 enrolled_count=enrollment_counts.get(program.id, 0),
+                linked_class_count=linked_class_counts.get(program.id, 0),
             )
             for program in programs
         ],
@@ -1392,7 +1431,17 @@ async def update_program(
             )
         )
     ).scalar() or 0
-    return _program_payload(program, trainer, enrolled_count=enrolled_count)
+    linked_class_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(GymClass)
+            .where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.program_id == program.id,
+            )
+        )
+    ).scalar() or 0
+    return _program_payload(program, trainer, enrolled_count=enrolled_count, linked_class_count=linked_class_count)
 
 
 @programs_router.delete("/{program_id}", status_code=204)
@@ -1435,6 +1484,106 @@ async def list_program_enrollments(
         _program_enrollment_payload(enrollment, user)
         for enrollment, user in rows.all()
     ]
+
+
+@programs_router.get("/{program_id}/classes", response_model=list[GymClassResponse])
+async def list_program_classes(
+    program_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    program = await db.get(TrainingProgram, program_id)
+    if not program or program.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
+
+    classes = (
+        await db.execute(
+            select(GymClass)
+            .where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.program_id == program_id,
+            )
+            .order_by(GymClass.start_time.asc())
+        )
+    ).scalars().all()
+
+    return await build_gym_class_responses(db, classes)
+
+
+@programs_router.post("/{program_id}/generate-classes", response_model=list[GymClassResponse], status_code=201)
+async def generate_program_classes(
+    program_id: UUID,
+    data: GenerateClassesRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "trainer")),
+):
+    program = await db.get(TrainingProgram, program_id)
+    if not program or program.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Programa no encontrado")
+
+    schedule = _loads_list(program.schedule_json)
+    if not schedule:
+        raise HTTPException(status_code=400, detail="El programa no tiene días definidos en el horario")
+
+    WEEKDAY_MAP = {
+        "lunes": 0, "martes": 1, "miércoles": 2, "miercoles": 2,
+        "jueves": 3, "viernes": 4, "sábado": 5, "sabado": 5, "domingo": 6,
+    }
+
+    try:
+        hour, minute = map(int, data.class_time.split(":"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Hora inválida")
+
+    recurrence_group_id = uuid4()
+    created_classes: list[GymClass] = []
+
+    for week in range(data.weeks):
+        week_start = data.start_date + timedelta(weeks=week)
+        week_monday = week_start - timedelta(days=week_start.weekday())
+        for day_entry in schedule:
+            day_name = str(day_entry.get("day", "")).strip().lower()
+            target_weekday = WEEKDAY_MAP.get(day_name)
+            if target_weekday is None:
+                continue
+
+            class_date = week_monday + timedelta(days=target_weekday)
+            # class_time is in the user's local timezone; convert to UTC using
+            # utc_offset_minutes (JS getTimezoneOffset value, e.g. 180 for UTC-3).
+            local_dt = datetime(class_date.year, class_date.month, class_date.day, hour, minute)
+            start_dt = (local_dt + timedelta(minutes=data.utc_offset_minutes)).replace(tzinfo=timezone.utc)
+            end_dt = start_dt + timedelta(minutes=data.duration_minutes)
+            focus = str(day_entry.get("focus", "")).strip() or None
+
+            gym_class = GymClass(
+                tenant_id=ctx.tenant_id,
+                name=program.name,
+                description=focus,
+                class_type=data.class_type or program.program_type or None,
+                color=data.color or None,
+                modality="in_person",
+                branch_id=data.branch_id,
+                instructor_id=data.instructor_id,
+                start_time=start_dt,
+                end_time=end_dt,
+                max_capacity=data.max_capacity,
+                program_id=program_id,
+                recurrence_group_id=recurrence_group_id,
+                repeat_type="weekly",
+            )
+            db.add(gym_class)
+            created_classes.append(gym_class)
+
+    if not created_classes:
+        raise HTTPException(status_code=400, detail="No se pudieron generar clases con los días del programa")
+
+    await db.flush()
+    for gc in created_classes:
+        await db.refresh(gc)
+
+    return await build_gym_class_responses(db, created_classes)
 
 
 @settings_router.get("", response_model=TenantSettingsResponse)
@@ -2389,6 +2538,7 @@ async def list_mobile_programs(
         ).scalars().all()
     } if trainer_ids else {}
     enrollment_counts = await _get_program_enrollment_counts(db, tenant.id, program_ids)
+    linked_class_counts = await _get_program_linked_class_counts(db, tenant.id, program_ids)
     enrollments = {
         enrollment.program_id: enrollment
         for enrollment in (
@@ -2407,6 +2557,7 @@ async def list_mobile_programs(
             program,
             trainers.get(program.trainer_id),
             enrolled_count=enrollment_counts.get(program.id, 0),
+            linked_class_count=linked_class_counts.get(program.id, 0),
             enrollment_id=enrollments.get(program.id).id if enrollments.get(program.id) else None,
         )
         for program in programs
@@ -2461,10 +2612,21 @@ async def enroll_mobile_program(
             )
         )
     ).scalar() or 0
+    linked_class_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(GymClass)
+            .where(
+                GymClass.tenant_id == tenant.id,
+                GymClass.program_id == program_id,
+            )
+        )
+    ).scalar() or 0
     return _program_payload(
         program,
         trainer,
         enrolled_count=enrolled_count,
+        linked_class_count=linked_class_count,
         enrollment_id=existing.id,
     )
 

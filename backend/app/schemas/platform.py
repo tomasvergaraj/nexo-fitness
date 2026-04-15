@@ -343,6 +343,7 @@ class TrainingProgramResponse(BaseModel):
     updated_at: datetime
     trainer_name: Optional[str] = None
     enrolled_count: int = 0
+    linked_class_count: int = 0
     is_enrolled: bool = False
     enrollment_id: Optional[UUID] = None
 
