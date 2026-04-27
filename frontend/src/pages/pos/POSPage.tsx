@@ -33,7 +33,7 @@ function formatCLP(n: number) {
 
 function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (id: string) => void }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-surface-100 dark:border-surface-800 last:border-0">
+    <div className="flex flex-col gap-2 border-b border-surface-100 py-2 last:border-0 dark:border-surface-800 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
           {tx.items.map(i => i.product_name).join(', ')}
@@ -42,7 +42,7 @@ function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (id: st
           {new Date(tx.sold_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })} · {tx.payment_method}
         </p>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-2 sm:flex-shrink-0">
         <span className={cn(
           'text-sm font-bold',
           tx.status === 'refunded' ? 'text-surface-400 line-through' : 'text-emerald-600 dark:text-emerald-400',
@@ -166,9 +166,9 @@ export default function POSPage() {
   }
 
   return (
-    <div className="flex flex-col h-full gap-0">
+    <div className="flex min-h-full flex-col gap-0">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-surface-200 dark:border-surface-800 flex items-center justify-between">
+      <div className="flex items-center justify-between border-b border-surface-200 px-4 py-4 dark:border-surface-800 sm:px-6">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Punto de Venta</h1>
           <p className="text-sm text-surface-500 dark:text-surface-400">
@@ -178,9 +178,9 @@ export default function POSPage() {
       </div>
 
       {/* Main split layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col xl:flex-row xl:overflow-hidden">
         {/* ── Left: Catalog ──────────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col overflow-hidden border-r border-surface-200 dark:border-surface-800">
+        <div className="flex flex-1 flex-col overflow-hidden xl:border-r xl:border-surface-200 xl:dark:border-surface-800">
           {/* Search + Category filter */}
           <div className="p-4 space-y-3 border-b border-surface-100 dark:border-surface-800">
             <div className="relative">
@@ -190,9 +190,7 @@ export default function POSPage() {
                 placeholder="Buscar producto, SKU..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-sm rounded-xl border border-surface-200 dark:border-surface-700
-                           bg-white dark:bg-surface-800 text-surface-900 dark:text-white
-                           focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+                className="input w-full pl-9 pr-4 text-sm"
               />
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1">
@@ -291,7 +289,7 @@ export default function POSPage() {
         </div>
 
         {/* ── Right: Cart + Recent sales ─────────────────────────────────── */}
-        <div className="w-80 xl:w-96 flex flex-col bg-surface-50 dark:bg-surface-900/50">
+        <div className="w-full shrink-0 border-t border-surface-200 bg-surface-50 dark:border-surface-800 dark:bg-surface-900/50 xl:w-96 xl:border-t-0">
           {/* Cart items */}
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
             <h2 className="text-sm font-semibold text-surface-600 dark:text-surface-400 uppercase tracking-wide mb-3">
@@ -305,7 +303,7 @@ export default function POSPage() {
             ) : (
               cart.map(item => (
                 <div key={item.product.id}
-                  className="flex items-center gap-3 bg-white dark:bg-surface-800 rounded-xl p-3 shadow-sm"
+                  className="flex flex-col gap-3 rounded-xl bg-white p-3 shadow-sm dark:bg-surface-800 sm:flex-row sm:items-center"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
@@ -335,7 +333,7 @@ export default function POSPage() {
                       {formatCLP(item.product.price * item.quantity)}
                     </p>
                   </div>
-                  <button onClick={() => removeFromCart(item.product.id)} className="text-surface-300 hover:text-red-500 transition-colors">
+                  <button onClick={() => removeFromCart(item.product.id)} className="self-end text-surface-300 transition-colors hover:text-red-500 sm:self-auto">
                     <X size={14} />
                   </button>
                 </div>
@@ -346,17 +344,15 @@ export default function POSPage() {
           {/* Totals + checkout */}
           <div className="border-t border-surface-200 dark:border-surface-800 p-4 space-y-3">
             {/* Discount */}
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-surface-500 flex-shrink-0">Descuento ($)</label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="text-xs text-surface-500 sm:flex-shrink-0">Descuento ($)</label>
               <input
                 type="number"
                 min={0}
                 value={discount || ''}
                 onChange={e => setDiscount(Number(e.target.value) || 0)}
                 placeholder="0"
-                className="flex-1 px-2 py-1 text-sm rounded-lg border border-surface-200 dark:border-surface-700
-                           bg-white dark:bg-surface-800 text-surface-900 dark:text-white
-                           focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+                className="input min-w-0 flex-1 text-sm"
               />
             </div>
 
@@ -381,7 +377,7 @@ export default function POSPage() {
             </div>
 
             {/* Payment method */}
-            <div className="flex gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {PAYMENT_METHODS.map(pm => (
                 <button
                   key={pm.value}
@@ -433,11 +429,11 @@ export default function POSPage() {
         <div className="space-y-4">
           <div className="bg-surface-50 dark:bg-surface-800/50 rounded-2xl p-4 space-y-2">
             {cart.map(item => (
-              <div key={item.product.id} className="flex justify-between text-sm">
-                <span className="text-surface-600 dark:text-surface-400">
+              <div key={item.product.id} className="flex items-start justify-between gap-3 text-sm">
+                <span className="min-w-0 flex-1 text-surface-600 dark:text-surface-400">
                   {item.product.name} × {item.quantity}
                 </span>
-                <span className="font-medium text-surface-800 dark:text-surface-200">
+                <span className="shrink-0 font-medium text-surface-800 dark:text-surface-200">
                   {formatCLP(item.product.price * item.quantity)}
                 </span>
               </div>
@@ -466,13 +462,11 @@ export default function POSPage() {
               value={notes}
               onChange={e => setNotes(e.target.value)}
               placeholder="Ej: cliente frecuente"
-              className="w-full px-3 py-2 text-sm rounded-xl border border-surface-200 dark:border-surface-700
-                         bg-white dark:bg-surface-800 text-surface-900 dark:text-white
-                         focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="input w-full text-sm"
             />
           </div>
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row">
             <button
               onClick={() => setCheckoutOpen(false)}
               className="flex-1 py-2.5 rounded-xl border border-surface-200 dark:border-surface-700

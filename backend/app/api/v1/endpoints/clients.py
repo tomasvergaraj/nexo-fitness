@@ -10,8 +10,8 @@ from sqlalchemy import select, func, or_, cast, Date, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_tenant_context, TenantContext, require_roles, require_plans_write, get_current_user
-from app.core.security import hash_password, verify_password
+from app.core.dependencies import get_tenant_context, TenantContext, require_roles, require_plans_write
+from app.core.security import hash_password
 from app.models.user import User, UserRole
 from app.models.business import Plan, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
 from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserClientResponse, UserDetailResponse, ClientListResponse
@@ -21,6 +21,8 @@ from app.schemas.business import (
     PaginatedResponse,
 )
 from app.services.tenant_quota_service import assert_can_create_client
+from app.services.membership_sale_service import apply_payment_membership_snapshot, resolve_membership_timeline
+from app.services.user_account_service import purge_user_account
 
 # ─── Clients Router ──────────────────────────────────────────────────────────
 
@@ -76,7 +78,7 @@ async def list_clients(
     result = await db.execute(query)
     clients = result.scalars().all()
 
-    # Enrich each client with their most recent active membership
+    # Enrich each client with their effective current membership
     client_ids = [c.id for c in clients]
     membership_rows = (
         await db.execute(
@@ -84,17 +86,20 @@ async def list_clients(
             .where(
                 Membership.tenant_id == ctx.tenant_id,
                 Membership.user_id.in_(client_ids),
-                Membership.status.in_([MembershipStatus.ACTIVE, MembershipStatus.EXPIRED]),
             )
-            .order_by(Membership.created_at.desc())
+            .order_by(Membership.starts_at.desc(), Membership.created_at.desc())
         )
     ).scalars().all()
 
-    # Keep only the most recent membership per client
-    latest_membership: dict = {}
+    memberships_by_user: dict[UUID, list[Membership]] = {}
     for m in membership_rows:
-        if m.user_id not in latest_membership:
-            latest_membership[m.user_id] = m
+        memberships_by_user.setdefault(m.user_id, []).append(m)
+
+    latest_membership: dict[UUID, Membership] = {}
+    for user_id, items in memberships_by_user.items():
+        state = resolve_membership_timeline(items, persist=False)
+        if state.current_membership:
+            latest_membership[user_id] = state.current_membership
 
     # Load plan names for those memberships
     plan_ids = list({m.plan_id for m in latest_membership.values() if m.plan_id})
@@ -239,7 +244,7 @@ async def get_client_membership_history(
     memberships = (await db.execute(
         select(Membership)
         .where(Membership.tenant_id == ctx.tenant_id, Membership.user_id == client_id)
-        .order_by(Membership.created_at.desc())
+        .order_by(Membership.starts_at.desc(), Membership.created_at.desc())
     )).scalars().all()
 
     plan_ids = list({m.plan_id for m in memberships if m.plan_id})
@@ -248,16 +253,49 @@ async def get_client_membership_history(
         plans_by_id = {
             p.id: p for p in (await db.execute(select(Plan).where(Plan.id.in_(plan_ids)))).scalars().all()
         }
+    membership_ids = [membership.id for membership in memberships]
+    payments_by_membership: dict[UUID, Payment] = {}
+    if membership_ids:
+        payment_rows = (
+            await db.execute(
+                select(Payment)
+                .where(Payment.tenant_id == ctx.tenant_id, Payment.membership_id.in_(membership_ids))
+                .order_by(func.coalesce(Payment.paid_at, Payment.created_at).desc(), Payment.created_at.desc())
+            )
+        ).scalars().all()
+        for payment in payment_rows:
+            if payment.membership_id and payment.membership_id not in payments_by_membership:
+                payments_by_membership[payment.membership_id] = payment
 
     return [
         {
             "id": str(m.id),
             "plan_name": plans_by_id[m.plan_id].name if m.plan_id in plans_by_id else "Plan eliminado",
-            "status": m.status.value,
+            "status": m.status.value if hasattr(m.status, "value") else str(m.status),
             "starts_at": m.starts_at.isoformat() if m.starts_at else None,
             "expires_at": m.expires_at.isoformat() if m.expires_at else None,
             "frozen_until": m.frozen_until.isoformat() if m.frozen_until else None,
             "notes": m.notes,
+            "previous_membership_id": str(m.previous_membership_id) if m.previous_membership_id else None,
+            "sale_source": m.sale_source,
+            "payment_id": str(payments_by_membership[m.id].id) if m.id in payments_by_membership else None,
+            "amount": str(payments_by_membership[m.id].amount) if m.id in payments_by_membership else None,
+            "currency": payments_by_membership[m.id].currency if m.id in payments_by_membership else None,
+            "method": (
+                payments_by_membership[m.id].method.value
+                if m.id in payments_by_membership and hasattr(payments_by_membership[m.id].method, "value")
+                else str(payments_by_membership[m.id].method)
+                if m.id in payments_by_membership
+                else None
+            ),
+            "payment_status": (
+                payments_by_membership[m.id].status.value
+                if m.id in payments_by_membership and hasattr(payments_by_membership[m.id].status, "value")
+                else str(payments_by_membership[m.id].status)
+                if m.id in payments_by_membership
+                else None
+            ),
+            "paid_at": payments_by_membership[m.id].paid_at.isoformat() if m.id in payments_by_membership and payments_by_membership[m.id].paid_at else None,
             "created_at": m.created_at.isoformat(),
         }
         for m in memberships
@@ -368,6 +406,27 @@ async def update_client(
     await db.flush()
     await db.refresh(client)
     return UserResponse.model_validate(client)
+
+
+@clients_router.delete("/{client_id}/hard-delete", status_code=204)
+async def hard_delete_client(
+    client_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(require_roles("owner", "admin")),
+):
+    result = await db.execute(
+        select(User).where(
+            User.id == client_id,
+            User.tenant_id == ctx.tenant_id,
+            User.role == UserRole.CLIENT,
+        )
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    await purge_user_account(db, user=client, actor=current_user, tenant_id=ctx.tenant_id)
 
 
 @clients_router.post("/{client_id}/reset-password", status_code=204)
@@ -522,6 +581,14 @@ async def create_payment(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception")),
 ):
+    membership = None
+    plan = None
+    if data.membership_id:
+        membership = await db.get(Membership, data.membership_id)
+        if not membership or membership.tenant_id != ctx.tenant_id or membership.user_id != data.user_id:
+            raise HTTPException(status_code=404, detail="Membresía no encontrada para este pago")
+        plan = await db.get(Plan, membership.plan_id)
+
     payment = Payment(
         tenant_id=ctx.tenant_id,
         user_id=data.user_id,
@@ -533,6 +600,8 @@ async def create_payment(
         status=PaymentStatus.COMPLETED if data.method in ("cash", "transfer") else PaymentStatus.PENDING,
         paid_at=datetime.now(timezone.utc) if data.method in ("cash", "transfer") else None,
     )
+    if membership:
+        apply_payment_membership_snapshot(payment, membership=membership, plan=plan)
     db.add(payment)
     await db.flush()
     await db.refresh(payment)

@@ -5,7 +5,8 @@ import { Eye, EyeOff, ArrowRight, Loader2 } from 'lucide-react';
 import NexoBrand, { NEXO_BRAND_VALUE_PROP } from '@/components/branding/NexoBrand';
 import { useAuthStore } from '@/stores/authStore';
 import { authApi, billingApi } from '@/services/api';
-import { cn } from '@/utils';
+import { cn, getDefaultRouteForRole } from '@/utils';
+import { buildAdminUrl, buildAppUrl, getCurrentHostKind } from '@/utils/hosts';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -20,6 +21,7 @@ export default function LoginPage() {
   const [showCreatorInfo, setShowCreatorInfo] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const hostKind = useMemo(() => getCurrentHostKind(), []);
 
   // Si el usuario ya tiene sesión activa y vuelve de un pago exitoso,
   // verificar acceso y redirigir al dashboard sin pedir credenciales.
@@ -29,9 +31,7 @@ export default function LoginPage() {
       billingApi.getStatus()
         .then(({ data }) => {
           if (data.allow_access) {
-            const path = user.role === 'client' ? '/member'
-              : user.role === 'superadmin' ? '/platform/tenants'
-              : '/dashboard';
+            const path = getDefaultRouteForRole(user.role);
             navigate(path, { replace: true });
           }
         })
@@ -72,9 +72,31 @@ export default function LoginPage() {
     return null;
   }, [purchaseState]);
 
+  const hostMessage = useMemo(() => {
+    const requestedHost = searchParams.get('host');
+    if (hostKind === 'admin') {
+      return {
+        tone: 'sky',
+        text: 'Este acceso está reservado para superadministración de la plataforma SaaS.',
+      };
+    }
+    if (requestedHost === 'app') {
+      return {
+        tone: 'sky',
+        text: 'Tu cuenta vive en app.nexofitness.cl. Ingresa ahí para seguir con tu panel o app de miembro.',
+      };
+    }
+    if (requestedHost === 'admin') {
+      return {
+        tone: 'sky',
+        text: 'Tu cuenta superadmin vive en admin.nexofitness.cl. Inicia sesión ahí para continuar.',
+      };
+    }
+    return null;
+  }, [hostKind, searchParams]);
+
   const resolvePostLoginPath = (role: string) => {
-    if (role === 'client') return '/member';
-    return role === 'superadmin' ? '/platform/tenants' : '/dashboard';
+    return getDefaultRouteForRole(role as Parameters<typeof getDefaultRouteForRole>[0]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -83,6 +105,19 @@ export default function LoginPage() {
     setError('');
     try {
       const { data } = await authApi.login(email, password);
+      const resolvedEmail = data.user.email || email;
+
+      if (hostKind === 'admin' && data.user.role !== 'superadmin') {
+        const params = new URLSearchParams({ email: resolvedEmail, host: 'app' });
+        window.location.assign(buildAppUrl(`/login?${params.toString()}`));
+        return;
+      }
+
+      if (hostKind === 'app' && data.user.role === 'superadmin') {
+        const params = new URLSearchParams({ email: resolvedEmail, host: 'admin' });
+        window.location.assign(buildAdminUrl(`/login?${params.toString()}`));
+        return;
+      }
 
       // Siempre guardar auth — el login siempre retorna tokens válidos
       setAuth(data.user, data.access_token, data.refresh_token);
@@ -241,13 +276,27 @@ export default function LoginPage() {
               className="mb-6 space-y-2 sm:mb-8"
             >
               <h2 className="text-2xl font-bold font-display leading-tight text-white">
-                Bienvenido/a
+                {hostKind === 'admin' ? 'Acceso superadmin' : 'Bienvenido/a'}
               </h2>
-              <p className="max-w-sm text-sm leading-6 text-surface-400">Ingresa a tu cuenta para continuar.</p>
+              <p className="max-w-sm text-sm leading-6 text-surface-400">
+                {hostKind === 'admin'
+                  ? 'Entra aquí para administrar cuentas SaaS, planes y leads de plataforma.'
+                  : 'Ingresa a tu cuenta para continuar.'}
+              </p>
             </motion.div>
 
-            {purchaseMessage || billingMessage ? (
+            {purchaseMessage || billingMessage || hostMessage ? (
               <div className="mb-5 space-y-3 sm:mb-6">
+                {hostMessage && (
+                  <div
+                    className={cn(
+                      'rounded-xl border px-4 py-3 text-sm leading-6',
+                      'border-sky-500/30 bg-sky-500/10 text-sky-200'
+                    )}
+                  >
+                    {hostMessage.text}
+                  </div>
+                )}
                 {purchaseMessage && (
                   <div
                     className={cn(
@@ -379,11 +428,11 @@ export default function LoginPage() {
               className="mt-6 border-t border-white/10 pt-5 text-center sm:mt-7"
             >
               <p className="text-sm leading-6 text-surface-500">
-                ¿No tienes cuenta?
+                {hostKind === 'admin' ? '¿Necesitas crear una cuenta de gimnasio?' : '¿No tienes cuenta?'}
               </p>
               <p className="mt-1 text-sm leading-6">
-                <a href="/register" className="font-medium text-brand-400 transition-colors hover:text-brand-300">
-                  Registra tu gimnasio
+                <a href={buildAppUrl('/register')} className="font-medium text-brand-400 transition-colors hover:text-brand-300">
+                  {hostKind === 'admin' ? 'Hazlo desde app.nexofitness.cl' : 'Registra tu gimnasio'}
                 </a>
               </p>
             </motion.div>
@@ -407,7 +456,7 @@ export default function LoginPage() {
                 </p>
                 <p className="mt-2 text-sm font-semibold text-surface-100">
                   <a
-                    href="https://portfolio-tvj.vercel.app/"
+                    href="https://nexosoftware.cl/"
                     target="_blank"
                     rel="noreferrer"
                     className="transition-colors hover:text-brand-300"
@@ -423,7 +472,7 @@ export default function LoginPage() {
                   </p>
                   <p>
                     <a href="https://wa.me/56981964119" target="_blank" rel="noreferrer" className="transition-colors hover:text-brand-300">
-                      WhatsApp +56981964119
+                      WhatsApp +56 981 964 119
                     </a>
                   </p>
                 </div>

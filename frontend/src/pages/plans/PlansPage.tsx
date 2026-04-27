@@ -21,6 +21,7 @@ type PlanFormState = {
   duration_preset: DurationPreset;
   duration_days: string;
   max_reservations_per_week: string;
+  max_reservations_per_month: string;
   is_featured: boolean;
   auto_renew: boolean;
   is_active: boolean;
@@ -139,6 +140,7 @@ const emptyForm: PlanFormState = {
   duration_preset: 'monthly',
   duration_days: '',
   max_reservations_per_week: '',
+  max_reservations_per_month: '',
   is_featured: false,
   auto_renew: true,
   is_active: true,
@@ -158,6 +160,7 @@ function toFormState(plan?: Plan): PlanFormState {
     duration_preset: resolveDurationPreset(plan.duration_type, plan.duration_days),
     duration_days: plan.duration_days ? String(plan.duration_days) : '',
     max_reservations_per_week: plan.max_reservations_per_week ? String(plan.max_reservations_per_week) : '',
+    max_reservations_per_month: plan.max_reservations_per_month ? String(plan.max_reservations_per_month) : '',
     is_featured: plan.is_featured,
     auto_renew: plan.auto_renew,
     is_active: plan.is_active,
@@ -188,6 +191,7 @@ export default function PlansPage() {
         duration_type: duration.duration_type,
         duration_days: duration.duration_days,
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
+        max_reservations_per_month: form.max_reservations_per_month ? Number(form.max_reservations_per_month) : null,
         is_featured: form.is_featured,
         auto_renew: duration.auto_renew,
       });
@@ -217,6 +221,7 @@ export default function PlansPage() {
         duration_type: duration.duration_type,
         duration_days: duration.duration_days,
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
+        max_reservations_per_month: form.max_reservations_per_month ? Number(form.max_reservations_per_month) : null,
         is_featured: form.is_featured,
         auto_renew: duration.auto_renew,
         is_active: form.is_active,
@@ -362,6 +367,9 @@ export default function PlansPage() {
                 plan.max_reservations_per_week
                   ? `Hasta ${plan.max_reservations_per_week} reservas por semana`
                   : 'Sin límite semanal de reservas',
+                plan.max_reservations_per_month
+                  ? `Hasta ${plan.max_reservations_per_month} reservas por mes`
+                  : 'Sin límite mensual de reservas',
                 plan.auto_renew ? 'Renovación automática' : 'Renovación manual',
                 plan.is_featured ? 'Destacado en la venta online' : 'Visible como plan estándar',
               ].map((item) => (
@@ -567,10 +575,10 @@ export default function PlansPage() {
             ) : null}
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
-                Límite de reservas por semana (opcional)
+                Límite por semana (opcional)
               </label>
               <input
                 type="number"
@@ -581,25 +589,47 @@ export default function PlansPage() {
                   ...current,
                   max_reservations_per_week: event.target.value,
                 }))}
-                placeholder="Déjalo vacío para reservas ilimitadas"
+                placeholder="Sin límite"
               />
               <p className="mt-2 text-xs leading-5 text-surface-500 dark:text-surface-400">
-                Define cuántas clases o reservas puede tomar un cliente cada semana con este plan. Si no quieres ese control, déjalo vacío.
+                Máximo de reservas por semana. Déjalo vacío para ilimitadas.
               </p>
             </div>
 
             <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
-              <p className="text-sm font-semibold text-surface-900 dark:text-white">Resumen rápido</p>
-              <div className="mt-3 space-y-2 text-sm text-surface-600 dark:text-surface-300">
-                <p>Duración: {formatDurationLabel(durationPreview.duration_type, durationPreview.duration_days)}</p>
-                <p>
-                  Reservas:{' '}
-                  {form.max_reservations_per_week
-                    ? `hasta ${form.max_reservations_per_week} por semana`
-                    : 'sin límite semanal'}
-                </p>
-                <p>Renovación: {durationPreview.auto_renew ? 'automática' : 'manual'}</p>
-              </div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Límite por mes (opcional)
+              </label>
+              <input
+                type="number"
+                min="0"
+                className="input"
+                value={form.max_reservations_per_month}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  max_reservations_per_month: event.target.value,
+                }))}
+                placeholder="Sin límite"
+              />
+              <p className="mt-2 text-xs leading-5 text-surface-500 dark:text-surface-400">
+                Máximo de reservas por mes. Déjalo vacío para ilimitadas.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
+            <p className="text-sm font-semibold text-surface-900 dark:text-white">Resumen rápido</p>
+            <div className="mt-3 space-y-2 text-sm text-surface-600 dark:text-surface-300">
+              <p>Duración: {formatDurationLabel(durationPreview.duration_type, durationPreview.duration_days)}</p>
+              <p>
+                Reservas semanales:{' '}
+                {form.max_reservations_per_week ? `hasta ${form.max_reservations_per_week} por semana` : 'sin límite'}
+              </p>
+              <p>
+                Reservas mensuales:{' '}
+                {form.max_reservations_per_month ? `hasta ${form.max_reservations_per_month} por mes` : 'sin límite'}
+              </p>
+              <p>Renovación: {durationPreview.auto_renew ? 'automática' : 'manual'}</p>
             </div>
           </div>
 

@@ -80,6 +80,19 @@ def normalize_payment_account_metadata(
         else:
             payload.pop("recipient_account", None)
 
+    if provider == "tuu":
+        environment = str(payload.get("environment") or "integration").strip().lower()
+        if environment not in {"integration", "production"}:
+            raise ValueError("TUU requiere un ambiente válido: integration o production.")
+        payload["environment"] = environment
+
+        account_id = str(payload.get("account_id") or "").strip()
+        secret_key = str(payload.get("secret_key") or "").strip()
+        if account_id:
+            payload["account_id"] = account_id
+        if secret_key:
+            payload["secret_key"] = secret_key
+
     return payload
 
 

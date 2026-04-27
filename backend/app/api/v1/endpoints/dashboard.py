@@ -7,19 +7,32 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import extract, func, select, and_
+from sqlalchemy import extract, func, select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles
 from app.models.business import (
     GymClass, Reservation, CheckIn, Payment, Membership, MembershipStatus,
-    PaymentStatus, ClassStatus,
+    PaymentStatus, ClassStatus, TrainingProgram,
 )
 from app.models.user import User, UserRole
 from app.schemas.business import CheckInResponse, DashboardMetrics
+from app.services.membership_sale_service import resolve_membership_timeline
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+
+def _valid_program_class_filter(tenant_id: UUID):
+    return or_(
+        GymClass.program_id.is_(None),
+        select(TrainingProgram.id)
+        .where(
+            TrainingProgram.id == GymClass.program_id,
+            TrainingProgram.tenant_id == tenant_id,
+        )
+        .exists(),
+    )
 
 
 @router.get("/metrics", response_model=DashboardMetrics)
@@ -49,12 +62,22 @@ async def get_dashboard_metrics(
     rev_week = await revenue_since(week_start)
     rev_month = await revenue_since(month_start)
 
-    # Active members
-    active_q = select(func.count()).where(
-        Membership.tenant_id == tid,
-        Membership.status == MembershipStatus.ACTIVE,
-    )
-    active_members = (await db.execute(active_q)).scalar() or 0
+    memberships = (
+        await db.execute(select(Membership).where(Membership.tenant_id == tid))
+    ).scalars().all()
+    memberships_by_user: dict[UUID, list[Membership]] = {}
+    for membership in memberships:
+        memberships_by_user.setdefault(membership.user_id, []).append(membership)
+
+    active_members = 0
+    expiring = 0
+    expiring_cutoff = (now + timedelta(days=7)).date()
+    for user_memberships in memberships_by_user.values():
+        timeline = resolve_membership_timeline(user_memberships, today=now.date(), persist=False)
+        if timeline.access_membership is not None:
+            active_members += 1
+            if timeline.access_membership.expires_at and timeline.access_membership.expires_at <= expiring_cutoff:
+                expiring += 1
 
     total_q = select(func.count()).where(User.tenant_id == tid, User.role == UserRole.CLIENT, User.is_active == True)
     total_members = (await db.execute(total_q)).scalar() or 0
@@ -62,6 +85,7 @@ async def get_dashboard_metrics(
     # Classes today
     classes_q = select(func.count()).where(
         GymClass.tenant_id == tid,
+        _valid_program_class_filter(tid),
         GymClass.start_time >= today_start,
         GymClass.start_time < today_start + timedelta(days=1),
         GymClass.status != ClassStatus.CANCELLED,
@@ -104,15 +128,6 @@ async def get_dashboard_metrics(
     )
     pending_payments = (await db.execute(pp_q)).scalar() or 0
 
-    # Expiring memberships (next 7 days)
-    exp_q = select(func.count()).where(
-        Membership.tenant_id == tid,
-        Membership.status == MembershipStatus.ACTIVE,
-        Membership.expires_at != None,
-        Membership.expires_at <= (now + timedelta(days=7)).date(),
-    )
-    expiring = (await db.execute(exp_q)).scalar() or 0
-
     completed_or_attended = await db.execute(
         select(func.count()).where(
             Reservation.tenant_id == tid,
@@ -151,6 +166,7 @@ async def get_dashboard_metrics(
     classes_today_result = await db.execute(
         select(GymClass).where(
             GymClass.tenant_id == tid,
+            _valid_program_class_filter(tid),
             GymClass.start_time >= today_start,
             GymClass.start_time < today_start + timedelta(days=1),
             GymClass.status != ClassStatus.CANCELLED,
@@ -251,6 +267,7 @@ async def get_day_panel(
         select(GymClass)
         .where(
             GymClass.tenant_id == tid,
+            _valid_program_class_filter(tid),
             GymClass.start_time >= today_start,
             GymClass.start_time < tomorrow,
             GymClass.status != ClassStatus.CANCELLED,

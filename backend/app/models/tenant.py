@@ -62,6 +62,11 @@ class Tenant(Base):
     # Feature flags
     features: Mapped[Optional[str]] = mapped_column(Text)  # JSON string of enabled features
 
+    # Scheduled next plan (queued when renewing mid-cycle)
+    next_plan_key: Mapped[Optional[str]] = mapped_column(String(100))
+    next_plan_name: Mapped[Optional[str]] = mapped_column(String(200))
+    next_plan_starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     # Stripe
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255))
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255))

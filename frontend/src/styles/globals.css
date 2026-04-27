@@ -120,6 +120,21 @@
            shadow-sm shadow-brand-500/10;
   }
 
+  .sidebar-item-feedback {
+    @apply flex items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium
+           text-amber-700 dark:text-amber-300
+           bg-gradient-to-r from-amber-50/80 to-rose-50/70
+           hover:border-amber-200/80 hover:from-amber-50 hover:to-rose-50 hover:text-rose-700
+           dark:from-amber-950/20 dark:to-rose-950/10
+           dark:hover:border-amber-900/40 dark:hover:from-amber-950/35 dark:hover:to-rose-950/25 dark:hover:text-rose-200
+           transition-all duration-200;
+  }
+  .sidebar-item-feedback.active {
+    @apply border-amber-200/90 bg-gradient-to-r from-amber-100 to-rose-100 text-rose-700
+           shadow-sm shadow-rose-500/10
+           dark:border-amber-900/50 dark:from-amber-950/40 dark:to-rose-950/30 dark:text-rose-200;
+  }
+
   /* Button variants */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 px-5 py-2.5
@@ -194,3 +209,373 @@
   50% { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   STOREFRONT PUBLIC PAGE — sf-* design tokens
+   Dynamic branding via --gym-brand (set by StorefrontLayout)
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --gym-brand: #06b6d4;
+  --gym-brand-rgb: 6,182,212;
+  --gym-brand-2: #0f766e;
+}
+
+/* ── Root & layout ────────────────────────────────────────── */
+.sf-root {
+  background: #070f14;
+  color: #f0f8ff;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+.sf-root.dark {
+  background: #070f14;
+  color: #f0f8ff;
+}
+.sf-root:not(.dark) {
+  background: #f0fafe;
+  color: #061318;
+}
+
+.sf-container {
+  width: min(1200px, calc(100vw - 2rem));
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+@media (min-width: 768px) {
+  .sf-container { padding-inline: 1.5rem; }
+}
+
+.sf-section { padding: 64px 0; }
+.sf-section-alt {
+  padding: 64px 0;
+  background: rgba(255,255,255,0.02);
+}
+.sf-root:not(.dark) .sf-section-alt {
+  background: rgba(0,0,0,0.025);
+}
+
+/* ── Typography ───────────────────────────────────────────── */
+.sf-heading { color: #f0f8ff; font-weight: 900; letter-spacing: -0.03em; }
+.sf-root:not(.dark) .sf-heading { color: #061318; }
+
+.sf-text-strong { color: #f0f8ff; }
+.sf-root:not(.dark) .sf-text-strong { color: #0a1f2b; }
+
+.sf-text-muted { color: rgba(225,241,248,0.65); }
+.sf-root:not(.dark) .sf-text-muted { color: rgba(6,19,24,0.6); }
+
+.sf-text-subtle { color: rgba(225,241,248,0.35); }
+.sf-root:not(.dark) .sf-text-subtle { color: rgba(6,19,24,0.38); }
+
+.sf-brand-text { color: var(--gym-brand); }
+.sf-brand-icon { color: var(--gym-brand); }
+
+.sf-error { color: #f87171; }
+.sf-root:not(.dark) .sf-error { color: #dc2626; }
+
+/* ── Borders & surfaces ───────────────────────────────────── */
+.sf-border { border-color: rgba(var(--gym-brand-rgb), 0.18); }
+.sf-root:not(.dark) .sf-border { border-color: rgba(var(--gym-brand-rgb), 0.22); }
+
+.sf-divider-v { background: rgba(var(--gym-brand-rgb), 0.15); }
+.sf-divider-h { height: 1px; background: rgba(var(--gym-brand-rgb), 0.15); }
+
+.sf-card {
+  background: rgba(10,28,40,0.75);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.16);
+  backdrop-filter: blur(10px);
+}
+.sf-root:not(.dark) .sf-card {
+  background: rgba(255,255,255,0.92);
+  border-color: rgba(var(--gym-brand-rgb), 0.22);
+}
+
+/* ── Hero ─────────────────────────────────────────────────── */
+.sf-hero {
+  min-height: 60dvh;
+  background: linear-gradient(160deg,
+    rgba(var(--gym-brand-rgb),0.14) 0%,
+    transparent 50%,
+    rgba(var(--gym-brand-rgb),0.06) 100%
+  );
+}
+
+.sf-aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  pointer-events: none;
+}
+.sf-aurora-1 {
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(var(--gym-brand-rgb),0.38), transparent 65%);
+  top: -200px; left: -100px;
+  animation: sf-float1 10s ease-in-out infinite;
+}
+.sf-aurora-2 {
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(var(--gym-brand-rgb),0.22), transparent 65%);
+  bottom: -80px; right: -60px;
+  animation: sf-float2 13s ease-in-out infinite;
+}
+@keyframes sf-float1 {
+  0%   { transform: translate(0px,0px) scale(1); opacity: 0.9; }
+  33%  { transform: translate(40px,-30px) scale(1.08); opacity: 1; }
+  66%  { transform: translate(-20px,20px) scale(0.96); opacity: 0.75; }
+  100% { transform: translate(0px,0px) scale(1); opacity: 0.9; }
+}
+@keyframes sf-float2 {
+  0%   { transform: translate(0px,0px) scale(1); opacity: 0.7; }
+  50%  { transform: translate(-30px,20px) scale(1.1); opacity: 1; }
+  100% { transform: translate(0px,0px) scale(1); opacity: 0.7; }
+}
+
+.sf-logo-placeholder {
+  background: linear-gradient(135deg, var(--gym-brand), var(--gym-brand-2));
+  color: #fff;
+}
+
+/* ── Chips ────────────────────────────────────────────────── */
+.sf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(var(--gym-brand-rgb), 0.12);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.25);
+  color: var(--gym-brand);
+}
+.sf-chip-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: rgba(var(--gym-brand-rgb), 0.12);
+  color: var(--gym-brand);
+}
+.sf-chip-brand {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: rgba(var(--gym-brand-rgb), 0.16);
+  color: var(--gym-brand);
+}
+
+/* ── Badges ───────────────────────────────────────────────── */
+.sf-badge-featured {
+  background: linear-gradient(135deg, var(--gym-brand), var(--gym-brand-2));
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.72rem;
+  box-shadow: 0 4px 14px rgba(var(--gym-brand-rgb), 0.4);
+}
+.sf-badge-discount {
+  background: rgba(16,185,129,0.15);
+  color: #34d399;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid rgba(16,185,129,0.25);
+}
+
+/* ── Plan cards ───────────────────────────────────────────── */
+.sf-plan-card {
+  background: rgba(10,28,40,0.75);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.16);
+  backdrop-filter: blur(10px);
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+.sf-root:not(.dark) .sf-plan-card {
+  background: rgba(255,255,255,0.95);
+  border-color: rgba(var(--gym-brand-rgb), 0.2);
+}
+.sf-plan-featured {
+  border-color: rgba(var(--gym-brand-rgb), 0.5) !important;
+  box-shadow: 0 0 40px rgba(var(--gym-brand-rgb), 0.18);
+  background: linear-gradient(160deg,
+    rgba(var(--gym-brand-rgb),0.12) 0%,
+    rgba(10,28,40,0.85) 60%
+  ) !important;
+}
+.sf-root:not(.dark) .sf-plan-featured {
+  background: linear-gradient(160deg,
+    rgba(var(--gym-brand-rgb),0.08) 0%,
+    rgba(255,255,255,0.98) 60%
+  ) !important;
+}
+.sf-price-num { color: #f0f8ff; }
+.sf-root:not(.dark) .sf-price-num { color: #061318; }
+
+.sf-check-icon {
+  background: rgba(var(--gym-brand-rgb), 0.18);
+  color: var(--gym-brand);
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.sf-btn-brand {
+  background: linear-gradient(135deg, var(--gym-brand), var(--gym-brand-2));
+  color: #fff;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+  box-shadow: 0 8px 24px rgba(var(--gym-brand-rgb), 0.35);
+}
+.sf-btn-brand:hover { opacity: 0.92; }
+.sf-btn-brand:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sf-btn-secondary {
+  background: rgba(var(--gym-brand-rgb), 0.1);
+  border: 1.5px solid rgba(var(--gym-brand-rgb), 0.35);
+  color: var(--gym-brand);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.sf-btn-secondary:hover {
+  background: rgba(var(--gym-brand-rgb), 0.18);
+  border-color: rgba(var(--gym-brand-rgb), 0.55);
+}
+
+/* ── Inputs ───────────────────────────────────────────────── */
+.sf-input {
+  background: rgba(255,255,255,0.05);
+  border: 1.5px solid rgba(var(--gym-brand-rgb), 0.2);
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  color: #f0f8ff;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+}
+.sf-root:not(.dark) .sf-input {
+  background: rgba(255,255,255,0.9);
+  color: #061318;
+}
+.sf-input:focus { border-color: var(--gym-brand); }
+.sf-input::placeholder { color: rgba(225,241,248,0.3); }
+.sf-root:not(.dark) .sf-input::placeholder { color: rgba(6,19,24,0.3); }
+.sf-input[type="date"] { color-scheme: dark; }
+.sf-root:not(.dark) .sf-input[type="date"] { color-scheme: light; }
+
+.sf-otp-input {
+  background: rgba(255,255,255,0.05);
+  border: 1.5px solid rgba(var(--gym-brand-rgb), 0.25);
+  color: #f0f8ff;
+  border-radius: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.sf-root:not(.dark) .sf-otp-input {
+  background: rgba(255,255,255,0.9);
+  color: #061318;
+}
+.sf-otp-input:focus { border-color: var(--gym-brand) !important; }
+.sf-border-brand { border-color: var(--gym-brand); }
+
+.sf-label { color: rgba(225,241,248,0.75); }
+.sf-root:not(.dark) .sf-label { color: rgba(6,19,24,0.65); }
+
+/* ── Info / summary boxes ─────────────────────────────────── */
+.sf-info-box {
+  background: rgba(var(--gym-brand-rgb), 0.1);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.25);
+}
+.sf-summary-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.18);
+  border-radius: 18px;
+}
+.sf-root:not(.dark) .sf-summary-card {
+  background: rgba(0,0,0,0.03);
+  border-color: rgba(var(--gym-brand-rgb), 0.22);
+}
+
+/* ── Classes section ──────────────────────────────────────── */
+.sf-class-row {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.12);
+  transition: border-color 0.2s;
+}
+.sf-root:not(.dark) .sf-class-row {
+  background: rgba(255,255,255,0.85);
+}
+.sf-class-row:hover { border-color: rgba(var(--gym-brand-rgb), 0.3); }
+.sf-capacity-ok  { color: #34d399; }
+.sf-capacity-high { color: #fbbf24; }
+.sf-capacity-full { color: #f87171; }
+
+/* ── Checkout drawer ──────────────────────────────────────── */
+.sf-drawer {
+  background: #0a1a24;
+  border-top: 1px solid rgba(var(--gym-brand-rgb), 0.2);
+  box-shadow: -8px 0 48px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.sf-root:not(.dark) .sf-drawer {
+  background: #f5fbff;
+  border-top-color: rgba(var(--gym-brand-rgb), 0.25);
+}
+@media (min-width: 768px) {
+  .sf-drawer {
+    border-top: none;
+    border-left: 1px solid rgba(var(--gym-brand-rgb), 0.2);
+    animation: sf-slide-right 0.35s cubic-bezier(0.25,0.1,0.25,1) forwards;
+  }
+}
+@keyframes sf-slide-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+.sf-drawer-header {
+  border-bottom: 1px solid rgba(var(--gym-brand-rgb), 0.12);
+}
+.sf-icon-btn {
+  background: rgba(var(--gym-brand-rgb), 0.1);
+  color: rgba(225,241,248,0.7);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+.sf-root:not(.dark) .sf-icon-btn { color: rgba(6,19,24,0.6); }
+.sf-icon-btn:hover {
+  background: rgba(var(--gym-brand-rgb), 0.2);
+  color: var(--gym-brand);
+}
+
+.sf-progress-active  { background: var(--gym-brand); }
+.sf-progress-inactive { background: rgba(var(--gym-brand-rgb), 0.15); }
+
+.sf-drag-handle { background: rgba(var(--gym-brand-rgb), 0.25); }
+
+/* ── Mobile sticky CTA ────────────────────────────────────── */
+.sf-mobile-cta {
+  background: linear-gradient(to top, #070f14 70%, transparent);
+  padding-top: 20px;
+}
+.sf-root:not(.dark) .sf-mobile-cta {
+  background: linear-gradient(to top, #f0fafe 70%, transparent);
+}
+
+/* ── Footer ───────────────────────────────────────────────── */
+.sf-footer { color: rgba(225,241,248,0.45); }
+.sf-root:not(.dark) .sf-footer { color: rgba(6,19,24,0.45); }
+.sf-footer .sf-border {
+  border-top-color: rgba(var(--gym-brand-rgb), 0.15);
+}
+
+/* ── safe-area padding for iOS ────────────────────────────── */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0.75rem); }

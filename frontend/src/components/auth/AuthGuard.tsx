@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { getDefaultRouteForRole } from '@/utils';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -17,12 +18,7 @@ export default function AuthGuard({ children, roles }: AuthGuardProps) {
   if (roles && roles.length > 0) {
     const hasRole = roles.includes(user.role) || user.role === 'superadmin';
     if (!hasRole) {
-      const fallbackPath =
-        user.role === 'client'
-          ? '/member'
-          : user.role === 'superadmin'
-            ? '/platform/tenants'
-            : '/dashboard';
+      const fallbackPath = getDefaultRouteForRole(user.role);
       return <Navigate to={fallbackPath} replace />;
     }
   }

@@ -9,11 +9,15 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+import structlog
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+import hashlib
 
 from app.core.database import get_db
 from app.core.config import get_settings
@@ -31,6 +35,7 @@ from app.models.business import (
     CampaignStatus,
     CheckIn,
     ClassStatus,
+    FeedbackSubmission,
     GymClass,
     Membership,
     MembershipStatus,
@@ -61,11 +66,14 @@ from app.schemas.business import (
     PaginatedResponse,
 )
 from app.services.class_service import build_gym_class_responses
+from app.core.security import create_staff_invitation_token, decode_staff_invitation_token, hash_password
+from app.integrations.email.email_service import email_service
 from app.schemas.platform import (
     BodyMeasurementCreate,
     BodyMeasurementResponse,
     CampaignOverviewResponse,
     CampaignUpdateRequest,
+    FeedbackSubmissionResponse,
     MembershipCreateRequest,
     MembershipManualSaleRequest,
     MembershipManualSaleResponse,
@@ -78,6 +86,7 @@ from app.schemas.platform import (
     MobilePaymentHistoryItemResponse,
     MembershipUpdateRequest,
     MobileMembershipWalletResponse,
+    MobileWalletMembershipSummaryResponse,
     NotificationCreateRequest,
     NotificationDispatchResponse,
     NotificationResponse,
@@ -129,11 +138,18 @@ from app.services.branding_service import (
     coerce_brand_color,
     normalize_brand_color,
 )
-from app.services.membership_sale_service import create_manual_membership_sale
+from app.services.membership_sale_service import (
+    apply_payment_membership_snapshot,
+    create_manual_membership_sale,
+    membership_status_value,
+    resolve_membership_timeline,
+    sync_membership_timeline,
+)
 from app.services.push_notification_service import NotificationDispatchResult, create_and_dispatch_notification
 from app.services.push_notification_service import get_notification_dispatch_result, refresh_push_receipts
 from app.services.push_notification_service import record_notification_engagement
 from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
+from app.services.user_account_service import purge_user_account
 from app.services.promo_code_service import resolve_tenant_promo_pricing
 from app.services.support_contact_service import resolve_tenant_support_contacts
 from app.services.tenant_quota_service import assert_can_create_branch
@@ -146,7 +162,20 @@ branches_router = APIRouter(prefix="/branches", tags=["Branches"])
 memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
 campaigns_router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 support_router = APIRouter(prefix="/support/interactions", tags=["Support"])
+feedback_router = APIRouter(prefix="/feedback/submissions", tags=["Feedback"])
 programs_router = APIRouter(prefix="/programs", tags=["Programs"])
+
+
+def _valid_program_class_filter(tenant_id: UUID):
+    return or_(
+        GymClass.program_id.is_(None),
+        select(TrainingProgram.id)
+        .where(
+            TrainingProgram.id == GymClass.program_id,
+            TrainingProgram.tenant_id == tenant_id,
+        )
+        .exists(),
+    )
 staff_router = APIRouter(prefix="/staff", tags=["Staff"])
 upload_router = APIRouter(prefix="/upload", tags=["Upload"])
 settings_router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -158,6 +187,7 @@ promo_codes_router = APIRouter(prefix="/promo-codes", tags=["Promo Codes"])
 progress_router = APIRouter(prefix="/progress", tags=["Progress"])
 personal_records_router = APIRouter(prefix="/personal-records", tags=["Personal Records"])
 settings = get_settings()
+logger = structlog.get_logger()
 _SUPPORT_STAFF_ROLES = (
     UserRole.OWNER,
     UserRole.ADMIN,
@@ -165,6 +195,13 @@ _SUPPORT_STAFF_ROLES = (
     UserRole.TRAINER,
     UserRole.MARKETING,
 )
+_FEEDBACK_CATEGORY_LABELS: dict[str, str] = {
+    "suggestion": "Sugerencia",
+    "improvement": "Solicitud de mejora",
+    "problem": "Problema",
+    "other": "Otro",
+}
+_MAX_FEEDBACK_MESSAGE_CHARS = 5000
 _PROGRAM_EXERCISE_LIBRARY_FEATURE_KEY = "program_exercise_library"
 _DEFAULT_PROGRAM_EXERCISE_GROUPS: list[tuple[str, str]] = [
     ("Pecho", "Press banca"),
@@ -287,6 +324,15 @@ def _validate_payment_account_configuration(
                     "Fintoc conectado requiere la API key secreta de tu cuenta Fintoc. "
                     "Encuéntrala en el dashboard de Fintoc bajo 'API Keys'."
                 ),
+            )
+
+    if provider == "tuu" and status == "connected":
+        account_id = str(normalized_metadata.get("account_id") or "").strip()
+        secret_key = str(normalized_metadata.get("secret_key") or "").strip()
+        if not account_id or not secret_key:
+            raise HTTPException(
+                status_code=400,
+                detail="TUU conectado requiere account_id y secret_key.",
             )
 
     if provider in {"stripe", "mercadopago", "manual"} and status == "connected" and not (checkout_base_url or "").strip():
@@ -485,20 +531,96 @@ def _campaign_payload(campaign: Campaign) -> CampaignResponse:
     )
 
 
-def _membership_payload(membership: Membership, user: Optional[User], plan: Optional[Plan]) -> MembershipResponse:
+def _membership_payload(
+    membership: Membership,
+    user: Optional[User],
+    plan: Optional[Plan],
+    payment: Optional[Payment] = None,
+) -> MembershipResponse:
     return MembershipResponse(
         id=membership.id,
         user_id=membership.user_id,
         plan_id=membership.plan_id,
-        status=membership.status.value if isinstance(membership.status, MembershipStatus) else str(membership.status),
+        status=membership_status_value(membership.status) or "pending",
         starts_at=membership.starts_at,
         expires_at=membership.expires_at,
         auto_renew=membership.auto_renew,
         frozen_until=membership.frozen_until,
+        notes=membership.notes,
         stripe_subscription_id=membership.stripe_subscription_id,
+        previous_membership_id=membership.previous_membership_id,
+        sale_source=membership.sale_source,
+        payment_id=payment.id if payment else None,
+        payment_amount=payment.amount if payment else None,
+        payment_currency=payment.currency if payment else None,
+        payment_method=membership_status_value(payment.method) if payment else None,
+        payment_status=membership_status_value(payment.status) if payment else None,
+        paid_at=payment.paid_at if payment else None,
         created_at=membership.created_at,
         user_name=user.full_name if user else None,
         plan_name=plan.name if plan else None,
+    )
+
+
+def _wallet_membership_summary(
+    membership: Optional[Membership],
+    plan: Optional[Plan],
+) -> Optional[MobileWalletMembershipSummaryResponse]:
+    if membership is None:
+        return None
+    return MobileWalletMembershipSummaryResponse(
+        membership_id=membership.id,
+        plan_id=membership.plan_id,
+        plan_name=plan.name if plan else None,
+        membership_status=membership_status_value(membership.status) or "pending",
+        starts_at=membership.starts_at,
+        expires_at=membership.expires_at,
+        auto_renew=membership.auto_renew,
+        sale_source=membership.sale_source,
+    )
+
+
+def _build_mobile_wallet_response(
+    *,
+    tenant: Tenant,
+    current_membership: Optional[Membership],
+    current_plan: Optional[Plan],
+    next_membership: Optional[Membership],
+    next_plan: Optional[Plan],
+    next_class: Optional[GymClass],
+    next_program_class: Optional[GymClass],
+    qr_payload: Optional[str],
+    weekly_used: int | None,
+    monthly_used: int | None,
+) -> MobileMembershipWalletResponse:
+    def _class_dict(c: GymClass) -> dict:
+        return {
+            "id": str(c.id),
+            "name": c.name,
+            "start_time": c.start_time.isoformat(),
+            "modality": c.modality.value if hasattr(c.modality, "value") else str(c.modality),
+            "program_id": str(c.program_id) if c.program_id else None,
+        }
+
+    return MobileMembershipWalletResponse(
+        tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
+        membership_id=current_membership.id if current_membership else None,
+        plan_id=current_membership.plan_id if current_membership else None,
+        plan_name=current_plan.name if current_plan else None,
+        membership_status=membership_status_value(current_membership.status) if current_membership else None,
+        starts_at=current_membership.starts_at if current_membership else None,
+        expires_at=current_membership.expires_at if current_membership else None,
+        auto_renew=current_membership.auto_renew if current_membership else None,
+        current_membership=_wallet_membership_summary(current_membership, current_plan),
+        next_membership=_wallet_membership_summary(next_membership, next_plan),
+        next_class=_class_dict(next_class) if next_class else None,
+        next_program_class=_class_dict(next_program_class) if next_program_class else None,
+        qr_payload=qr_payload,
+        max_reservations_per_week=current_plan.max_reservations_per_week if current_plan else None,
+        max_reservations_per_month=current_plan.max_reservations_per_month if current_plan else None,
+        weekly_reservations_used=weekly_used,
+        monthly_reservations_used=monthly_used,
     )
 
 
@@ -589,11 +711,35 @@ class GenerateClassesRequest(BaseModel):
     branch_id: Optional[UUID] = None
     instructor_id: Optional[UUID] = None
     max_capacity: int = Field(default=20, ge=1)
+    online_link: Optional[str] = None
+    modality: str = "in_person"
+    cancellation_deadline_hours: int = 2
+    restricted_plan_id: Optional[UUID] = None
     # utc_offset_minutes: JS getTimezoneOffset() value (e.g. 180 for UTC-3).
     # Used to convert the user's local class_time to UTC before storing.
     utc_offset_minutes: int = Field(default=0, ge=-840, le=840)
     color: Optional[str] = Field(default=None, max_length=20)
     class_type: Optional[str] = Field(default=None, max_length=80)
+
+
+def _resolve_program_day_config_value(
+    class_config: dict[str, Any] | None,
+    field_name: str,
+    inherited_value: Any,
+) -> Any:
+    if not isinstance(class_config, dict) or field_name not in class_config:
+        return inherited_value
+
+    raw_value = class_config.get(field_name)
+    if isinstance(raw_value, dict):
+        mode = raw_value.get("mode")
+        if mode == "inherit":
+            return inherited_value
+        if mode == "custom":
+            return raw_value.get("value")
+        return inherited_value
+
+    return raw_value
 
 
 def _program_enrollment_payload(
@@ -630,11 +776,45 @@ def _support_payload(
     )
 
 
+def _build_upload_url(request: Request, file_path: str | None) -> str | None:
+    if not file_path:
+        return None
+    return f"{str(request.base_url).rstrip('/')}{file_path}"
+
+
+def _feedback_payload(
+    submission: FeedbackSubmission,
+    request: Request,
+    creator: Optional[User],
+) -> FeedbackSubmissionResponse:
+    return FeedbackSubmissionResponse(
+        id=submission.id,
+        category=str(submission.category.value if hasattr(submission.category, "value") else submission.category),
+        message=submission.message,
+        image_url=_build_upload_url(request, submission.image_path),
+        created_at=submission.created_at,
+        created_by=submission.created_by,
+        created_by_name=creator.full_name if creator else None,
+    )
+
+
 async def _get_support_related_users(
     db: AsyncSession,
     interactions: list[SupportInteraction],
 ) -> dict[UUID, User]:
     related_ids = [value for item in interactions for value in (item.user_id, item.handled_by) if value]
+    if not related_ids:
+        return {}
+
+    result = await db.execute(select(User).where(User.id.in_(related_ids)))
+    return {user.id: user for user in result.scalars().all()}
+
+
+async def _get_feedback_related_users(
+    db: AsyncSession,
+    submissions: list[FeedbackSubmission],
+) -> dict[UUID, User]:
+    related_ids = [item.created_by for item in submissions if item.created_by]
     if not related_ids:
         return {}
 
@@ -659,6 +839,124 @@ async def _get_support_client(
             )
         )
     ).scalar_one_or_none()
+
+
+def _normalize_feedback_category(category: str) -> str:
+    normalized = category.strip().lower()
+    if normalized not in _FEEDBACK_CATEGORY_LABELS:
+        raise HTTPException(
+            status_code=400,
+            detail="La categoría debe ser suggestion, improvement, problem o other.",
+        )
+    return normalized
+
+
+def _normalize_feedback_message(message: str) -> str:
+    normalized = message.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
+    if len(normalized) > _MAX_FEEDBACK_MESSAGE_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El mensaje supera el límite de {_MAX_FEEDBACK_MESSAGE_CHARS} caracteres.",
+        )
+    return normalized
+
+
+async def _store_feedback_image(
+    *,
+    file: UploadFile,
+    tenant_id: UUID,
+) -> str:
+    content_type = file.content_type or ""
+    if content_type not in _PHOTO_ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Solo se aceptan imágenes JPEG, PNG o WebP.")
+
+    raw = await file.read()
+    if len(raw) > _MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el tamaño máximo de 15 MB.")
+
+    is_valid_image = (
+        raw[:3] == _JPEG_MAGIC
+        or raw[:4] == _PNG_MAGIC
+        or (len(raw) >= 12 and raw[:4] == _WEBP_RIFF and raw[8:12] == _WEBP_ID)
+    )
+    if not is_valid_image:
+        raise HTTPException(status_code=400, detail="El archivo no es una imagen válida.")
+
+    try:
+        data = await asyncio.to_thread(_compress_photo, raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    feedback_dir = _UPLOADS_ROOT / "feedback" / str(tenant_id)
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{uuid4().hex}.jpg"
+    dest = feedback_dir / filename
+    dest.write_bytes(data)
+
+    return f"/uploads/feedback/{tenant_id}/{filename}"
+
+
+def _resolve_feedback_recipient_email() -> str:
+    return settings.FEEDBACK_TO_EMAIL.strip() or settings.SUPERADMIN_EMAIL.strip()
+
+
+def _is_missing_feedback_table_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "feedback_submissions" in message and ("does not exist" in message or "undefinedtableerror" in message)
+
+
+def _raise_feedback_unavailable() -> None:
+    raise HTTPException(
+        status_code=503,
+        detail="El módulo Feedback aún no está disponible en esta instalación porque falta ejecutar la migración de base de datos.",
+    )
+
+
+async def _send_feedback_submission_notification(
+    *,
+    request: Request,
+    submission: FeedbackSubmission,
+    tenant_name: str,
+    creator: User | None,
+) -> None:
+    recipient_email = _resolve_feedback_recipient_email()
+    if not recipient_email:
+        return
+
+    category_key = str(submission.category.value if hasattr(submission.category, "value") else submission.category)
+    category_label = _FEEDBACK_CATEGORY_LABELS.get(category_key, category_key)
+    creator_name = creator.full_name if creator and creator.full_name else "Equipo del gimnasio"
+    creator_email = creator.email if creator else None
+    image_url = _build_upload_url(request, submission.image_path)
+
+    try:
+        sent = await email_service.send_feedback_submission(
+            to_email=recipient_email,
+            gym_name=tenant_name,
+            author_name=creator_name,
+            author_email=creator_email,
+            category_label=category_label,
+            message=submission.message,
+            image_url=image_url,
+        )
+        if not sent:
+            logger.warning(
+                "feedback_email_not_sent",
+                tenant_name=tenant_name,
+                submission_id=str(submission.id),
+                recipient=recipient_email,
+            )
+    except Exception as exc:
+        logger.warning(
+            "feedback_email_failed",
+            tenant_name=tenant_name,
+            submission_id=str(submission.id),
+            recipient=recipient_email,
+            exc_info=exc,
+        )
 
 
 async def _get_support_handler(
@@ -701,20 +999,26 @@ def _mobile_payment_payload(
     membership: Optional[Membership],
     plan: Optional[Plan],
 ) -> MobilePaymentHistoryItemResponse:
+    snapshot_plan_name = payment.plan_name_snapshot or (plan.name if plan else None)
     return MobilePaymentHistoryItemResponse(
         id=payment.id,
         user_id=payment.user_id,
         membership_id=payment.membership_id,
         amount=payment.amount,
         currency=payment.currency,
-        status=payment.status.value if hasattr(payment.status, "value") else str(payment.status),
-        method=payment.method.value if hasattr(payment.method, "value") else str(payment.method),
+        status=membership_status_value(payment.status) or "pending",
+        method=membership_status_value(payment.method) or "other",
         description=payment.description,
         paid_at=payment.paid_at,
         created_at=payment.created_at,
         receipt_url=payment.receipt_url,
         external_id=payment.external_id,
-        plan_name=plan.name if plan else None,
+        plan_name=snapshot_plan_name,
+        plan_id_snapshot=payment.plan_id_snapshot or (plan.id if plan else None),
+        plan_name_snapshot=snapshot_plan_name,
+        membership_starts_at_snapshot=payment.membership_starts_at_snapshot or (membership.starts_at if membership else None),
+        membership_expires_at_snapshot=payment.membership_expires_at_snapshot or (membership.expires_at if membership else None),
+        membership_status_snapshot=payment.membership_status_snapshot or membership_status_value(membership.status if membership else None),
     )
 
 
@@ -879,25 +1183,56 @@ async def create_manual_membership_sale_endpoint(
     if not plan.is_active:
         raise HTTPException(status_code=400, detail="Solo puedes asignar planes activos")
 
-    result = await create_manual_membership_sale(
-        db,
-        tenant=ctx.tenant,
-        client=user,
-        plan=plan,
-        starts_at=data.starts_at,
-        expires_at=data.expires_at,
-        payment_method=data.payment_method,
-        amount=data.amount,
-        currency=data.currency,
-        description=data.description,
-        notes=data.notes,
-        auto_renew=data.auto_renew,
-    )
+    try:
+        result = await create_manual_membership_sale(
+            db,
+            tenant=ctx.tenant,
+            client=user,
+            plan=plan,
+            starts_at=data.starts_at,
+            expires_at=data.expires_at,
+            payment_method=data.payment_method,
+            amount=data.amount,
+            currency=data.currency,
+            description=data.description,
+            notes=data.notes,
+            auto_renew=data.auto_renew,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    effective_plan = None
+    if result.effective_membership:
+        effective_plan = plan if result.effective_membership.plan_id == plan.id else await db.get(Plan, result.effective_membership.plan_id)
+    scheduled_plan = None
+    if result.scheduled_membership:
+        scheduled_plan = plan if result.scheduled_membership.plan_id == plan.id else await db.get(Plan, result.scheduled_membership.plan_id)
 
     return MembershipManualSaleResponse(
-        membership=_membership_payload(result.membership, user, plan),
+        membership=_membership_payload(result.membership, user, plan, result.payment),
         payment=result.payment,
         replaced_membership_ids=result.replaced_membership_ids,
+        effective_membership=(
+            _membership_payload(
+                result.effective_membership,
+                user,
+                effective_plan,
+                result.payment if result.effective_membership and result.payment.membership_id == result.effective_membership.id else None,
+            )
+            if result.effective_membership and effective_plan
+            else None
+        ),
+        scheduled_membership=(
+            _membership_payload(
+                result.scheduled_membership,
+                user,
+                scheduled_plan,
+                result.payment if result.scheduled_membership and result.payment.membership_id == result.scheduled_membership.id else None,
+            )
+            if result.scheduled_membership and scheduled_plan
+            else None
+        ),
+        scheduled=result.scheduled,
     )
 
 
@@ -1205,6 +1540,81 @@ async def update_support_interaction(
     return _support_payload(interaction, client, handler)
 
 
+@feedback_router.get("", response_model=list[FeedbackSubmissionResponse])
+async def list_feedback_submissions(
+    request: Request,
+    limit: int = Query(12, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    if ctx.tenant_id is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    try:
+        submissions = (
+            await db.execute(
+                select(FeedbackSubmission)
+                .where(FeedbackSubmission.tenant_id == ctx.tenant_id)
+                .order_by(FeedbackSubmission.created_at.desc())
+                .limit(limit)
+            )
+        ).scalars().all()
+    except ProgrammingError as exc:
+        if _is_missing_feedback_table_error(exc):
+            _raise_feedback_unavailable()
+        raise
+
+    related_users = await _get_feedback_related_users(db, submissions)
+    return [
+        _feedback_payload(item, request, related_users.get(item.created_by))
+        for item in submissions
+    ]
+
+
+@feedback_router.post("", response_model=FeedbackSubmissionResponse, status_code=201)
+async def create_feedback_submission(
+    request: Request,
+    category: str = Form(...),
+    message: str = Form(...),
+    image: UploadFile | None = File(default=None),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user: User = Depends(require_roles("owner", "admin", "reception")),
+):
+    if ctx.tenant_id is None or ctx.tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    normalized_category = _normalize_feedback_category(category)
+    normalized_message = _normalize_feedback_message(message)
+    image_path = await _store_feedback_image(file=image, tenant_id=ctx.tenant_id) if image is not None else None
+
+    submission = FeedbackSubmission(
+        tenant_id=ctx.tenant_id,
+        created_by=current_user.id,
+        category=normalized_category,
+        message=normalized_message,
+        image_path=image_path,
+    )
+    db.add(submission)
+    try:
+        await db.flush()
+    except ProgrammingError as exc:
+        if _is_missing_feedback_table_error(exc):
+            _raise_feedback_unavailable()
+        raise
+    await db.refresh(submission)
+
+    await _send_feedback_submission_notification(
+        request=request,
+        submission=submission,
+        tenant_name=ctx.tenant.name,
+        creator=current_user,
+    )
+
+    return _feedback_payload(submission, request, current_user)
+
+
 # ─── Staff Router ─────────────────────────────────────────────────────────────
 
 @staff_router.get("", response_model=list)
@@ -1225,9 +1635,296 @@ async def list_staff(
     )
     users = result.scalars().all()
     return [
-        {"id": str(u.id), "full_name": u.full_name, "role": u.role.value, "email": u.email}
+        {"id": str(u.id), "full_name": u.full_name, "role": u.role.value, "email": u.email, "is_active": u.is_active}
         for u in users
     ]
+
+
+_STAFF_ROLES = {"admin", "reception", "trainer", "marketing"}
+_ROLE_LABELS = {
+    "admin": "Administrador",
+    "reception": "Recepción",
+    "trainer": "Entrenador",
+    "marketing": "Marketing",
+    "owner": "Propietario",
+}
+
+
+class StaffInviteRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=200)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    role: str
+    replace_pending: bool = False
+
+
+class StaffUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+async def _get_redis():
+    import redis.asyncio as aioredis
+    return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+_STAFF_INVITATION_TTL = 259200
+
+
+async def _mark_staff_invitation_status(redis: Any, token_hash: str | None, status: str) -> None:
+    if token_hash:
+        await redis.set(f"staff_invite_used:{token_hash}", status, ex=_STAFF_INVITATION_TTL)
+
+
+@staff_router.post("/invite", status_code=201)
+async def invite_staff(
+    data: StaffInviteRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(require_roles("owner", "admin")),
+):
+    """Invite a new staff member via email."""
+    if data.role not in _STAFF_ROLES:
+        raise HTTPException(status_code=400, detail=f"Rol inválido. Opciones: {', '.join(_STAFF_ROLES)}")
+
+    email = data.email.lower().strip()
+
+    # Check no existing active user with same email in tenant.
+    # Inactive staff members can be re-invited to reactivate their access.
+    existing = (await db.execute(
+        select(User).where(User.email == email, User.tenant_id == ctx.tenant_id)
+    )).scalar_one_or_none()
+    can_reinvite_existing_staff = bool(
+        existing
+        and not existing.is_active
+        and existing.role in {UserRole.ADMIN, UserRole.RECEPTION, UserRole.TRAINER, UserRole.MARKETING}
+    )
+    if existing and not can_reinvite_existing_staff:
+        raise HTTPException(status_code=409, detail="Ya existe un usuario con ese correo en esta cuenta.")
+
+    # Rate-limit invitations: max 20 per hour per tenant
+    redis = await _get_redis()
+    rate_key = f"staff_invite_rate:{ctx.tenant_id}"
+    meta_key = f"staff_invite_meta:{ctx.tenant_id}:{email}"
+    list_key = f"staff_invite_list:{ctx.tenant_id}"
+    pending_key = f"staff_invite_pending:{ctx.tenant_id}:{email}"
+    count = await redis.incr(rate_key)
+    if count == 1:
+        await redis.expire(rate_key, 3600)
+    if count > 20:
+        await redis.aclose()
+        raise HTTPException(status_code=429, detail="Demasiadas invitaciones enviadas. Intenta en una hora.")
+
+    existing_invitation_raw = await redis.get(meta_key)
+    if existing_invitation_raw and not data.replace_pending:
+        await redis.aclose()
+        raise HTTPException(status_code=409, detail="Ya existe una invitación pendiente para ese correo.")
+    if existing_invitation_raw:
+        existing_invitation = json.loads(existing_invitation_raw)
+        await _mark_staff_invitation_status(redis, existing_invitation.get("token_hash"), "invalidated")
+    else:
+        await redis.delete(pending_key)
+
+    tenant = ctx.tenant
+    gym_name = tenant.name if tenant else "el gimnasio"
+    invited_by = current_user.full_name
+
+    token = create_staff_invitation_token(
+        email=email,
+        tenant_id=str(ctx.tenant_id),
+        role=data.role,
+        first_name=data.first_name,
+        last_name=data.last_name,
+        invited_by=invited_by,
+    )
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    invite_url = f"{settings.FRONTEND_URL}/accept-invitation?token={token}"
+    role_label = _ROLE_LABELS.get(data.role, data.role)
+
+    # Store full metadata so we can list and cancel invitations (72h TTL)
+    meta = json.dumps({
+        "email": email,
+        "first_name": data.first_name,
+        "last_name": data.last_name,
+        "role": data.role,
+        "role_label": role_label,
+        "invited_by": invited_by,
+        "invited_at": datetime.now(timezone.utc).isoformat(),
+        "token_hash": token_hash,
+    })
+
+    await redis.set(meta_key, meta, ex=_STAFF_INVITATION_TTL)
+    await redis.set(pending_key, token_hash, ex=_STAFF_INVITATION_TTL)
+    await redis.sadd(list_key, email)
+    await redis.expire(list_key, _STAFF_INVITATION_TTL)
+    await redis.aclose()
+
+    await email_service.send_staff_invitation(
+        to_email=email,
+        first_name=data.first_name,
+        gym_name=gym_name,
+        invite_url=invite_url,
+        role_label=role_label,
+        invited_by=invited_by,
+    )
+
+    replaced_pending = bool(existing_invitation_raw)
+    reactivates_existing_user = bool(can_reinvite_existing_staff)
+    detail = (
+        f"Nueva invitación enviada a {email}. La invitación anterior fue invalidada."
+        if replaced_pending
+        else (
+            f"Invitación enviada a {email} para reactivar su acceso."
+            if reactivates_existing_user
+            else f"Invitación enviada a {email}."
+        )
+    )
+    return {
+        "detail": detail,
+        "email": email,
+        "role": data.role,
+        "replaced_pending": replaced_pending,
+        "reactivates_existing_user": reactivates_existing_user,
+    }
+
+
+@staff_router.get("/invitations")
+async def list_pending_invitations(
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """List all pending (not yet accepted) staff invitations."""
+    redis = await _get_redis()
+    list_key = f"staff_invite_list:{ctx.tenant_id}"
+    emails = await redis.smembers(list_key)
+
+    invitations = []
+    stale_emails = []
+    for email in emails:
+        meta_key = f"staff_invite_meta:{ctx.tenant_id}:{email}"
+        raw = await redis.get(meta_key)
+        if raw:
+            data = json.loads(raw)
+            ttl = await redis.ttl(meta_key)
+            data["expires_in_hours"] = max(0, round(ttl / 3600, 1)) if ttl > 0 else 0
+            invitations.append(data)
+        else:
+            stale_emails.append(email)
+
+    # Clean stale entries from set
+    if stale_emails:
+        await redis.srem(list_key, *stale_emails)
+
+    await redis.aclose()
+    invitations.sort(key=lambda x: x.get("invited_at", ""), reverse=True)
+    return invitations
+
+
+@staff_router.delete("/invitations/{email}")
+async def cancel_invitation(
+    email: str,
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Cancel a pending staff invitation."""
+    email = email.lower().strip()
+    redis = await _get_redis()
+    meta_key = f"staff_invite_meta:{ctx.tenant_id}:{email}"
+    list_key = f"staff_invite_list:{ctx.tenant_id}"
+    pending_key = f"staff_invite_pending:{ctx.tenant_id}:{email}"
+
+    raw = await redis.get(meta_key)
+    if not raw:
+        await redis.aclose()
+        raise HTTPException(status_code=404, detail="No hay invitación pendiente para ese correo.")
+
+    meta = json.loads(raw)
+    token_hash = meta.get("token_hash")
+
+    # Burn the token so the link stops working
+    await _mark_staff_invitation_status(redis, token_hash, "invalidated")
+
+    await redis.delete(meta_key)
+    await redis.delete(pending_key)
+    await redis.srem(list_key, email)
+    await redis.aclose()
+    return {"detail": f"Invitación cancelada para {email}."}
+
+
+@staff_router.patch("/{staff_id}")
+async def update_staff(
+    staff_id: UUID,
+    data: StaffUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(require_roles("owner", "admin")),
+):
+    """Update a staff member's role or info."""
+    staff = (await db.execute(
+        select(User).where(User.id == staff_id, User.tenant_id == ctx.tenant_id, User.role != UserRole.CLIENT)
+    )).scalar_one_or_none()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Miembro del equipo no encontrado.")
+
+    # Owners cannot be demoted by admins
+    if staff.role == UserRole.OWNER and getattr(current_user.role, "value", str(current_user.role)) != "owner":
+        raise HTTPException(status_code=403, detail="Solo el propietario puede modificar su propio rol.")
+
+    if data.role is not None:
+        if data.role not in _STAFF_ROLES and data.role != "owner":
+            raise HTTPException(status_code=400, detail=f"Rol inválido.")
+        staff.role = UserRole(data.role)
+    if data.first_name is not None:
+        staff.first_name = data.first_name
+    if data.last_name is not None:
+        staff.last_name = data.last_name
+    if data.is_active is not None:
+        staff.is_active = data.is_active
+
+    await db.flush()
+    return {"id": str(staff.id), "full_name": staff.full_name, "role": staff.role.value, "email": staff.email, "is_active": staff.is_active}
+
+
+@staff_router.delete("/{staff_id}", status_code=204)
+async def deactivate_staff(
+    staff_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(require_roles("owner", "admin")),
+):
+    """Deactivate (soft-delete) a staff member."""
+    staff = (await db.execute(
+        select(User).where(User.id == staff_id, User.tenant_id == ctx.tenant_id, User.role != UserRole.CLIENT)
+    )).scalar_one_or_none()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Miembro del equipo no encontrado.")
+    if str(staff.id) == str(current_user.id):
+        raise HTTPException(status_code=400, detail="No puedes desactivar tu propia cuenta.")
+    staff.is_active = False
+    await db.flush()
+
+
+@staff_router.delete("/{staff_id}/hard-delete", status_code=204)
+async def hard_delete_staff(
+    staff_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user=Depends(require_roles("owner", "admin")),
+):
+    staff = (await db.execute(
+        select(User).where(
+            User.id == staff_id,
+            User.tenant_id == ctx.tenant_id,
+            User.role != UserRole.CLIENT,
+        )
+    )).scalar_one_or_none()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Miembro del equipo no encontrado.")
+
+    await purge_user_account(db, user=staff, actor=current_user, tenant_id=ctx.tenant_id)
 
 
 # ─── Upload Router ────────────────────────────────────────────────────────────
@@ -1383,6 +2080,7 @@ async def create_program(
     _user=Depends(require_roles("owner", "admin", "trainer")),
 ):
     trainer_id = data.trainer_id or await _get_default_program_trainer_id(db, ctx.tenant_id)
+    schedule_payload = [entry.model_dump(mode="json", exclude_none=True) for entry in data.schedule]
     program = TrainingProgram(
         tenant_id=ctx.tenant_id,
         name=data.name,
@@ -1390,7 +2088,7 @@ async def create_program(
         trainer_id=trainer_id,
         program_type=data.program_type,
         duration_weeks=data.duration_weeks,
-        schedule_json=json.dumps(data.schedule),
+        schedule_json=json.dumps(schedule_payload),
         is_active=data.is_active,
     )
     db.add(program)
@@ -1412,7 +2110,7 @@ async def update_program(
     if not program or program.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=404, detail="Programa no encontrado")
 
-    payload = data.model_dump(exclude_unset=True)
+    payload = data.model_dump(exclude_unset=True, mode="json")
     if "schedule" in payload:
         payload["schedule_json"] = json.dumps(payload.pop("schedule"))
     for field, value in payload.items():
@@ -1454,6 +2152,38 @@ async def delete_program(
     program = await db.get(TrainingProgram, program_id)
     if not program or program.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=404, detail="Programa no encontrado")
+
+    linked_class_ids = (
+        await db.execute(
+            select(GymClass.id).where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.program_id == program.id,
+            )
+        )
+    ).scalars().all()
+
+    if linked_class_ids:
+        # Preserve historical check-ins while removing the generated classes.
+        await db.execute(
+            update(CheckIn)
+            .where(
+                CheckIn.tenant_id == ctx.tenant_id,
+                CheckIn.gym_class_id.in_(linked_class_ids),
+            )
+            .values(gym_class_id=None)
+        )
+        await db.execute(
+            delete(GymClass).where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.program_id == program.id,
+            )
+        )
+    await db.execute(
+        delete(TrainingProgramEnrollment).where(
+            TrainingProgramEnrollment.tenant_id == ctx.tenant_id,
+            TrainingProgramEnrollment.program_id == program.id,
+        )
+    )
 
     await db.delete(program)
     await db.flush()
@@ -1537,8 +2267,8 @@ async def generate_program_classes(
     except ValueError:
         raise HTTPException(status_code=400, detail="Hora inválida")
 
-    recurrence_group_id = uuid4()
-    created_classes: list[GymClass] = []
+    planned_instances: list[dict[str, Any]] = []
+    seen_start_times: set[datetime] = set()
 
     for week in range(data.weeks):
         week_start = data.start_date + timedelta(weeks=week)
@@ -1557,27 +2287,115 @@ async def generate_program_classes(
             end_dt = start_dt + timedelta(minutes=data.duration_minutes)
             focus = str(day_entry.get("focus", "")).strip() or None
 
-            gym_class = GymClass(
-                tenant_id=ctx.tenant_id,
-                name=program.name,
-                description=focus,
-                class_type=data.class_type or program.program_type or None,
-                color=data.color or None,
-                modality="in_person",
-                branch_id=data.branch_id,
-                instructor_id=data.instructor_id,
-                start_time=start_dt,
-                end_time=end_dt,
-                max_capacity=data.max_capacity,
-                program_id=program_id,
-                recurrence_group_id=recurrence_group_id,
-                repeat_type="weekly",
+            day_cfg = day_entry.get("class_config") if isinstance(day_entry.get("class_config"), dict) else {}
+            resolved_branch_id = _resolve_program_day_config_value(day_cfg, "branch_id", data.branch_id)
+            resolved_instructor_id = _resolve_program_day_config_value(day_cfg, "instructor_id", data.instructor_id)
+            resolved_modality = _resolve_program_day_config_value(day_cfg, "modality", data.modality)
+            resolved_max_capacity = _resolve_program_day_config_value(day_cfg, "max_capacity", data.max_capacity)
+            resolved_online_link = _resolve_program_day_config_value(day_cfg, "online_link", data.online_link)
+            resolved_deadline = _resolve_program_day_config_value(
+                day_cfg,
+                "cancellation_deadline_hours",
+                data.cancellation_deadline_hours,
             )
-            db.add(gym_class)
-            created_classes.append(gym_class)
+            resolved_restricted_plan_id = _resolve_program_day_config_value(
+                day_cfg,
+                "restricted_plan_id",
+                data.restricted_plan_id,
+            )
+            resolved_color = _resolve_program_day_config_value(day_cfg, "color", data.color)
+            resolved_class_type = _resolve_program_day_config_value(
+                day_cfg,
+                "class_type",
+                data.class_type if data.class_type is not None else program.program_type,
+            )
 
-    if not created_classes:
+            if resolved_modality is None:
+                resolved_modality = data.modality
+            if resolved_max_capacity is None:
+                resolved_max_capacity = data.max_capacity
+            if resolved_deadline is None:
+                resolved_deadline = data.cancellation_deadline_hours
+
+            if start_dt in seen_start_times:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El horario del programa produce clases duplicadas en la misma fecha y hora. Revisa los días configurados antes de generar.",
+                )
+            seen_start_times.add(start_dt)
+
+            planned_instances.append({
+                "description": focus,
+                "class_type": resolved_class_type,
+                "color": resolved_color,
+                "modality": resolved_modality,
+                "branch_id": resolved_branch_id,
+                "instructor_id": resolved_instructor_id,
+                "online_link": resolved_online_link,
+                "cancellation_deadline_hours": resolved_deadline,
+                "restricted_plan_id": resolved_restricted_plan_id,
+                "start_time": start_dt,
+                "end_time": end_dt,
+                "max_capacity": resolved_max_capacity,
+            })
+
+    if not planned_instances:
         raise HTTPException(status_code=400, detail="No se pudieron generar clases con los días del programa")
+
+    planned_instances.sort(key=lambda item: item["start_time"])
+    planned_start_times = [item["start_time"] for item in planned_instances]
+
+    existing_classes = (
+        await db.execute(
+            select(GymClass)
+            .where(
+                GymClass.tenant_id == ctx.tenant_id,
+                GymClass.program_id == program_id,
+                GymClass.status != ClassStatus.CANCELLED,
+                GymClass.start_time.in_(planned_start_times),
+            )
+            .order_by(GymClass.start_time.asc())
+        )
+    ).scalars().all()
+    if existing_classes:
+        first_existing = existing_classes[0].start_time.strftime("%d/%m/%Y %H:%M")
+        last_existing = existing_classes[-1].start_time.strftime("%d/%m/%Y %H:%M")
+        if len(existing_classes) == len(planned_instances):
+            detail = (
+                f"Ya existe una tanda activa de clases para este programa entre {first_existing} y {last_existing}. "
+                "Revisa las clases vinculadas antes de generar nuevamente."
+            )
+        else:
+            detail = (
+                f"Ya existen {len(existing_classes)} clase(s) activas de este programa dentro del rango solicitado "
+                f"({first_existing} a {last_existing}). Ajusta el rango o elimina la tanda anterior antes de generar."
+            )
+        raise HTTPException(status_code=400, detail=detail)
+
+    recurrence_group_id = uuid4()
+    created_classes: list[GymClass] = []
+    for instance in planned_instances:
+        gym_class = GymClass(
+            tenant_id=ctx.tenant_id,
+            name=program.name,
+            description=instance["description"],
+            class_type=instance["class_type"],
+            color=instance["color"],
+            modality=instance["modality"],
+            branch_id=instance["branch_id"],
+            instructor_id=instance["instructor_id"],
+            online_link=instance["online_link"],
+            cancellation_deadline_hours=instance["cancellation_deadline_hours"],
+            restricted_plan_id=instance["restricted_plan_id"],
+            start_time=instance["start_time"],
+            end_time=instance["end_time"],
+            max_capacity=instance["max_capacity"],
+            program_id=program_id,
+            recurrence_group_id=recurrence_group_id,
+            repeat_type="weekly",
+        )
+        db.add(gym_class)
+        created_classes.append(gym_class)
 
     await db.flush()
     for gc in created_classes:
@@ -1750,8 +2568,16 @@ async def get_reports_overview(
     ).scalars().all()
 
     revenue_total = sum((payment.amount for payment in payments), 0)
-    active_members = sum(1 for membership in memberships if membership.status == MembershipStatus.ACTIVE)
-    renewal_rate = round((active_members / len(memberships)) * 100, 1) if memberships else 0.0
+    memberships_by_user: dict[UUID, list[Membership]] = {}
+    for membership in memberships:
+        memberships_by_user.setdefault(membership.user_id, []).append(membership)
+    active_members = sum(
+        1
+        for items in memberships_by_user.values()
+        if resolve_membership_timeline(items, persist=False).access_membership is not None
+    )
+    renewed_periods = sum(1 for membership in memberships if membership.previous_membership_id is not None)
+    renewal_rate = round((renewed_periods / len(memberships)) * 100, 1) if memberships else 0.0
     churn_rate = round((sum(1 for membership in memberships if membership.status == MembershipStatus.CANCELLED) / len(memberships)) * 100, 1) if memberships else 0.0
 
     month_keys = [(now - timedelta(days=30 * offset)).strftime("%b") for offset in reversed(range(12 if range_key == "12m" else 3 if range_key == "90d" else 1))]
@@ -1770,7 +2596,12 @@ async def get_reports_overview(
     membership_by_id = {membership.id: membership for membership in memberships}
     for payment in payments:
         membership = membership_by_id.get(payment.membership_id) if payment.membership_id else None
-        plan_name = plans[membership.plan_id].name if membership and membership.plan_id in plans else "Sin plan"
+        plan_name = (
+            payment.plan_name_snapshot
+            or (plans[payment.plan_id_snapshot].name if payment.plan_id_snapshot and payment.plan_id_snapshot in plans else None)
+            or (plans[membership.plan_id].name if membership and membership.plan_id in plans else None)
+            or "Sin plan"
+        )
         plan_revenue[plan_name] = plan_revenue.get(plan_name, 0) + float(payment.amount)
 
     weekday_labels = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
@@ -1935,7 +2766,7 @@ async def get_attendance_report(
 
     class_ids = [c.id for c in classes]
 
-    # Count confirmed reservations per class
+    # Count confirmed+attended reservations per class (for occupancy denominator)
     res_counts_result = await db.execute(
         select(Reservation.gym_class_id, func.count().label("count"))
         .where(
@@ -1947,39 +2778,53 @@ async def get_attendance_report(
     )
     res_by_class = {row.gym_class_id: row.count for row in res_counts_result}
 
-    # Count check-ins per class
-    checkin_counts_result = await db.execute(
+    # Attendance source of truth: attended reservations per class
+    attended_res_result = await db.execute(
+        select(Reservation.gym_class_id, func.count().label("count"))
+        .where(
+            Reservation.tenant_id == tid,
+            Reservation.gym_class_id.in_(class_ids),
+            Reservation.status == "attended",
+        )
+        .group_by(Reservation.gym_class_id)
+    )
+    attended_by_class = {row.gym_class_id: row.count for row in attended_res_result}
+
+    # Legacy fallback: checkins without reservation_id link (pre-migration records)
+    legacy_checkin_result = await db.execute(
         select(CheckIn.gym_class_id, func.count().label("count"))
         .where(
             CheckIn.tenant_id == tid,
             CheckIn.gym_class_id.in_(class_ids),
+            CheckIn.reservation_id.is_(None),
         )
         .group_by(CheckIn.gym_class_id)
     )
-    checkin_by_class = {row.gym_class_id: row.count for row in checkin_counts_result}
+    legacy_checkin_by_class = {row.gym_class_id: row.count for row in legacy_checkin_result}
 
     # Aggregate by class name (since same class recurs)
     class_stats: dict[str, dict] = {}
     for c in classes:
         key = c.name
         if key not in class_stats:
-            class_stats[key] = {"name": key, "sessions": 0, "total_capacity": 0, "total_reservations": 0, "total_checkins": 0}
+            class_stats[key] = {"name": key, "sessions": 0, "total_capacity": 0, "total_reservations": 0, "total_attended": 0}
         class_stats[key]["sessions"] += 1
         class_stats[key]["total_capacity"] += c.max_capacity or 0
         class_stats[key]["total_reservations"] += res_by_class.get(c.id, 0)
-        class_stats[key]["total_checkins"] += checkin_by_class.get(c.id, 0)
+        # Attendance = attended reservations + legacy unlinked checkins
+        class_stats[key]["total_attended"] += attended_by_class.get(c.id, 0) + legacy_checkin_by_class.get(c.id, 0)
 
     class_rows = []
     for stat in class_stats.values():
         occupancy_pct = round(stat["total_reservations"] / stat["total_capacity"] * 100, 1) if stat["total_capacity"] else 0
-        attendance_pct = round(stat["total_checkins"] / stat["total_reservations"] * 100, 1) if stat["total_reservations"] else 0
+        attendance_pct = round(stat["total_attended"] / stat["total_reservations"] * 100, 1) if stat["total_reservations"] else 0
         class_rows.append({
             "name": stat["name"],
             "sessions": stat["sessions"],
             "avg_occupancy_pct": occupancy_pct,
             "avg_attendance_pct": attendance_pct,
             "total_reservations": stat["total_reservations"],
-            "total_checkins": stat["total_checkins"],
+            "total_checkins": stat["total_attended"],
         })
     class_rows.sort(key=lambda x: x["avg_occupancy_pct"], reverse=True)
 
@@ -1994,7 +2839,7 @@ async def get_attendance_report(
             instructor_stats[iid] = {"instructor_id": iid, "name": None, "sessions": 0, "total_reservations": 0, "total_checkins": 0}
         instructor_stats[iid]["sessions"] += 1
         instructor_stats[iid]["total_reservations"] += res_by_class.get(c.id, 0)
-        instructor_stats[iid]["total_checkins"] += checkin_by_class.get(c.id, 0)
+        instructor_stats[iid]["total_checkins"] += attended_by_class.get(c.id, 0) + legacy_checkin_by_class.get(c.id, 0)
 
     if instructor_ids:
         users = (await db.execute(select(User).where(User.id.in_(instructor_ids)))).scalars().all()
@@ -2179,6 +3024,8 @@ async def create_payment_account(
     public_identifier = (data.public_identifier or "").strip() or None
     if data.provider == "webpay" and not public_identifier:
         public_identifier = str(normalized_metadata.get("commerce_code") or "").strip() or None
+    if data.provider == "tuu" and not public_identifier:
+        public_identifier = str(normalized_metadata.get("account_id") or "").strip() or None
 
     if data.is_default:
         existing_accounts = (
@@ -2248,6 +3095,10 @@ async def update_payment_account(
         auto_identifier = str(normalized_metadata.get("commerce_code") or "").strip()
         if auto_identifier and not (account.public_identifier or "").strip():
             account.public_identifier = auto_identifier
+    if account.provider == "tuu" and "public_identifier" not in payload:
+        auto_identifier = str(normalized_metadata.get("account_id") or "").strip()
+        if auto_identifier and not (account.public_identifier or "").strip():
+            account.public_identifier = auto_identifier
 
     for field, value in payload.items():
         if field in {"account_label", "public_identifier", "checkout_base_url"}:
@@ -2299,20 +3150,17 @@ async def get_mobile_wallet(
     if tenant is None:
         raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
-    membership = (
-        await db.execute(
-            select(Membership)
-            .where(Membership.user_id == current_user.id, Membership.tenant_id == tenant.id)
-            .order_by(Membership.created_at.desc())
-            .limit(1)
-        )
-    ).scalars().first()
-    plan = await db.get(Plan, membership.plan_id) if membership else None
+    state = await sync_membership_timeline(db, tenant_id=tenant.id, user_id=current_user.id)
+    current_membership = state.current_membership
+    next_membership = state.next_membership
+    current_plan = await db.get(Plan, current_membership.plan_id) if current_membership else None
+    next_plan = await db.get(Plan, next_membership.plan_id) if next_membership else None
     next_class = (
         await db.execute(
             select(GymClass)
             .where(
                 GymClass.tenant_id == tenant.id,
+                _valid_program_class_filter(tenant.id),
                 GymClass.start_time >= datetime.now(timezone.utc),
                 GymClass.status == ClassStatus.SCHEDULED,
             )
@@ -2339,6 +3187,7 @@ async def get_mobile_wallet(
                 select(GymClass)
                 .where(
                     GymClass.tenant_id == tenant.id,
+                    _valid_program_class_filter(tenant.id),
                     GymClass.program_id.in_(enrolled_program_ids),
                     GymClass.start_time >= datetime.now(timezone.utc),
                     GymClass.status == ClassStatus.SCHEDULED,
@@ -2351,12 +3200,12 @@ async def get_mobile_wallet(
     # Reservation quota: count confirmed reservations this week / this month
     weekly_used: int | None = None
     monthly_used: int | None = None
-    if plan and (plan.max_reservations_per_week or plan.max_reservations_per_month):
+    if current_plan and (current_plan.max_reservations_per_week or current_plan.max_reservations_per_month):
         now = datetime.now(timezone.utc)
         week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        if plan.max_reservations_per_week:
+        if current_plan.max_reservations_per_week:
             weekly_used = (
                 await db.execute(
                     select(func.count()).select_from(Reservation)
@@ -2369,7 +3218,7 @@ async def get_mobile_wallet(
                 )
             ).scalar() or 0
 
-        if plan.max_reservations_per_month:
+        if current_plan.max_reservations_per_month:
             monthly_used = (
                 await db.execute(
                     select(func.count()).select_from(Reservation)
@@ -2382,31 +3231,21 @@ async def get_mobile_wallet(
                 )
             ).scalar() or 0
 
-    def _class_dict(c: GymClass) -> dict:
-        return {
-            "id": str(c.id),
-            "name": c.name,
-            "start_time": c.start_time.isoformat(),
-            "modality": c.modality.value if hasattr(c.modality, "value") else str(c.modality),
-            "program_id": str(c.program_id) if c.program_id else None,
-        }
-
-    return MobileMembershipWalletResponse(
-        tenant_slug=tenant.slug,
-        tenant_name=tenant.name,
-        membership_id=membership.id if membership else None,
-        plan_id=plan.id if plan else None,
-        plan_name=plan.name if plan else None,
-        membership_status=membership.status.value if membership else None,
-        expires_at=membership.expires_at if membership else None,
-        auto_renew=membership.auto_renew if membership else None,
-        next_class=_class_dict(next_class) if next_class else None,
-        next_program_class=_class_dict(next_program_class) if next_program_class else None,
-        qr_payload=f"nexo:{tenant.slug}:{current_user.id}:{membership.id if membership else uuid4()}",
-        max_reservations_per_week=plan.max_reservations_per_week if plan else None,
-        max_reservations_per_month=plan.max_reservations_per_month if plan else None,
-        weekly_reservations_used=weekly_used,
-        monthly_reservations_used=monthly_used,
+    return _build_mobile_wallet_response(
+        tenant=tenant,
+        current_membership=current_membership,
+        current_plan=current_plan,
+        next_membership=next_membership,
+        next_plan=next_plan,
+        next_class=next_class,
+        next_program_class=next_program_class,
+        qr_payload=(
+            f"nexo:{tenant.slug}:{current_user.id}:{state.access_membership.id}"
+            if state.access_membership
+            else None
+        ),
+        weekly_used=weekly_used,
+        monthly_used=monthly_used,
     )
 
 
@@ -2858,14 +3697,8 @@ async def update_mobile_membership(
     if tenant is None:
         raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
-    membership = (
-        await db.execute(
-            select(Membership)
-            .where(Membership.user_id == current_user.id, Membership.tenant_id == tenant.id)
-            .order_by(Membership.created_at.desc())
-            .limit(1)
-        )
-    ).scalars().first()
+    state = await sync_membership_timeline(db, tenant_id=tenant.id, user_id=current_user.id)
+    membership = state.current_membership or state.next_membership
 
     if not membership:
         raise HTTPException(status_code=404, detail="No se encontró una membresía para este miembro")
@@ -2874,14 +3707,19 @@ async def update_mobile_membership(
         membership.auto_renew = data.auto_renew
 
     await db.flush()
+    state = await sync_membership_timeline(db, tenant_id=tenant.id, user_id=current_user.id)
+    current_membership = state.current_membership
+    next_membership = state.next_membership
 
     # Return the updated wallet so the frontend can refresh in one call
-    plan = await db.get(Plan, membership.plan_id) if membership else None
+    plan = await db.get(Plan, current_membership.plan_id) if current_membership else None
+    next_plan = await db.get(Plan, next_membership.plan_id) if next_membership else None
     next_class = (
         await db.execute(
             select(GymClass)
             .where(
                 GymClass.tenant_id == tenant.id,
+                _valid_program_class_filter(tenant.id),
                 GymClass.start_time >= datetime.now(timezone.utc),
                 GymClass.status == ClassStatus.SCHEDULED,
             )
@@ -2890,26 +3728,21 @@ async def update_mobile_membership(
         )
     ).scalars().first()
 
-    return MobileMembershipWalletResponse(
-        tenant_slug=tenant.slug,
-        tenant_name=tenant.name,
-        membership_id=membership.id,
-        plan_id=plan.id if plan else None,
-        plan_name=plan.name if plan else None,
-        membership_status=membership.status.value if isinstance(membership.status, MembershipStatus) else str(membership.status),
-        expires_at=membership.expires_at,
-        auto_renew=membership.auto_renew,
-        next_class=(
-            {
-                "id": str(next_class.id),
-                "name": next_class.name,
-                "start_time": next_class.start_time.isoformat(),
-                "modality": next_class.modality.value if hasattr(next_class.modality, "value") else str(next_class.modality),
-            }
-            if next_class
+    return _build_mobile_wallet_response(
+        tenant=tenant,
+        current_membership=current_membership,
+        current_plan=plan,
+        next_membership=next_membership,
+        next_plan=next_plan,
+        next_class=next_class,
+        next_program_class=None,
+        qr_payload=(
+            f"nexo:{tenant.slug}:{current_user.id}:{state.access_membership.id}"
+            if state.access_membership
             else None
         ),
-        qr_payload=f"nexo:{tenant.slug}:{current_user.id}:{membership.id}",
+        weekly_used=None,
+        monthly_used=None,
     )
 
 

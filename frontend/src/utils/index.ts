@@ -1,5 +1,7 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { UserRole } from '@/types';
+import { getCurrentHostKind } from '@/utils/hosts';
 
 export const DEFAULT_PRIMARY_COLOR = '#06b6d4';
 export const DEFAULT_SECONDARY_COLOR = '#0f766e';
@@ -75,6 +77,20 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function canAccessDashboard(role?: UserRole | null): boolean {
+  return role === 'owner' || role === 'admin' || role === 'superadmin';
+}
+
+export function getDefaultRouteForRole(role?: UserRole | null): string {
+  if (role === 'client') return '/member';
+  if (role === 'superadmin') return '/platform/tenants';
+  if (canAccessDashboard(role)) return '/dashboard';
+  if (role === 'reception') return '/reception/checkin';
+  if (role === 'trainer') return '/classes';
+  if (role === 'marketing') return '/marketing';
+  return '/login';
+}
+
 export function getPublicAppOrigin(): string {
   const configured = import.meta.env.VITE_PUBLIC_APP_URL?.trim();
   return (configured || window.location.origin).replace(/\/$/, '');
@@ -100,7 +116,7 @@ export function buildTenantStorefrontUrl(tenantSlug: string, customDomain?: stri
   if (normalizedDomain) {
     return `https://${normalizedDomain}`;
   }
-  return `${getPublicAppOrigin()}/store/${tenantSlug}`;
+  return `${getPublicAppOrigin()}/s/${tenantSlug}`;
 }
 
 export function isCustomStorefrontHost(): boolean {
@@ -113,8 +129,26 @@ export function isCustomStorefrontHost(): boolean {
     return false;
   }
 
-  const appHost = normalizeCustomDomain(getPublicAppOrigin());
-  return Boolean(appHost && currentHost !== appHost);
+  const hostKind = getCurrentHostKind();
+  if (hostKind === 'app' || hostKind === 'admin' || hostKind === 'sales') {
+    return false;
+  }
+
+  const configuredAppHost = normalizeCustomDomain(import.meta.env.VITE_PUBLIC_APP_URL);
+  if (configuredAppHost) {
+    return currentHost !== configuredAppHost;
+  }
+
+  if (
+    currentHost.startsWith('app.')
+    || currentHost.startsWith('admin.')
+    || currentHost.startsWith('www.')
+    || currentHost.startsWith('landing.')
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export function normalizeHexColor(value?: string | null, fallback?: string | null): string | null {
@@ -190,6 +224,15 @@ export function formatSupportChannelLabel(channel?: string | null): string {
   if (channel === 'phone') return 'Teléfono';
   if (channel === 'in_person') return 'Presencial';
   return channel;
+}
+
+export function formatFeedbackCategoryLabel(category?: string | null): string {
+  if (!category) return 'Sin categoría';
+  if (category === 'suggestion') return 'Sugerencia';
+  if (category === 'improvement') return 'Solicitud de mejora';
+  if (category === 'problem') return 'Problema';
+  if (category === 'other') return 'Otro';
+  return category;
 }
 
 export function formatClassCapacityLabel(currentBookings: number, maxCapacity: number): string {
@@ -297,6 +340,16 @@ export function supportChannelBadgeColor(channel?: string | null): string {
     in_person: 'badge-neutral',
   };
   return channel ? map[channel] ?? 'badge-neutral' : 'badge-neutral';
+}
+
+export function feedbackCategoryBadgeColor(category?: string | null): string {
+  const map: Record<string, string> = {
+    suggestion: 'badge-info',
+    improvement: 'badge-warning',
+    problem: 'badge-danger',
+    other: 'badge-neutral',
+  };
+  return category ? map[category] ?? 'badge-neutral' : 'badge-neutral';
 }
 
 export function occupancyColor(rate: number): string {

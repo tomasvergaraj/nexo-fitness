@@ -1,13 +1,247 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { Link, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ArrowRight, Check, Loader2, Mail, ShieldCheck } from 'lucide-react';
+import {
+  ArrowLeft, ArrowRight, Check, ChevronDown, Eye, EyeOff,
+  Loader2, Mail, ShieldCheck,
+} from 'lucide-react';
 import { NexoBrandIcon } from '@/components/branding/NexoBrand';
+import Modal from '@/components/ui/Modal';
 import { authApi, billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { SaaSPlan } from '@/types';
 import { cn } from '@/utils';
+import { buildAppUrl, getCurrentHostKind } from '@/utils/hosts';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 50);
+}
+
+function formatMoney(amount: number, currency: string): string {
+  return new Intl.NumberFormat('es-CL', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function intervalLabel(interval: SaaSPlan['billing_interval']): string {
+  if (interval === 'year') return 'año';
+  if (interval === 'quarter') return 'trimestre';
+  if (interval === 'semi_annual') return 'semestre';
+  return 'mes';
+}
+
+// ─── Step indicator ───────────────────────────────────────────────────────────
+
+const STEP_LABELS = ['Plan', 'Correo', 'Datos'] as const;
+
+function StepIndicator({ current }: { current: number }) {
+  return (
+    <div className="mb-8 flex items-start justify-center">
+      {STEP_LABELS.map((label, i) => {
+        const n = i + 1;
+        const done = n < current;
+        const active = n === current;
+        return (
+          <div key={label} className="flex items-center">
+            <div className="flex flex-col items-center gap-1.5">
+              <div className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-bold transition-all duration-300',
+                done
+                  ? 'border-brand-500 bg-brand-500 text-white'
+                  : active
+                  ? 'border-brand-400 bg-brand-500/15 text-brand-300'
+                  : 'border-white/15 bg-transparent text-surface-600',
+              )}>
+                {done ? <Check size={13} /> : n}
+              </div>
+              <span className={cn(
+                'text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors duration-300',
+                active ? 'text-brand-300' : done ? 'text-surface-400' : 'text-surface-600',
+              )}>
+                {label}
+              </span>
+            </div>
+            {i < STEP_LABELS.length - 1 && (
+              <div className={cn(
+                'mx-3 mb-5 h-px w-12 shrink-0 transition-colors duration-500',
+                done ? 'bg-brand-500' : 'bg-white/12',
+              )} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Plan option card ─────────────────────────────────────────────────────────
+
+function PlanOptionCard({
+  plan,
+  selected,
+  onSelect,
+}: {
+  plan: SaaSPlan;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'relative w-full rounded-2xl border p-5 text-left transition-all duration-200',
+        selected
+          ? 'border-brand-400 bg-brand-500/15 shadow-lg shadow-brand-500/10'
+          : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.08]',
+      )}
+    >
+      {plan.highlighted && (
+        <span className="absolute -top-2.5 left-4 rounded-full bg-brand-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white shadow">
+          Recomendado
+        </span>
+      )}
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-white">{plan.name}</p>
+          {plan.description && (
+            <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-surface-400">{plan.description}</p>
+          )}
+        </div>
+        <div className={cn(
+          'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all',
+          selected ? 'border-brand-400 bg-brand-500' : 'border-white/25',
+        )}>
+          {selected && <Check size={11} className="text-white" />}
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-end justify-between gap-4">
+        <div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl font-bold text-white">
+              {formatMoney(Number(plan.price), plan.currency)}
+            </span>
+            {plan.discount_pct && Number(plan.discount_pct) > 0 && (
+              <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                -{plan.discount_pct}%
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-surface-500">
+            neto · por {intervalLabel(plan.billing_interval)}
+          </p>
+          {Number(plan.tax_rate) > 0 && (
+            <p className="mt-0.5 text-xs text-surface-500">
+              + IVA {formatMoney(Number(plan.tax_amount), plan.currency)}
+              {' → '}
+              <span className="text-surface-400">Total {formatMoney(Number(plan.total_price), plan.currency)}</span>
+            </p>
+          )}
+        </div>
+        {plan.trial_days > 0 && (
+          <div className="shrink-0 rounded-xl bg-emerald-500/15 px-3 py-2 text-center">
+            <p className="text-xs font-bold text-emerald-300">{plan.trial_days} días</p>
+            <p className="text-[10px] text-emerald-500">gratis</p>
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ─── Form field ───────────────────────────────────────────────────────────────
+
+function Field({
+  label,
+  children,
+  hint,
+  required: isRequired,
+}: {
+  label: string;
+  children: React.ReactNode;
+  hint?: string;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm font-medium text-surface-300">
+        {label}
+        {isRequired && <span className="ml-1 text-brand-400">*</span>}
+      </label>
+      {children}
+      {hint && <p className="mt-1.5 text-xs text-surface-500">{hint}</p>}
+    </div>
+  );
+}
+
+// ─── Password input ───────────────────────────────────────────────────────────
+
+function PasswordInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+  required: isRequired,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+  required?: boolean;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder ?? '••••••••'}
+        required={isRequired}
+        className={cn('input bg-white/5 pr-10 text-white', className)}
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-surface-500 hover:text-surface-300"
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
+
+// ─── Slide animation variants ─────────────────────────────────────────────────
+
+const slideVariants = {
+  enter: (dir: number) => ({ x: dir * 36, opacity: 0 }),
+  center: {
+    x: 0,
+    opacity: 1,
+    transition: { duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] as const },
+  },
+  exit: (dir: number) => ({
+    x: dir * -36,
+    opacity: 0,
+    transition: { duration: 0.2, ease: 'easeIn' as const },
+  }),
+};
+
+// ─── Initial form state ───────────────────────────────────────────────────────
 
 const initialForm = {
   gym_name: '',
@@ -25,103 +259,125 @@ const initialForm = {
   owner_password_confirm: '',
 };
 
-// Verification step: 'email' → send code, 'code' → enter OTP, 'done' → verified
 type VerifyStep = 'email' | 'code' | 'done';
+
+// ─── Page component ───────────────────────────────────────────────────────────
 
 export default function RegisterPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
+  const hostKind = getCurrentHostKind();
+
+  // Wizard
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [direction, setDirection] = useState<number>(1);
+
+  // Form
   const [form, setForm] = useState(initialForm);
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Plans
   const [plans, setPlans] = useState<SaaSPlan[]>([]);
-  const [selectedPlan, setSelectedPlan] = useState<SaaSPlan['key']>('monthly');
+  const [selectedPlan, setSelectedPlan] = useState<string>('');
   const [plansLoading, setPlansLoading] = useState(true);
+
+  // Submit
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Email verification state
+  // Legal modals
+  const [legalModal, setLegalModal] = useState<'terms' | 'privacy' | null>(null);
+
+  // Email verification
   const [verifyStep, setVerifyStep] = useState<VerifyStep>('email');
   const [verifyEmail, setVerifyEmail] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
   const [verifyLoading, setVerifyLoading] = useState(false);
   const codeInputRef = useRef<HTMLInputElement>(null);
+  const gymNameRef = useRef<HTMLInputElement>(null);
 
   const updateField = (key: keyof typeof initialForm, value: string) => {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((f) => ({ ...f, [key]: value }));
   };
 
   useEffect(() => {
+    if (hostKind === 'admin') {
+      window.location.replace(buildAppUrl('/register'));
+    }
+  }, [hostKind]);
+
+  useEffect(() => {
     let active = true;
-
-    const loadPlans = async () => {
+    (async () => {
       try {
-        const response = await billingApi.listPublicPlans();
-        if (!active) {
-          return;
-        }
-
-        const nextPlans = response.data as SaaSPlan[];
+        const res = await billingApi.listPublicPlans();
+        if (!active) return;
+        const nextPlans = res.data as SaaSPlan[];
         setPlans(nextPlans);
         if (nextPlans.length > 0) {
-          setSelectedPlan(nextPlans[0].key);
-          setForm((current) => ({ ...current, license_type: nextPlans[0].license_type }));
+          const highlighted = nextPlans.find((p) => p.highlighted) ?? nextPlans[0];
+          setSelectedPlan(highlighted.key);
+          setForm((f) => ({ ...f, license_type: highlighted.license_type }));
         }
       } catch {
-        if (active) {
-          toast.error('No pudimos cargar los planes SaaS. Puedes intentar de nuevo en unos segundos.');
-        }
+        if (active) toast.error('No pudimos cargar los planes. Intenta recargar la página.');
       } finally {
-        if (active) {
-          setPlansLoading(false);
-        }
+        if (active) setPlansLoading(false);
       }
-    };
-
-    loadPlans();
-    return () => {
-      active = false;
-    };
+    })();
+    return () => { active = false; };
   }, []);
 
-  const activePlan = plans.find((plan) => plan.key === selectedPlan);
-  const ownerPasswordMismatch =
-    form.owner_password_confirm.length > 0 && form.owner_password !== form.owner_password_confirm;
+  // Auto-generate slug from gym_name while user hasn't manually edited it
+  useEffect(() => {
+    if (!slugEdited) {
+      updateField('slug', generateSlug(form.gym_name));
+    }
+  }, [form.gym_name, slugEdited]);
 
-  const formatPrice = (plan: SaaSPlan) =>
-    new Intl.NumberFormat('es-CL', {
-      style: 'currency',
-      currency: plan.currency,
-      maximumFractionDigits: 0,
-    }).format(plan.price);
+  const activePlan = plans.find((p) => p.key === selectedPlan);
+  const passwordMismatch = form.owner_password_confirm.length > 0
+    && form.owner_password !== form.owner_password_confirm;
 
-  const handleSendCode = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const goTo = (next: 1 | 2 | 3) => {
+    setDirection(next > step ? 1 : -1);
+    setStep(next);
+    setError('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // ─── Handlers ─────────────────────────────────────────────────────────────
+
+  const handleSendCode = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!verifyEmail) return;
     setVerifyLoading(true);
     setError('');
     try {
       const res = await authApi.sendEmailVerification(verifyEmail);
-      const data = res.data as { exists?: boolean; sent?: boolean };
+      const data = res.data as { exists?: boolean };
       if (data.exists) {
-        // Email already registered — redirect to login
-        toast('Este correo ya tiene una cuenta. Inicia sesión.', { icon: '⚠️' });
+        toast('Este correo ya tiene una cuenta.', { icon: '⚠️' });
         navigate(`/login?email=${encodeURIComponent(verifyEmail)}`);
         return;
       }
-      // Pre-fill owner_email so the form is ready
       updateField('owner_email', verifyEmail);
+      updateField('email', verifyEmail);
       setVerifyStep('code');
       setTimeout(() => codeInputRef.current?.focus(), 100);
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || 'No se pudo enviar el código. Inténtalo de nuevo.');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(msg || 'No se pudo enviar el código. Inténtalo de nuevo.');
     } finally {
       setVerifyLoading(false);
     }
   };
 
-  const handleConfirmCode = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!verifyCode) return;
+  const handleConfirmCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (verifyCode.length !== 6) return;
     setVerifyLoading(true);
     setError('');
     try {
@@ -129,502 +385,580 @@ export default function RegisterPage() {
       const data = res.data as { verified_token: string };
       setVerifyToken(data.verified_token);
       setVerifyStep('done');
-      toast.success('Correo verificado. Completa el registro.');
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || 'Código incorrecto. Inténtalo de nuevo.');
+      toast.success('Correo verificado.');
+      goTo(3);
+      setTimeout(() => gymNameRef.current?.focus(), 350);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(msg || 'Código incorrecto. Inténtalo de nuevo.');
     } finally {
       setVerifyLoading(false);
     }
   };
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!activePlan) {
-      setError('Selecciona un plan para continuar');
-      return;
-    }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activePlan) { setError('No hay plan seleccionado.'); return; }
     if (form.owner_password !== form.owner_password_confirm) {
-      setError('Las contraseñas del propietario no coinciden.');
+      setError('Las contraseñas no coinciden.');
       return;
     }
-
     setLoading(true);
     setError('');
-
     try {
-      const { owner_password_confirm: _ownerPasswordConfirm, ...signupPayload } = form;
-      const response = await billingApi.signup({
-        ...signupPayload,
+      const { owner_password_confirm: _x, ...payload } = form;
+      const res = await billingApi.signup({
+        ...payload,
         license_type: activePlan.license_type,
         plan_key: activePlan.key,
         verification_token: verifyToken || undefined,
       });
-      const data = response.data;
-
+      const data = res.data;
       setAuth(data.user, data.access_token, data.refresh_token);
-
-      // Fintoc y Stripe usan redirect_to_checkout — llevar al checkout hosted
       if (data.next_action === 'redirect_to_checkout' && data.checkout_url) {
         window.location.href = data.checkout_url;
         return;
       }
-
-      toast.success(data.message || 'Cuenta creada con la prueba activa.');
+      toast.success(data.message || '¡Cuenta creada!');
       navigate('/dashboard');
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || 'No se pudo registrar el gimnasio');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(msg || 'No se pudo registrar el gimnasio.');
     } finally {
       setLoading(false);
     }
   };
 
+  if (hostKind === 'admin') return null;
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
-    <div className="relative min-h-screen overflow-hidden bg-surface-950 px-4 py-8 sm:px-6 lg:px-10">
+    <div className="relative min-h-screen overflow-x-hidden bg-surface-950">
+      {/* Background */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-[-5rem] top-[-4rem] h-72 w-72 rounded-full bg-brand-500/20 blur-3xl" />
-        <div className="absolute bottom-[-7rem] right-[-4rem] h-80 w-80 rounded-full bg-amber-500/10 blur-3xl" />
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-br from-surface-950 via-surface-900 to-brand-950/40" />
+        <div className="absolute left-1/4 top-1/4 h-96 w-96 rounded-full bg-brand-500/8 blur-[120px]" />
+        <div className="absolute bottom-1/4 right-1/3 h-64 w-64 rounded-full bg-violet-500/6 blur-[100px]" />
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
       </div>
 
-      <div className="relative z-10 mx-auto max-w-7xl">
-        <button
-          type="button"
-          onClick={() => navigate('/login')}
-          className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-surface-300 transition-colors hover:bg-white/10"
-        >
-          <ArrowLeft size={16} />
-          Volver al inicio de sesión
-        </button>
-
-        <div className="grid gap-8 xl:grid-cols-[0.92fr_1.08fr]">
-          <motion.div
-            initial={{ opacity: 0, x: -24 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="space-y-6 xl:sticky xl:top-8 xl:self-start"
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-lg flex-col px-4 pb-16 pt-8 sm:px-6 sm:pt-10">
+        {/* Brand + login link */}
+        <div className="mb-10 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <NexoBrandIcon size={36} className="shadow-lg shadow-brand-500/25" />
+            <span className="text-base font-bold tracking-tight text-white">NexoFitness</span>
+          </div>
+          <Link
+            to="/login"
+            className="text-sm text-surface-500 transition-colors hover:text-surface-200"
           >
-            <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-brand-500 via-cyan-500 to-sky-700 p-8 text-white shadow-2xl shadow-brand-500/20">
-              <div className="flex items-center justify-between gap-4">
-                <div className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/80">
-                  Registro SaaS
+            ¿Ya tienes cuenta?{' '}
+            <span className="font-medium text-brand-400 hover:text-brand-300">Inicia sesión</span>
+          </Link>
+        </div>
+
+        {/* Step indicator */}
+        <StepIndicator current={step} />
+
+        {/* Step content */}
+        <div className="flex-1">
+          <AnimatePresence mode="wait" custom={direction}>
+
+            {/* ── Step 1: Plan selection ─────────────────────────────── */}
+            {step === 1 && (
+              <motion.div
+                key="step-1"
+                custom={direction}
+                variants={slideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                className="space-y-3"
+              >
+                <div className="mb-6">
+                  <h1 className="text-2xl font-bold text-white">Elige tu plan</h1>
+                  <p className="mt-1.5 text-sm text-surface-400">
+                    {activePlan?.trial_days
+                      ? `${activePlan.trial_days} días gratis incluidos · sin tarjeta requerida.`
+                      : plans.find((p) => p.trial_days > 0)
+                        ? 'Algunos planes incluyen período de prueba gratuito.'
+                        : 'Puedes cambiar de plan en cualquier momento desde tu panel.'}
+                  </p>
                 </div>
-                <NexoBrandIcon size={56} className="shadow-2xl shadow-surface-950/25" />
-              </div>
 
-              <h1 className="mt-8 max-w-lg text-4xl font-bold font-display leading-tight">
-                Registra tu gimnasio con una estructura mucho más clara
-              </h1>
-              <p className="mt-4 max-w-xl text-sm leading-6 text-white/82">
-                Primero eliges el plan, después completas los datos del gimnasio y del propietario. Todo queda listo para activar la prueba o pasar directo al pago online.
-              </p>
-
-              <div className="mt-8 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-                {[
-                  { label: 'Setup inicial', value: '5 min' },
-                  { label: 'Propietario creado', value: 'Automático' },
-                  { label: 'Prueba', value: `${activePlan?.trial_days ?? 14} días` },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-2xl bg-white/12 px-4 py-4 backdrop-blur-sm">
-                    <p className="text-xs uppercase tracking-[0.2em] text-white/55">{item.label}</p>
-                    <p className="mt-2 text-lg font-semibold">{item.value}</p>
+                {plansLoading ? (
+                  <div className="flex items-center justify-center py-20 text-surface-500">
+                    <Loader2 size={24} className="animate-spin" />
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-white">Plan SaaS</p>
-                  <p className="mt-1 text-sm text-surface-400">Elige el paquete antes de completar el onboarding.</p>
-                </div>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-surface-400">
-                  {plansLoading ? 'Cargando' : activePlan?.checkout_enabled ? 'Pago online' : 'Prueba'}
-                </span>
-              </div>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                {plans.map((plan) => {
-                  const isSelected = plan.key === selectedPlan;
-                  return (
-                    <button
+                ) : plans.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/10 py-14 text-center text-sm text-surface-500">
+                    No hay planes disponibles en este momento.
+                  </div>
+                ) : (
+                  plans.map((plan) => (
+                    <PlanOptionCard
                       key={plan.key}
-                      type="button"
-                      onClick={() => {
+                      plan={plan}
+                      selected={plan.key === selectedPlan}
+                      onSelect={() => {
                         setSelectedPlan(plan.key);
                         updateField('license_type', plan.license_type);
                       }}
-                      className={cn(
-                        'rounded-[1.5rem] border px-5 py-5 text-left transition-all',
-                        isSelected
-                          ? 'border-brand-400 bg-brand-500/15 shadow-lg shadow-brand-500/10'
-                          : 'border-white/10 bg-black/10 hover:border-white/20 hover:bg-white/[0.07]',
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-white">{plan.name}</p>
-                          <p className="mt-1 text-xs leading-5 text-surface-400">{plan.description}</p>
-                        </div>
-                        {plan.highlighted ? (
-                          <span className="rounded-full bg-brand-500/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-100">
-                            Recomendado
-                          </span>
-                        ) : null}
-                      </div>
+                    />
+                  ))
+                )}
 
-                      <div className="mt-5 flex items-end justify-between gap-4">
+                <button
+                  type="button"
+                  onClick={() => activePlan && goTo(2)}
+                  disabled={!activePlan || plansLoading}
+                  className={cn(
+                    'mt-2 flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-3.5 font-semibold text-white shadow-xl transition-all',
+                    activePlan && !plansLoading
+                      ? 'bg-gradient-to-r from-brand-500 to-brand-600 shadow-brand-500/20 hover:from-brand-400 hover:to-brand-500'
+                      : 'cursor-not-allowed bg-surface-800 text-surface-500',
+                  )}
+                >
+                  Continuar
+                  <ArrowRight size={16} />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 2: Email verification ─────────────────────────── */}
+            {step === 2 && (
+              <motion.div
+                key="step-2"
+                custom={direction}
+                variants={slideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                className="space-y-4"
+              >
+                <div className="rounded-[2rem] border border-white/10 bg-white/5 p-7 shadow-2xl backdrop-blur-2xl">
+
+                  {/* Already verified — user came back from step 3 */}
+                  {verifyStep === 'done' ? (
+                    <div className="space-y-5 text-center">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/20">
+                        <Check size={28} className="text-emerald-400" />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-white">Correo verificado</h2>
+                        <p className="mt-1.5 text-sm text-surface-400">{verifyEmail}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => goTo(3)}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3.5 font-semibold text-white shadow-xl shadow-brand-500/20"
+                      >
+                        Continuar <ArrowRight size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVerifyStep('email');
+                          setVerifyCode('');
+                          setVerifyToken('');
+                          setError('');
+                        }}
+                        className="w-full text-sm text-surface-500 transition-colors hover:text-surface-300"
+                      >
+                        Cambiar correo
+                      </button>
+                    </div>
+
+                  ) : verifyStep === 'email' ? (
+                    /* Email input */
+                    <form onSubmit={handleSendCode} className="space-y-5">
+                      <div className="flex flex-col items-center gap-3 text-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500/20">
+                          <Mail size={24} className="text-brand-300" />
+                        </div>
                         <div>
-                          <p className="text-3xl font-bold text-white">{formatPrice(plan)}</p>
-                          <p className="mt-1 text-xs uppercase tracking-[0.18em] text-surface-500">
-                            por {plan.billing_interval === 'year' ? 'año' : 'mes'}
+                          <h2 className="text-xl font-bold text-white">Verifica tu correo</h2>
+                          <p className="mt-1.5 text-sm text-surface-400">
+                            Te enviamos un código de 6 dígitos para confirmar que eres tú.
                           </p>
                         </div>
-                        <div className="text-right text-xs text-surface-400">
-                          <p>{plan.trial_days} días de prueba</p>
-                          <p>{plan.max_members} miembros</p>
-                        </div>
                       </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
 
-            {activePlan ? (
-              <div className="rounded-[2rem] border border-white/10 bg-black/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-white">Resumen de {activePlan.name}</p>
-                    <p className="mt-1 max-w-lg text-sm leading-6 text-surface-400">
-                      {activePlan.checkout_enabled
-                        ? 'El propietario entra al panel y puede continuar el pago online de inmediato.'
-                        : 'El gimnasio parte con una prueba activa y el cobro online quedará listo cuando completes la configuración.'}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-right">
-                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Total</p>
-                    <p className="text-xl font-semibold text-white">{formatPrice(activePlan)}</p>
-                  </div>
-                </div>
-
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  {activePlan.features.map((feature) => (
-                    <div key={feature} className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-3 text-sm text-surface-300">
-                      <Check size={16} className="shrink-0 text-brand-300" />
-                      <span>{feature}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Capacidad</p>
-                    <p className="mt-2 text-sm text-white">{activePlan.max_members} miembros y {activePlan.max_branches} sedes</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Activación</p>
-                    <p className="mt-2 text-sm text-white">
-                      {activePlan.checkout_enabled ? 'Pago online inmediato disponible' : 'Prueba primero, cobro después'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </motion.div>
-
-          {/* ── Step 0 & 1: Email verification ─────────────────────── */}
-          {verifyStep !== 'done' ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-start justify-center pt-8"
-            >
-              <div className="w-full max-w-md space-y-6">
-                <div className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-2xl">
-                  <div className="flex flex-col items-center gap-3 text-center">
-                    {verifyStep === 'email' ? (
-                      <Mail size={36} className="text-brand-300" />
-                    ) : (
-                      <ShieldCheck size={36} className="text-brand-300" />
-                    )}
-                    <h2 className="text-2xl font-bold font-display text-white">
-                      {verifyStep === 'email' ? 'Verifica tu correo' : 'Ingresa el código'}
-                    </h2>
-                    <p className="text-sm text-surface-400">
-                      {verifyStep === 'email'
-                        ? 'Escribe el correo del propietario. Te enviaremos un código de 6 dígitos para confirmarlo.'
-                        : `Enviamos un código a ${verifyEmail}. Tienes 10 minutos para usarlo.`}
-                    </p>
-                  </div>
-
-                  {verifyStep === 'email' ? (
-                    <form onSubmit={handleSendCode} className="mt-6 space-y-4">
-                      <div>
-                        <label className="mb-2 block text-sm font-medium text-surface-300">Correo del propietario</label>
+                      <Field label="Correo del propietario" required>
                         <input
                           type="email"
                           className="input bg-white/5 text-white"
                           value={verifyEmail}
                           onChange={(e) => setVerifyEmail(e.target.value)}
-                          placeholder="propietario@ejemplo.com"
+                          placeholder="tu@gimnasio.com"
                           required
                           autoFocus
                         />
-                      </div>
-                      {error ? (
-                        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
-                      ) : null}
+                      </Field>
+
+                      {error && (
+                        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+                          {error}
+                        </p>
+                      )}
+
                       <button
                         type="submit"
-                        disabled={verifyLoading}
-                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3 font-semibold text-white shadow-xl shadow-brand-500/25 disabled:cursor-not-allowed disabled:opacity-80"
+                        disabled={verifyLoading || !verifyEmail}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3.5 font-semibold text-white shadow-xl shadow-brand-500/20 disabled:opacity-70"
                       >
-                        {verifyLoading ? <Loader2 size={18} className="animate-spin" /> : <>Enviar código <ArrowRight size={16} /></>}
+                        {verifyLoading ? (
+                          <Loader2 size={18} className="animate-spin" />
+                        ) : (
+                          <>Enviar código <ArrowRight size={16} /></>
+                        )}
                       </button>
                     </form>
+
                   ) : (
-                    <form onSubmit={handleConfirmCode} className="mt-6 space-y-4">
-                      <div>
-                        <label className="mb-2 block text-sm font-medium text-surface-300">Código de 6 dígitos</label>
-                        <input
-                          ref={codeInputRef}
-                          type="text"
-                          inputMode="numeric"
-                          pattern="[0-9]{6}"
-                          maxLength={6}
-                          className="input bg-white/5 text-center text-2xl font-mono tracking-[0.4em] text-white"
-                          value={verifyCode}
-                          onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                          placeholder="······"
-                          required
-                        />
+                    /* OTP input */
+                    <form onSubmit={handleConfirmCode} className="space-y-5">
+                      <div className="flex flex-col items-center gap-3 text-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500/20">
+                          <ShieldCheck size={24} className="text-brand-300" />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold text-white">Ingresa el código</h2>
+                          <p className="mt-1.5 text-sm text-surface-400">
+                            Enviamos un código a{' '}
+                            <span className="font-medium text-surface-300">{verifyEmail}</span>.
+                            {' '}Tienes 10 minutos para usarlo.
+                          </p>
+                        </div>
                       </div>
-                      {error ? (
-                        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
-                      ) : null}
+
+                      <input
+                        ref={codeInputRef}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]{6}"
+                        maxLength={6}
+                        value={verifyCode}
+                        onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="······"
+                        required
+                        className="input w-full bg-white/5 text-center text-3xl font-mono tracking-[0.4em] text-white"
+                      />
+
+                      {error && (
+                        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+                          {error}
+                        </p>
+                      )}
+
                       <button
                         type="submit"
                         disabled={verifyLoading || verifyCode.length !== 6}
-                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3 font-semibold text-white shadow-xl shadow-brand-500/25 disabled:cursor-not-allowed disabled:opacity-80"
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-3.5 font-semibold text-white shadow-xl shadow-brand-500/20 disabled:opacity-70"
                       >
-                        {verifyLoading ? <Loader2 size={18} className="animate-spin" /> : <>Verificar <Check size={16} /></>}
+                        {verifyLoading ? (
+                          <Loader2 size={18} className="animate-spin" />
+                        ) : (
+                          <>Verificar <Check size={16} /></>
+                        )}
                       </button>
+
                       <button
                         type="button"
                         onClick={() => { setVerifyStep('email'); setVerifyCode(''); setError(''); }}
-                        className="w-full text-center text-sm text-surface-400 hover:text-surface-200"
+                        className="w-full text-sm text-surface-500 transition-colors hover:text-surface-300"
                       >
                         Cambiar correo o reenviar código
                       </button>
                     </form>
                   )}
                 </div>
-              </div>
-            </motion.div>
-          ) : (
-          <motion.form
-            onSubmit={handleSubmit}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-6"
-          >
-            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-2xl">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-3xl font-bold font-display text-white">Alta del gimnasio</h2>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-400">
-                    Completa los datos operativos en un bloque y los del propietario en otro. Así el formulario respira mejor y cada paso se entiende de inmediato.
-                  </p>
-                </div>
-                <div className="grid gap-2 text-right text-xs text-surface-400">
-                  <span className="rounded-full border border-white/10 bg-black/10 px-3 py-1 uppercase tracking-[0.18em]">
-                    {activePlan?.trial_days ?? 14} días de prueba
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-black/10 px-3 py-1 uppercase tracking-[0.18em]">
-                    {activePlan?.checkout_enabled ? 'Cobro online listo' : 'Cobro online opcional'}
-                  </span>
-                </div>
-              </div>
-            </div>
 
-            <div className="grid gap-6 2xl:grid-cols-[1.05fr_0.95fr]">
-              <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
-                <div className="mb-6 flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-300">Gimnasio</p>
-                    <h3 className="mt-2 text-2xl font-bold font-display text-white">Datos del negocio</h3>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-2 text-xs text-surface-400">
-                    Cuenta + sucursal principal
-                  </div>
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Nombre del gimnasio</label>
-                    <input className="input bg-white/5 text-white" value={form.gym_name} onChange={(event) => updateField('gym_name', event.target.value)} required />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Slug</label>
-                    <input className="input bg-white/5 text-white" value={form.slug} onChange={(event) => updateField('slug', event.target.value.toLowerCase().replace(/\s+/g, '-'))} required />
-                    <p className="mt-2 text-xs text-surface-500">Se usa en la URL interna de la cuenta. Conviene corto, claro y sin espacios.</p>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Email del gimnasio</label>
-                    <input type="email" className="input bg-white/5 text-white" value={form.email} onChange={(event) => updateField('email', event.target.value)} required />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Ciudad</label>
-                    <input className="input bg-white/5 text-white" value={form.city} onChange={(event) => updateField('city', event.target.value)} />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">País</label>
-                    <input className="input bg-white/5 text-white" value={form.country} onChange={(event) => updateField('country', event.target.value)} />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Zona horaria</label>
-                    <input className="input bg-white/5 text-white" value={form.timezone} onChange={(event) => updateField('timezone', event.target.value)} />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Moneda</label>
-                    <input className="input bg-white/5 text-white" value={form.currency} onChange={(event) => updateField('currency', event.target.value)} />
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
-                <div className="mb-6 flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-300">Propietario</p>
-                    <h3 className="mt-2 text-2xl font-bold font-display text-white">Cuenta principal</h3>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/10 px-3 py-2 text-xs text-surface-400">
-                    Acceso inicial del cliente
-                  </div>
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Nombre del propietario</label>
-                    <input className="input bg-white/5 text-white" value={form.owner_first_name} onChange={(event) => updateField('owner_first_name', event.target.value)} required />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Apellido del propietario</label>
-                    <input className="input bg-white/5 text-white" value={form.owner_last_name} onChange={(event) => updateField('owner_last_name', event.target.value)} required />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">
-                      Email del propietario
-                      {verifyStep === 'done' ? (
-                        <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-brand-300">
-                          <Check size={12} /> Verificado
-                        </span>
-                      ) : null}
-                    </label>
-                    <input
-                      type="email"
-                      className="input bg-white/5 text-white read-only:opacity-70"
-                      value={form.owner_email}
-                      onChange={(event) => updateField('owner_email', event.target.value)}
-                      readOnly={verifyStep === 'done'}
-                      required
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Contraseña del propietario</label>
-                    <input type="password" className="input bg-white/5 text-white" value={form.owner_password} onChange={(event) => updateField('owner_password', event.target.value)} required />
-                    <p className="mt-2 text-xs text-surface-500">Este usuario queda listo para entrar al panel apenas se cree la cuenta.</p>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-2 block text-sm font-medium text-surface-300">Confirmar contraseña</label>
-                    <input
-                      type="password"
-                      className={cn(
-                        'input bg-white/5 text-white',
-                        ownerPasswordMismatch && 'border-red-400/60 focus:border-red-400 focus:ring-red-500/30',
-                      )}
-                      value={form.owner_password_confirm}
-                      onChange={(event) => updateField('owner_password_confirm', event.target.value)}
-                      required
-                    />
-                    <p className={cn('mt-2 text-xs text-surface-500', ownerPasswordMismatch && 'text-red-300')}>
-                      {ownerPasswordMismatch ? 'Debe coincidir exactamente con la contraseña anterior.' : 'Repite la contraseña para evitar errores al crear la cuenta principal.'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-black/10 px-4 py-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Lo que ocurre al enviar</p>
-                  <div className="mt-3 space-y-3 text-sm text-surface-300">
-                    <div className="flex items-center gap-2">
-                      <Check size={16} className="text-brand-300" />
-                      <span>Se crea la cuenta y la sede principal.</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Check size={16} className="text-brand-300" />
-                      <span>Se genera el propietario con acceso inmediato.</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Check size={16} className="text-brand-300" />
-                      <span>Se activa la prueba o el pago online según el plan elegido.</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            {error ? (
-              <div className="rounded-[1.5rem] border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-                {error}
-              </div>
-            ) : null}
-
-            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-white">Listo para crear el gimnasio</p>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-400">
-                    El registro deja al propietario autenticado y lo redirige al panel o al pago, según la configuración del plan.
-                  </p>
-                </div>
-
-                <motion.button
-                  type="submit"
-                  disabled={loading || plansLoading || !activePlan || ownerPasswordMismatch}
-                  whileHover={{ scale: loading || plansLoading || !activePlan || ownerPasswordMismatch ? 1 : 1.01 }}
-                  whileTap={{ scale: loading || plansLoading || !activePlan || ownerPasswordMismatch ? 1 : 0.98 }}
-                  className={cn(
-                    'flex min-w-[280px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 px-6 py-4 font-semibold text-white shadow-xl shadow-brand-500/25',
-                    (loading || plansLoading || !activePlan || ownerPasswordMismatch) && 'cursor-not-allowed opacity-80',
-                  )}
+                <button
+                  type="button"
+                  onClick={() => goTo(1)}
+                  className="flex items-center gap-1.5 text-sm text-surface-600 transition-colors hover:text-surface-400"
                 >
-                  {loading || plansLoading ? (
-                    <Loader2 size={20} className="animate-spin" />
-                  ) : (
-                    <>
-                      {activePlan?.checkout_enabled ? 'Crear gimnasio e ir a pagar' : 'Crear gimnasio y activar prueba'}
-                      <ArrowRight size={18} />
-                    </>
-                  )}
-                </motion.button>
+                  <ArrowLeft size={14} />
+                  Volver a elegir plan
+                </button>
+              </motion.div>
+            )}
 
-                <p className="mt-3 text-center text-xs text-surface-400">
-                  Al registrarte, aceptas nuestros{' '}
-                  <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-surface-600">
-                    Términos y Condiciones
-                  </a>{' '}
-                  y nuestra{' '}
-                  <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-surface-600">
-                    Política de Privacidad
-                  </a>
-                  .
-                </p>
-              </div>
-            </div>
-          </motion.form>
-          )}
+            {/* ── Step 3: Gym + owner data ───────────────────────────── */}
+            {step === 3 && (
+              <motion.div
+                key="step-3"
+                custom={direction}
+                variants={slideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+              >
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-2xl sm:p-7">
+                    <h2 className="mb-5 text-xl font-bold text-white">Datos del gimnasio</h2>
+
+                    <div className="space-y-4">
+                      {/* Gym name */}
+                      <Field label="Nombre del gimnasio" required>
+                        <input
+                          ref={gymNameRef}
+                          className="input bg-white/5 text-white"
+                          value={form.gym_name}
+                          onChange={(e) => updateField('gym_name', e.target.value)}
+                          placeholder="CrossFit Norte"
+                          required
+                        />
+                      </Field>
+
+                      {/* Owner name */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Tu nombre" required>
+                          <input
+                            className="input bg-white/5 text-white"
+                            value={form.owner_first_name}
+                            onChange={(e) => updateField('owner_first_name', e.target.value)}
+                            placeholder="Juan"
+                            required
+                          />
+                        </Field>
+                        <Field label="Apellido" required>
+                          <input
+                            className="input bg-white/5 text-white"
+                            value={form.owner_last_name}
+                            onChange={(e) => updateField('owner_last_name', e.target.value)}
+                            placeholder="Pérez"
+                            required
+                          />
+                        </Field>
+                      </div>
+
+                      {/* Email — verified, readonly */}
+                      <Field label="Tu correo">
+                        <div className="relative">
+                          <input
+                            type="email"
+                            className="input bg-white/5 pr-28 text-white opacity-60"
+                            value={form.owner_email}
+                            readOnly
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+                            <Check size={10} /> Verificado
+                          </span>
+                        </div>
+                      </Field>
+
+                      {/* Password */}
+                      <Field label="Contraseña" required hint="Mínimo 8 caracteres.">
+                        <PasswordInput
+                          value={form.owner_password}
+                          onChange={(v) => updateField('owner_password', v)}
+                          required
+                        />
+                      </Field>
+
+                      {/* Confirm password */}
+                      <Field label="Confirmar contraseña" required>
+                        <PasswordInput
+                          value={form.owner_password_confirm}
+                          onChange={(v) => updateField('owner_password_confirm', v)}
+                          className={passwordMismatch ? 'border-red-400/60 focus:border-red-400' : ''}
+                        />
+                        {passwordMismatch && (
+                          <p className="mt-1.5 text-xs text-red-400">Las contraseñas no coinciden.</p>
+                        )}
+                      </Field>
+
+                      {/* Advanced / regional config */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvanced((s) => !s)}
+                          className="flex w-full items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-4 py-3 text-left text-sm text-surface-400 transition-colors hover:text-surface-200"
+                        >
+                          <ChevronDown
+                            size={15}
+                            className={cn('shrink-0 transition-transform duration-200', showAdvanced && 'rotate-180')}
+                          />
+                          <span className="flex-1">Configuración regional</span>
+                          <span className="text-xs text-surface-600">
+                            {form.city} · {form.currency} · {form.country}
+                          </span>
+                        </button>
+
+                        <AnimatePresence initial={false}>
+                          {showAdvanced && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.2, ease: 'easeInOut' }}
+                              className="overflow-hidden"
+                            >
+                              <div className="space-y-3 rounded-b-xl border border-t-0 border-white/8 bg-white/[0.02] px-4 pb-4 pt-3">
+                                <Field
+                                  label="Slug de la cuenta"
+                                  hint="Identificador interno. Se genera automáticamente desde el nombre."
+                                >
+                                  <input
+                                    className="input bg-white/5 font-mono text-sm text-white"
+                                    value={form.slug}
+                                    onChange={(e) => {
+                                      setSlugEdited(true);
+                                      updateField('slug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
+                                    }}
+                                    placeholder="mi-gimnasio"
+                                  />
+                                </Field>
+                                <Field label="Email del gimnasio" hint="Por defecto igual al tuyo.">
+                                  <input
+                                    type="email"
+                                    className="input bg-white/5 text-white"
+                                    value={form.email}
+                                    onChange={(e) => updateField('email', e.target.value)}
+                                  />
+                                </Field>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <Field label="Ciudad">
+                                    <input className="input bg-white/5 text-white" value={form.city} onChange={(e) => updateField('city', e.target.value)} />
+                                  </Field>
+                                  <Field label="País">
+                                    <input className="input bg-white/5 text-white" value={form.country} onChange={(e) => updateField('country', e.target.value)} />
+                                  </Field>
+                                  <Field label="Zona horaria">
+                                    <input className="input bg-white/5 text-sm text-white" value={form.timezone} onChange={(e) => updateField('timezone', e.target.value)} />
+                                  </Field>
+                                  <Field label="Moneda">
+                                    <input className="input bg-white/5 text-white" value={form.currency} onChange={(e) => updateField('currency', e.target.value)} />
+                                  </Field>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Plan summary pill */}
+                  {activePlan && (
+                    <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-surface-500">Plan seleccionado</p>
+                        <p className="mt-0.5 truncate font-semibold text-white">{activePlan.name}</p>
+                        {activePlan.trial_days > 0 ? (
+                          <p className="mt-0.5 text-xs text-emerald-400">
+                            {activePlan.trial_days} días gratis · sin cobro hasta renovar
+                          </p>
+                        ) : activePlan.checkout_enabled ? (
+                          <p className="mt-0.5 text-xs text-amber-400">Pago requerido al crear la cuenta</p>
+                        ) : (
+                          <p className="mt-0.5 text-xs text-surface-500">Activación manual por el equipo</p>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-bold text-white">
+                          {formatMoney(Number(activePlan.price), activePlan.currency)}
+                          <span className="ml-1 text-xs font-normal text-surface-500">neto/{intervalLabel(activePlan.billing_interval)}</span>
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => goTo(1)}
+                        className="shrink-0 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-surface-400 transition-colors hover:border-white/20 hover:text-surface-200"
+                      >
+                        Cambiar
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Error */}
+                  {error && (
+                    <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                      {error}
+                    </p>
+                  )}
+
+                  {/* Submit */}
+                  <button
+                    type="submit"
+                    disabled={loading || !activePlan || passwordMismatch}
+                    className={cn(
+                      'flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-4 font-semibold text-white shadow-xl transition-all',
+                      loading || !activePlan || passwordMismatch
+                        ? 'cursor-not-allowed bg-surface-700 opacity-60'
+                        : 'bg-gradient-to-r from-brand-500 to-brand-600 shadow-brand-500/20 hover:from-brand-400 hover:to-brand-500',
+                    )}
+                  >
+                    {loading ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <>
+                        {activePlan && activePlan.trial_days > 0
+                          ? `Crear cuenta · ${activePlan.trial_days} días gratis`
+                          : activePlan?.checkout_enabled
+                            ? 'Crear cuenta e ir a pagar'
+                            : 'Crear cuenta'}
+                        <ArrowRight size={18} />
+                      </>
+                    )}
+                  </button>
+
+                  <p className="text-center text-xs text-surface-600">
+                    Al registrarte aceptas los{' '}
+                    <button
+                      type="button"
+                      onClick={() => setLegalModal('terms')}
+                      className="text-surface-400 underline hover:text-surface-200"
+                    >
+                      Términos y Condiciones
+                    </button>
+                    {' '}y la{' '}
+                    <button
+                      type="button"
+                      onClick={() => setLegalModal('privacy')}
+                      className="text-surface-400 underline hover:text-surface-200"
+                    >
+                      Política de Privacidad
+                    </button>.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => goTo(2)}
+                    className="flex items-center gap-1.5 text-sm text-surface-600 transition-colors hover:text-surface-400"
+                  >
+                    <ArrowLeft size={14} />
+                    Volver
+                  </button>
+                </form>
+              </motion.div>
+            )}
+
+          </AnimatePresence>
         </div>
       </div>
+
+      {/* Legal modals */}
+      <Modal
+        open={legalModal === 'terms'}
+        title="Términos y Condiciones"
+        onClose={() => setLegalModal(null)}
+        size="lg"
+      >
+        <iframe src="/terms" className="h-[60vh] w-full rounded-lg border-0" title="Términos y Condiciones" />
+      </Modal>
+      <Modal
+        open={legalModal === 'privacy'}
+        title="Política de Privacidad"
+        onClose={() => setLegalModal(null)}
+        size="lg"
+      >
+        <iframe src="/privacy" className="h-[60vh] w-full rounded-lg border-0" title="Política de Privacidad" />
+      </Modal>
     </div>
   );
 }

@@ -69,7 +69,7 @@ class User(Base):
 
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
-    membership = relationship("Membership", back_populates="user", uselist=False)
+    memberships = relationship("Membership", back_populates="user")
     reservations = relationship("Reservation", back_populates="user")
     checkins = relationship("CheckIn", back_populates="user", foreign_keys="CheckIn.user_id")
     payments = relationship("Payment", back_populates="user")

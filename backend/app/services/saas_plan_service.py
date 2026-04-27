@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
@@ -24,6 +24,27 @@ from app.schemas.billing import (
 )
 
 settings = get_settings()
+SAAS_TAX_RATE_PERCENT = Decimal(str(settings.SAAS_TAX_RATE_PERCENT))
+CLP_QUANTUM = Decimal("1")
+DEFAULT_QUANTUM = Decimal("0.01")
+
+
+def _currency_quantum(currency: str | None) -> Decimal:
+    return CLP_QUANTUM if str(currency or "").upper() == "CLP" else DEFAULT_QUANTUM
+
+
+def round_currency_amount(value: Decimal | int | float | str, currency: str | None) -> Decimal:
+    return Decimal(str(value)).quantize(_currency_quantum(currency), rounding=ROUND_HALF_UP)
+
+
+def calculate_tax_breakdown(amount: Decimal | int | float | str, currency: str | None) -> tuple[Decimal, Decimal, Decimal]:
+    taxable_subtotal = round_currency_amount(amount, currency)
+    tax_amount = round_currency_amount(
+        taxable_subtotal * SAAS_TAX_RATE_PERCENT / Decimal("100"),
+        currency,
+    )
+    total_amount = round_currency_amount(taxable_subtotal + tax_amount, currency)
+    return taxable_subtotal, tax_amount, total_amount
 
 
 @dataclass(frozen=True)
@@ -60,6 +81,20 @@ class SaaSPlanDefinition:
         return (self.price * factor).quantize(Decimal("0.01"))
 
     @property
+    def tax_rate(self) -> Decimal:
+        return SAAS_TAX_RATE_PERCENT
+
+    @property
+    def tax_amount(self) -> Decimal:
+        _, tax_amount, _ = calculate_tax_breakdown(self.price, self.currency)
+        return tax_amount
+
+    @property
+    def total_price(self) -> Decimal:
+        _, _, total_amount = calculate_tax_breakdown(self.price, self.currency)
+        return total_amount
+
+    @property
     def checkout_enabled(self) -> bool:
         stripe_ok = bool(self.stripe_price_id and stripe_service.is_configured())
         fintoc_ok = bool(self.fintoc_enabled and fintoc_service.is_configured())
@@ -86,6 +121,9 @@ class SaaSPlanDefinition:
             currency=self.currency,
             price=self.price,
             discount_pct=self.discount_pct,
+            tax_rate=self.tax_rate,
+            tax_amount=self.tax_amount,
+            total_price=self.total_price,
             billing_interval=self.billing_interval,
             trial_days=self.trial_days,
             max_members=self.max_members,
@@ -106,6 +144,9 @@ class SaaSPlanDefinition:
             currency=self.currency,
             price=self.price,
             discount_pct=self.discount_pct,
+            tax_rate=self.tax_rate,
+            tax_amount=self.tax_amount,
+            total_price=self.total_price,
             billing_interval=self.billing_interval,
             trial_days=self.trial_days,
             max_members=self.max_members,

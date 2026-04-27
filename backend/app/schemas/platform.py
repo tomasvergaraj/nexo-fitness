@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -76,6 +76,14 @@ class MembershipResponse(BaseModel):
     frozen_until: Optional[date] = None
     notes: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
+    previous_membership_id: Optional[UUID] = None
+    sale_source: Optional[str] = None
+    payment_id: Optional[UUID] = None
+    payment_amount: Optional[Decimal] = None
+    payment_currency: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_status: Optional[str] = None
+    paid_at: Optional[datetime] = None
     created_at: datetime
     user_name: Optional[str] = None
     plan_name: Optional[str] = None
@@ -107,6 +115,11 @@ class ManualPaymentResponse(BaseModel):
     description: Optional[str] = None
     paid_at: Optional[datetime] = None
     created_at: datetime
+    plan_id_snapshot: Optional[UUID] = None
+    plan_name_snapshot: Optional[str] = None
+    membership_starts_at_snapshot: Optional[date] = None
+    membership_expires_at_snapshot: Optional[date] = None
+    membership_status_snapshot: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -115,6 +128,9 @@ class MembershipManualSaleResponse(BaseModel):
     membership: MembershipResponse
     payment: ManualPaymentResponse
     replaced_membership_ids: List[UUID] = Field(default_factory=list)
+    effective_membership: Optional[MembershipResponse] = None
+    scheduled_membership: Optional[MembershipResponse] = None
+    scheduled: bool = False
 
 
 class PromoCodeCreate(BaseModel):
@@ -304,10 +320,96 @@ class SupportInteractionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FeedbackSubmissionResponse(BaseModel):
+    id: UUID
+    category: str = Field(pattern=r"^(suggestion|improvement|problem|other)$")
+    message: str
+    image_url: Optional[str] = None
+    created_at: datetime
+    created_by: Optional[UUID] = None
+    created_by_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PlatformFeedbackSubmissionResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    tenant_name: str
+    tenant_slug: str
+    category: str = Field(pattern=r"^(suggestion|improvement|problem|other)$")
+    message: str
+    image_url: Optional[str] = None
+    created_at: datetime
+    created_by: Optional[UUID] = None
+    created_by_name: Optional[str] = None
+    created_by_email: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
 class MobileSupportInteractionCreateRequest(BaseModel):
     channel: str = Field(default="whatsapp", pattern=r"^(whatsapp|email|phone|in_person)$")
     subject: str = Field(min_length=1, max_length=300)
     notes: Optional[str] = None
+
+
+class ProgramScheduleFieldOverridePayload(BaseModel):
+    mode: Literal["inherit", "custom"]
+    value: Any = None
+
+
+class ProgramScheduleDayConfigPayload(BaseModel):
+    branch_id: Optional[ProgramScheduleFieldOverridePayload] = None
+    instructor_id: Optional[ProgramScheduleFieldOverridePayload] = None
+    modality: Optional[ProgramScheduleFieldOverridePayload] = None
+    max_capacity: Optional[ProgramScheduleFieldOverridePayload] = None
+    online_link: Optional[ProgramScheduleFieldOverridePayload] = None
+    cancellation_deadline_hours: Optional[ProgramScheduleFieldOverridePayload] = None
+    restricted_plan_id: Optional[ProgramScheduleFieldOverridePayload] = None
+    color: Optional[ProgramScheduleFieldOverridePayload] = None
+    class_type: Optional[ProgramScheduleFieldOverridePayload] = None
+
+    @model_validator(mode="before")
+    def normalize_legacy_shape(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        normalized: dict[str, Any] = {}
+        for field_name in (
+            "branch_id",
+            "instructor_id",
+            "modality",
+            "max_capacity",
+            "online_link",
+            "cancellation_deadline_hours",
+            "restricted_plan_id",
+            "color",
+            "class_type",
+        ):
+            if field_name not in value:
+                continue
+
+            raw_field = value[field_name]
+            if isinstance(raw_field, dict) and raw_field.get("mode") in {"inherit", "custom"}:
+                normalized[field_name] = {
+                    "mode": raw_field.get("mode"),
+                    "value": raw_field.get("value"),
+                }
+            else:
+                normalized[field_name] = {
+                    "mode": "custom",
+                    "value": raw_field,
+                }
+
+        return normalized
+
+
+class ProgramScheduleDayPayload(BaseModel):
+    day: str
+    focus: str = ""
+    exercises: list[Any] = Field(default_factory=list)
+    class_config: Optional[ProgramScheduleDayConfigPayload] = None
 
 
 class TrainingProgramCreateRequest(BaseModel):
@@ -316,7 +418,7 @@ class TrainingProgramCreateRequest(BaseModel):
     trainer_id: Optional[UUID] = None
     program_type: Optional[str] = None
     duration_weeks: int = Field(default=0, ge=0)  # 0 = indefinido (sin límite)
-    schedule: list[dict[str, Any]] = Field(default_factory=list)
+    schedule: list[ProgramScheduleDayPayload] = Field(default_factory=list)
     is_active: bool = True
 
 
@@ -326,7 +428,7 @@ class TrainingProgramUpdateRequest(BaseModel):
     trainer_id: Optional[UUID] = None
     program_type: Optional[str] = None
     duration_weeks: Optional[int] = Field(default=None, ge=0)  # 0 = indefinido (sin límite)
-    schedule: Optional[list[dict[str, Any]]] = None
+    schedule: Optional[list[ProgramScheduleDayPayload]] = None
     is_active: Optional[bool] = None
 
 
@@ -574,7 +676,7 @@ class TenantSettingsResponse(BaseModel):
 
 
 class PaymentProviderAccountCreateRequest(BaseModel):
-    provider: str = Field(pattern=r"^(stripe|mercadopago|webpay|fintoc|manual)$")
+    provider: str = Field(pattern=r"^(stripe|mercadopago|webpay|fintoc|tuu|manual)$")
     status: str = Field(default="pending", pattern=r"^(pending|connected|disabled)$")
     account_label: Optional[str] = None
     public_identifier: Optional[str] = None
@@ -744,6 +846,22 @@ class MobilePaymentHistoryItemResponse(BaseModel):
     receipt_url: Optional[str] = None
     external_id: Optional[str] = None
     plan_name: Optional[str] = None
+    plan_id_snapshot: Optional[UUID] = None
+    plan_name_snapshot: Optional[str] = None
+    membership_starts_at_snapshot: Optional[date] = None
+    membership_expires_at_snapshot: Optional[date] = None
+    membership_status_snapshot: Optional[str] = None
+
+
+class MobileWalletMembershipSummaryResponse(BaseModel):
+    membership_id: UUID
+    plan_id: UUID
+    plan_name: Optional[str] = None
+    membership_status: str
+    starts_at: date
+    expires_at: Optional[date] = None
+    auto_renew: bool
+    sale_source: Optional[str] = None
 
 
 class MobileMembershipWalletResponse(BaseModel):
@@ -753,8 +871,11 @@ class MobileMembershipWalletResponse(BaseModel):
     plan_id: Optional[UUID] = None
     plan_name: Optional[str] = None
     membership_status: Optional[str] = None
+    starts_at: Optional[date] = None
     expires_at: Optional[date] = None
     auto_renew: Optional[bool] = None
+    current_membership: Optional[MobileWalletMembershipSummaryResponse] = None
+    next_membership: Optional[MobileWalletMembershipSummaryResponse] = None
     next_class: Optional[dict[str, Any]] = None
     next_program_class: Optional[dict[str, Any]] = None
     qr_payload: Optional[str] = None

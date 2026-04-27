@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   Dumbbell,
   LibraryBig,
   Link2Off,
@@ -12,20 +13,29 @@ import {
   Plus,
   Repeat2,
   Search,
+  Settings2,
   Trash2,
   Users,
   Wand2,
   X,
 } from 'lucide-react';
+import ClassColorPicker from '@/components/ui/ClassColorPicker';
 import Modal from '@/components/ui/Modal';
-import { branchesApi, classesApi, programsApi, staffApi } from '@/services/api';
-import { cn, getApiError } from '@/utils';
+import { branchesApi, classesApi, plansApi, programBookingsApi, programsApi, staffApi } from '@/services/api';
+import { cn, formatDateTime, getApiError } from '@/utils';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import type {
   GymClass,
   PaginatedResponse,
+  Plan,
+  ProgramClassModality,
+  ProgramBooking,
   ProgramExerciseLibraryItem,
+  ProgramScheduleConfigMode,
   ProgramScheduleDay,
+  ProgramScheduleDayConfig,
+  ProgramScheduleDayConfigField,
+  ProgramScheduleDayConfigValueMap,
   ProgramScheduleExercise,
   TrainingProgram,
 } from '@/types';
@@ -42,6 +52,37 @@ const EXERCISE_GROUP_SUGGESTIONS = [
   'Cardio',
   'Movilidad',
 ];
+const PROGRAM_CLASS_MODALITY_OPTIONS = [
+  { value: 'in_person', label: 'Presencial', description: 'Solo en el gimnasio.' },
+  { value: 'online', label: 'Online', description: 'Con enlace para conectarse.' },
+  { value: 'hybrid', label: 'Híbrida', description: 'Asistencia presencial y online.' },
+] as const;
+const PROGRAM_CLASS_CONFIG_FIELDS = [
+  'branch_id',
+  'instructor_id',
+  'modality',
+  'max_capacity',
+  'online_link',
+  'cancellation_deadline_hours',
+  'restricted_plan_id',
+  'color',
+  'class_type',
+] as const satisfies ReadonlyArray<keyof ProgramScheduleDayConfig>;
+const PROGRAM_CLASS_CONFIG_DEFAULTS: ProgramScheduleDayConfigValueMap = {
+  branch_id: null,
+  instructor_id: null,
+  modality: 'in_person',
+  max_capacity: 20,
+  online_link: '',
+  cancellation_deadline_hours: 2,
+  restricted_plan_id: null,
+  color: '#06b6d4',
+  class_type: '',
+};
+const PROGRAM_CLASS_CONFIG_INHERITANCE_COPY = 'Usará el valor definido en Generar clases.';
+
+type ProgramScheduleConfigFieldKey = typeof PROGRAM_CLASS_CONFIG_FIELDS[number];
+type ProgramScheduleFieldOverride<Key extends ProgramScheduleConfigFieldKey> = ProgramScheduleDayConfigField<Key>;
 
 type ProgramForm = {
   id?: string;
@@ -64,11 +105,23 @@ type GenerateForm = {
   weeks: string;
   class_time: string;
   duration_minutes: string;
+  modality: ProgramClassModality;
   branch_id: string;
   instructor_id: string;
   max_capacity: string;
+  online_link: string;
+  cancellation_deadline_hours: string;
+  restricted_plan_id: string;
   color: string;
   class_type: string;
+};
+
+type ProgramBookingGroup = {
+  recurrenceGroupId: string;
+  bookings: ProgramBooking[];
+  classes: GymClass[];
+  activeCount: number;
+  cancelledCount: number;
 };
 
 function createEmptyGenerateForm(): GenerateForm {
@@ -78,9 +131,13 @@ function createEmptyGenerateForm(): GenerateForm {
     weeks: '4',
     class_time: '09:00',
     duration_minutes: '60',
+    modality: 'in_person',
     branch_id: '',
     instructor_id: '',
     max_capacity: '20',
+    online_link: '',
+    cancellation_deadline_hours: '2',
+    restricted_plan_id: '',
     color: '#06b6d4',
     class_type: '',
   };
@@ -108,6 +165,115 @@ function createEmptyForm(trainerId = ''): ProgramForm {
     ],
     is_active: true,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isProgramClassModality(value: unknown): value is ProgramClassModality {
+  return value === 'in_person' || value === 'online' || value === 'hybrid';
+}
+
+function normalizeNullableStringOverride<Key extends ProgramScheduleConfigFieldKey>(
+  rawValue: unknown,
+): ProgramScheduleFieldOverride<Key> | null {
+  if (isRecord(rawValue) && (rawValue.mode === 'inherit' || rawValue.mode === 'custom')) {
+    if (rawValue.mode === 'inherit') {
+      return { mode: 'inherit' } as ProgramScheduleFieldOverride<Key>;
+    }
+
+    if (typeof rawValue.value === 'string' || rawValue.value === null || rawValue.value === undefined) {
+      return { mode: 'custom', value: (rawValue.value ?? null) as ProgramScheduleDayConfigValueMap[Key] };
+    }
+
+    return null;
+  }
+
+  if (typeof rawValue === 'string' || rawValue === null) {
+    return { mode: 'custom', value: rawValue as ProgramScheduleDayConfigValueMap[Key] };
+  }
+
+  return null;
+}
+
+function normalizeNumberOverride<Key extends ProgramScheduleConfigFieldKey>(
+  rawValue: unknown,
+): ProgramScheduleFieldOverride<Key> | null {
+  if (isRecord(rawValue) && (rawValue.mode === 'inherit' || rawValue.mode === 'custom')) {
+    if (rawValue.mode === 'inherit') {
+      return { mode: 'inherit' } as ProgramScheduleFieldOverride<Key>;
+    }
+
+    if (typeof rawValue.value === 'number' && Number.isFinite(rawValue.value)) {
+      return { mode: 'custom', value: rawValue.value as ProgramScheduleDayConfigValueMap[Key] };
+    }
+
+    return null;
+  }
+
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return { mode: 'custom', value: rawValue as ProgramScheduleDayConfigValueMap[Key] };
+  }
+
+  return null;
+}
+
+function normalizeModalityOverride(
+  rawValue: unknown,
+): ProgramScheduleFieldOverride<'modality'> | null {
+  if (isRecord(rawValue) && (rawValue.mode === 'inherit' || rawValue.mode === 'custom')) {
+    if (rawValue.mode === 'inherit') {
+      return { mode: 'inherit' };
+    }
+
+    if (isProgramClassModality(rawValue.value)) {
+      return { mode: 'custom', value: rawValue.value };
+    }
+
+    return null;
+  }
+
+  if (isProgramClassModality(rawValue)) {
+    return { mode: 'custom', value: rawValue };
+  }
+
+  return null;
+}
+
+function hasCustomClassConfig(config?: ProgramScheduleDayConfig | null): boolean {
+  if (!config) return false;
+  return PROGRAM_CLASS_CONFIG_FIELDS.some((field) => config[field]?.mode === 'custom');
+}
+
+function getClassConfigFieldMode(
+  config: ProgramScheduleDayConfig | null | undefined,
+  field: ProgramScheduleConfigFieldKey,
+): ProgramScheduleConfigMode {
+  return config?.[field]?.mode ?? 'inherit';
+}
+
+function getClassConfigFieldValue<Key extends ProgramScheduleConfigFieldKey>(
+  config: ProgramScheduleDayConfig | null | undefined,
+  field: Key,
+): ProgramScheduleDayConfigValueMap[Key] | undefined {
+  const override = config?.[field];
+  if (override?.mode !== 'custom') {
+    return undefined;
+  }
+
+  return override.value as ProgramScheduleDayConfigValueMap[Key] | undefined;
+}
+
+function getDayConfigEffectiveCustomModality(
+  config: ProgramScheduleDayConfig | null | undefined,
+): ProgramClassModality | 'inherit' {
+  const modalityOverride = config?.modality;
+  if (modalityOverride?.mode === 'custom' && isProgramClassModality(modalityOverride.value)) {
+    return modalityOverride.value;
+  }
+
+  return 'inherit';
 }
 
 function normalizeExerciseEntry(rawValue: unknown, index: number): ProgramScheduleExercise | null {
@@ -143,6 +309,37 @@ function normalizeExerciseEntry(rawValue: unknown, index: number): ProgramSchedu
   };
 }
 
+function normalizeScheduleDayConfig(rawValue: unknown): ProgramScheduleDayConfig | null {
+  if (!isRecord(rawValue)) {
+    return null;
+  }
+
+  const value = rawValue;
+  const config: ProgramScheduleDayConfig = {};
+
+  const branch = normalizeNullableStringOverride<'branch_id'>(value.branch_id);
+  const instructor = normalizeNullableStringOverride<'instructor_id'>(value.instructor_id);
+  const modality = normalizeModalityOverride(value.modality);
+  const maxCapacity = normalizeNumberOverride<'max_capacity'>(value.max_capacity);
+  const onlineLink = normalizeNullableStringOverride<'online_link'>(value.online_link);
+  const cancellationDeadline = normalizeNumberOverride<'cancellation_deadline_hours'>(value.cancellation_deadline_hours);
+  const restrictedPlan = normalizeNullableStringOverride<'restricted_plan_id'>(value.restricted_plan_id);
+  const color = normalizeNullableStringOverride<'color'>(value.color);
+  const classType = normalizeNullableStringOverride<'class_type'>(value.class_type);
+
+  if (branch) config.branch_id = branch;
+  if (instructor) config.instructor_id = instructor;
+  if (modality) config.modality = modality;
+  if (maxCapacity) config.max_capacity = maxCapacity;
+  if (onlineLink) config.online_link = onlineLink;
+  if (cancellationDeadline) config.cancellation_deadline_hours = cancellationDeadline;
+  if (restrictedPlan) config.restricted_plan_id = restrictedPlan;
+  if (color) config.color = color;
+  if (classType) config.class_type = classType;
+
+  return Object.keys(config).length ? config : null;
+}
+
 function normalizeScheduleDay(rawValue: unknown, index: number): ProgramScheduleDay {
   if (!rawValue || typeof rawValue !== 'object') {
     return createEmptyScheduleDay(WEEK_DAYS[index] ?? `Día ${index + 1}`);
@@ -162,6 +359,7 @@ function normalizeScheduleDay(rawValue: unknown, index: number): ProgramSchedule
     day,
     focus: typeof value.focus === 'string' ? value.focus : '',
     exercises,
+    class_config: normalizeScheduleDayConfig(value.class_config),
   };
 }
 
@@ -385,17 +583,122 @@ function ExerciseLibraryManager({
   );
 }
 
+function ClassConfigModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: ProgramScheduleConfigMode;
+  onChange: (nextMode: ProgramScheduleConfigMode) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-full border border-surface-200 bg-surface-50 p-1 dark:border-surface-700 dark:bg-surface-900">
+      {([
+        { value: 'inherit', label: 'Heredar' },
+        { value: 'custom', label: 'Definir' },
+      ] as const).map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={cn(
+            'rounded-full px-3 py-1.5 text-xs font-semibold transition-colors',
+            mode === option.value
+              ? 'bg-white text-brand-700 shadow-sm dark:bg-surface-800 dark:text-brand-300'
+              : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProgramClassModalitySelector({
+  value,
+  onChange,
+}: {
+  value: ProgramClassModality;
+  onChange: (nextValue: ProgramClassModality) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {PROGRAM_CLASS_MODALITY_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={cn(
+            'rounded-2xl border px-4 py-4 text-left transition-colors',
+            value === option.value
+              ? 'border-brand-300 bg-brand-50 dark:border-brand-700 dark:bg-brand-950/20'
+              : 'border-surface-200 bg-white hover:border-surface-300 dark:border-surface-800 dark:bg-surface-950/20',
+          )}
+        >
+          <p className="text-sm font-semibold text-surface-900 dark:text-white">{option.label}</p>
+          <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">{option.description}</p>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProgramDayClassConfigField({
+  label,
+  helper,
+  mode,
+  onModeChange,
+  children,
+  className,
+}: {
+  label: string;
+  helper?: string;
+  mode: ProgramScheduleConfigMode;
+  onModeChange: (nextMode: ProgramScheduleConfigMode) => void;
+  children?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('rounded-2xl border border-surface-200 bg-surface-50/70 p-4 dark:border-surface-800 dark:bg-surface-950/30', className)}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-xl">
+          <label className="block text-sm font-medium text-surface-700 dark:text-surface-300">{label}</label>
+          {helper ? (
+            <p className="mt-1.5 text-xs leading-5 text-surface-500 dark:text-surface-400">{helper}</p>
+          ) : null}
+        </div>
+        <ClassConfigModeToggle mode={mode} onChange={onModeChange} />
+      </div>
+
+      {mode === 'custom' ? (
+        <div className="mt-4">{children}</div>
+      ) : (
+        <p className="mt-4 text-xs leading-5 text-surface-500 dark:text-surface-400">
+          {PROGRAM_CLASS_CONFIG_INHERITANCE_COPY}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ScheduleBuilder({
   value,
   onChange,
   selectedDay,
   onSelectDay,
+  branches = [],
+  instructors = [],
+  plans = [],
 }: {
   value: ProgramScheduleDay[];
   onChange: (schedule: ProgramScheduleDay[]) => void;
   selectedDay: string | null;
   onSelectDay: (day: string | null) => void;
+  branches?: { id: string; name: string }[];
+  instructors?: { id: string; full_name?: string; name?: string }[];
+  plans?: Plan[];
 }) {
+  const [expandedConfigDay, setExpandedConfigDay] = useState<string | null>(null);
   const activeDays = new Set(value.map((item) => item.day));
 
   function toggleDay(day: string) {
@@ -404,6 +707,9 @@ function ScheduleBuilder({
       onChange(nextValue);
       if (selectedDay === day) {
         onSelectDay(nextValue[0]?.day ?? null);
+      }
+      if (expandedConfigDay === day) {
+        setExpandedConfigDay(null);
       }
       return;
     }
@@ -418,6 +724,55 @@ function ScheduleBuilder({
 
   function updateFocus(day: string, focus: string) {
     onChange(value.map((item) => (item.day === day ? { ...item, focus } : item)));
+  }
+
+  function updateClassConfig(day: string, updater: (current: ProgramScheduleDayConfig) => ProgramScheduleDayConfig) {
+    onChange(value.map((item) => {
+      if (item.day !== day) return item;
+      const nextConfig = updater(item.class_config ?? {});
+      return { ...item, class_config: Object.keys(nextConfig).length ? nextConfig : null };
+    }));
+  }
+
+  function setClassConfigMode<Key extends ProgramScheduleConfigFieldKey>(
+    day: string,
+    field: Key,
+    mode: ProgramScheduleConfigMode,
+  ) {
+    updateClassConfig(day, (current) => {
+      if (mode === 'inherit') {
+        return {
+          ...current,
+          [field]: { mode: 'inherit' },
+        };
+      }
+
+      const currentValue = current[field]?.mode === 'custom'
+        ? current[field]?.value
+        : undefined;
+
+      return {
+        ...current,
+        [field]: {
+          mode: 'custom',
+          value: (currentValue ?? PROGRAM_CLASS_CONFIG_DEFAULTS[field]) as ProgramScheduleDayConfigValueMap[Key],
+        },
+      };
+    });
+  }
+
+  function setClassConfigValue<Key extends ProgramScheduleConfigFieldKey>(
+    day: string,
+    field: Key,
+    nextValue: ProgramScheduleDayConfigValueMap[Key],
+  ) {
+    updateClassConfig(day, (current) => ({
+      ...current,
+      [field]: {
+        mode: 'custom',
+        value: nextValue,
+      },
+    }));
   }
 
   return (
@@ -475,19 +830,6 @@ function ScheduleBuilder({
 
                 <button
                   type="button"
-                  onClick={() => onSelectDay(item.day)}
-                  className={cn(
-                    'rounded-2xl border px-4 py-2 text-sm font-medium transition-colors',
-                    selectedDay === item.day
-                      ? 'border-brand-400 bg-white text-brand-700 dark:border-brand-700 dark:bg-surface-900 dark:text-brand-300'
-                      : 'border-surface-200 bg-white text-surface-500 hover:border-surface-300 dark:border-surface-700 dark:bg-surface-900 dark:text-surface-300',
-                  )}
-                >
-                  {item.exercises.length ? `${item.exercises.length} ejercicios` : 'Planificar ejercicios'}
-                </button>
-
-                <button
-                  type="button"
                   onClick={() => toggleDay(item.day)}
                   className="self-start rounded-xl p-2 text-surface-400 transition-colors hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/30"
                   aria-label={`Quitar ${item.day}`}
@@ -512,6 +854,195 @@ function ScheduleBuilder({
                     +{item.exercises.length - 4} más
                   </span>
                 ) : null}
+              </div>
+
+              {/* Class config expander */}
+              <div className="mt-3 border-t border-surface-100 pt-3 dark:border-surface-800">
+                <button
+                  type="button"
+                  onClick={() => setExpandedConfigDay(expandedConfigDay === item.day ? null : item.day)}
+                  className="flex w-full items-center gap-2 text-xs font-medium text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200"
+                >
+                  <Settings2 size={13} />
+                  Configuración de clase
+                  {hasCustomClassConfig(item.class_config) && (
+                    <span className="rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold text-brand-700 dark:bg-brand-950/60 dark:text-brand-300">
+                      personalizada
+                    </span>
+                  )}
+                  <ChevronDown
+                    size={14}
+                    className={cn('ml-auto transition-transform', expandedConfigDay === item.day && 'rotate-180')}
+                  />
+                </button>
+
+                {expandedConfigDay === item.day ? (() => {
+                  const classConfig = item.class_config;
+                  const effectiveModality = getDayConfigEffectiveCustomModality(classConfig);
+                  const shouldShowOnlineLinkField = effectiveModality !== 'in_person';
+
+                  return (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-2xl border border-brand-200 bg-brand-50/70 px-4 py-3 text-sm leading-6 text-brand-700 dark:border-brand-900/50 dark:bg-brand-950/20 dark:text-brand-300">
+                        Si dejas un ajuste en modo heredar, este día usará los valores que definas después en Generar clases.
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <ProgramDayClassConfigField
+                          label="Modalidad"
+                          helper="Elige cómo se impartirá esta clase."
+                          mode={getClassConfigFieldMode(classConfig, 'modality')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'modality', nextMode)}
+                          className="xl:col-span-2"
+                        >
+                          <ProgramClassModalitySelector
+                            value={getClassConfigFieldValue(classConfig, 'modality') ?? PROGRAM_CLASS_CONFIG_DEFAULTS.modality}
+                            onChange={(nextValue) => setClassConfigValue(item.day, 'modality', nextValue)}
+                          />
+                        </ProgramDayClassConfigField>
+
+                        <ProgramDayClassConfigField
+                          label="Sede"
+                          helper={effectiveModality === 'online' ? 'Opcional para clases online' : 'Obligatoria para clases presenciales e híbridas'}
+                          mode={getClassConfigFieldMode(classConfig, 'branch_id')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'branch_id', nextMode)}
+                        >
+                          <select
+                            className="input"
+                            value={getClassConfigFieldValue(classConfig, 'branch_id') ?? ''}
+                            onChange={(event) => setClassConfigValue(item.day, 'branch_id', event.target.value || null)}
+                          >
+                            <option value="">Sin sede física</option>
+                            {branches.map((branch) => (
+                              <option key={branch.id} value={branch.id}>{branch.name}</option>
+                            ))}
+                          </select>
+                        </ProgramDayClassConfigField>
+
+                        <ProgramDayClassConfigField
+                          label="Instructor"
+                          mode={getClassConfigFieldMode(classConfig, 'instructor_id')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'instructor_id', nextMode)}
+                        >
+                          <select
+                            className="input"
+                            value={getClassConfigFieldValue(classConfig, 'instructor_id') ?? ''}
+                            onChange={(event) => setClassConfigValue(item.day, 'instructor_id', event.target.value || null)}
+                          >
+                            <option value="">Sin instructor asignado</option>
+                            {instructors.map((instructor) => (
+                              <option key={instructor.id} value={instructor.id}>
+                                {instructor.full_name ?? instructor.name ?? instructor.id}
+                              </option>
+                            ))}
+                          </select>
+                        </ProgramDayClassConfigField>
+
+                        <ProgramDayClassConfigField
+                          label="Capacidad"
+                          mode={getClassConfigFieldMode(classConfig, 'max_capacity')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'max_capacity', nextMode)}
+                        >
+                          <input
+                            type="number"
+                            min={1}
+                            className="input"
+                            value={String(getClassConfigFieldValue(classConfig, 'max_capacity') ?? PROGRAM_CLASS_CONFIG_DEFAULTS.max_capacity)}
+                            onChange={(event) => setClassConfigValue(item.day, 'max_capacity', Math.max(1, Number(event.target.value) || 1))}
+                          />
+                        </ProgramDayClassConfigField>
+
+                        <ProgramDayClassConfigField
+                          label="Color"
+                          mode={getClassConfigFieldMode(classConfig, 'color')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'color', nextMode)}
+                          className="xl:col-span-2"
+                        >
+                          <ClassColorPicker
+                            hideLabel
+                            inputId={`program-day-${item.day}-color`}
+                            value={getClassConfigFieldValue(classConfig, 'color') ?? '#06b6d4'}
+                            onChange={(nextColor) => setClassConfigValue(item.day, 'color', nextColor)}
+                          />
+                        </ProgramDayClassConfigField>
+
+                        {shouldShowOnlineLinkField ? (
+                          <ProgramDayClassConfigField
+                            label="Enlace para la clase"
+                            helper={effectiveModality === 'inherit'
+                              ? 'Disponible cuando la modalidad heredada en Generar clases sea online o híbrida.'
+                              : 'Comparte el enlace que usarán los clientes para conectarse.'}
+                            mode={getClassConfigFieldMode(classConfig, 'online_link')}
+                            onModeChange={(nextMode) => setClassConfigMode(item.day, 'online_link', nextMode)}
+                            className="xl:col-span-2"
+                          >
+                            <input
+                              type="url"
+                              className="input"
+                              value={getClassConfigFieldValue(classConfig, 'online_link') ?? ''}
+                              onChange={(event) => setClassConfigValue(item.day, 'online_link', event.target.value)}
+                              placeholder="https://zoom.us/... o enlace de Meet"
+                            />
+                          </ProgramDayClassConfigField>
+                        ) : null}
+
+                        <ProgramDayClassConfigField
+                          label="Plan restringido"
+                          helper="Solo los clientes con este plan podrán ver y reservar esta clase."
+                          mode={getClassConfigFieldMode(classConfig, 'restricted_plan_id')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'restricted_plan_id', nextMode)}
+                        >
+                          <select
+                            className="input"
+                            value={getClassConfigFieldValue(classConfig, 'restricted_plan_id') ?? ''}
+                            onChange={(event) => setClassConfigValue(item.day, 'restricted_plan_id', event.target.value || null)}
+                          >
+                            <option value="">Visible para todos</option>
+                            {plans.map((plan) => (
+                              <option key={plan.id} value={plan.id}>{plan.name}</option>
+                            ))}
+                          </select>
+                          {!plans.length ? (
+                            <p className="mt-2 text-xs text-surface-400">Aún no hay planes disponibles para restringir esta clase.</p>
+                          ) : null}
+                        </ProgramDayClassConfigField>
+
+                        <ProgramDayClassConfigField
+                          label="Categoría"
+                          mode={getClassConfigFieldMode(classConfig, 'class_type')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'class_type', nextMode)}
+                        >
+                          <input
+                            type="text"
+                            className="input"
+                            value={getClassConfigFieldValue(classConfig, 'class_type') ?? ''}
+                            onChange={(event) => setClassConfigValue(item.day, 'class_type', event.target.value)}
+                            placeholder="Ej: funcional, yoga, fuerza..."
+                          />
+                        </ProgramDayClassConfigField>
+
+                        <ProgramDayClassConfigField
+                          label="Anticipación mínima para cancelar"
+                          helper="Horas antes del inicio en las que el cliente aún puede cancelar. 0 = se puede cancelar hasta el inicio."
+                          mode={getClassConfigFieldMode(classConfig, 'cancellation_deadline_hours')}
+                          onModeChange={(nextMode) => setClassConfigMode(item.day, 'cancellation_deadline_hours', nextMode)}
+                          className="xl:col-span-2"
+                        >
+                          <input
+                            type="number"
+                            min={0}
+                            className="input"
+                            value={String(
+                              getClassConfigFieldValue(classConfig, 'cancellation_deadline_hours')
+                              ?? PROGRAM_CLASS_CONFIG_DEFAULTS.cancellation_deadline_hours,
+                            )}
+                            onChange={(event) => setClassConfigValue(item.day, 'cancellation_deadline_hours', Math.max(0, Number(event.target.value) || 0))}
+                          />
+                        </ProgramDayClassConfigField>
+                      </div>
+                    </div>
+                  );
+                })() : null}
               </div>
             </div>
           ))}
@@ -589,6 +1120,7 @@ export default function ProgramsPage() {
   const [selectedProgramForModal, setSelectedProgramForModal] = useState<TrainingProgram | null>(null);
   const [showClassesModal, setShowClassesModal] = useState(false);
   const [showEnrollmentsModal, setShowEnrollmentsModal] = useState(false);
+  const [showBookingsModal, setShowBookingsModal] = useState(false);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [generateForm, setGenerateForm] = useState<GenerateForm>(createEmptyGenerateForm());
 
@@ -618,7 +1150,7 @@ export default function ProgramsPage() {
       const response = await staffApi.list();
       return response.data;
     },
-    enabled: showModal,
+    enabled: showModal || showGenerateModal,
   });
 
   const trainers = staffList.filter((staffMember) => (
@@ -745,10 +1277,20 @@ export default function ProgramsPage() {
     onSuccess: (_, programId) => {
       toast.success('Programa eliminado');
       queryClient.invalidateQueries({ queryKey: ['programs'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['program-classes', programId] });
       setProgramToDelete(null);
       if (form.id === programId) {
         setShowModal(false);
         resetEditorState(defaultOwnerTrainerId);
+      }
+      if (selectedProgramForModal?.id === programId) {
+        setShowClassesModal(false);
+        setShowEnrollmentsModal(false);
+        setShowBookingsModal(false);
+        setShowGenerateModal(false);
+        setSelectedProgramForModal(null);
       }
     },
     onError: (error: unknown) => {
@@ -762,7 +1304,7 @@ export default function ProgramsPage() {
       const response = await programsApi.listClasses(selectedProgramForModal!.id);
       return response.data;
     },
-    enabled: showClassesModal && Boolean(selectedProgramForModal),
+    enabled: (showClassesModal || showBookingsModal) && Boolean(selectedProgramForModal),
   });
 
   const { data: programEnrollments = [], isLoading: isProgramEnrollmentsLoading } = useQuery<{
@@ -776,13 +1318,34 @@ export default function ProgramsPage() {
     enabled: showEnrollmentsModal && Boolean(selectedProgramForModal),
   });
 
+  const { data: programBookings = [], isLoading: isProgramBookingsLoading } = useQuery<ProgramBooking[]>({
+    queryKey: ['program-bookings', selectedProgramForModal?.id],
+    queryFn: async () => {
+      const response = await programBookingsApi.list({
+        status: 'all',
+        program_id: selectedProgramForModal!.id,
+      });
+      return response.data;
+    },
+    enabled: showBookingsModal && Boolean(selectedProgramForModal),
+  });
+
   const { data: branches = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ['branches'],
     queryFn: async () => {
       const response = await branchesApi.list();
       return response.data;
     },
-    enabled: showGenerateModal,
+    enabled: showModal || showGenerateModal,
+  });
+
+  const { data: plans = [] } = useQuery<Plan[]>({
+    queryKey: ['plans'],
+    queryFn: async () => {
+      const response = await plansApi.list();
+      return response.data?.items ?? response.data ?? [];
+    },
+    enabled: showModal || showGenerateModal,
   });
 
   const generateClassesMutation = useMutation({
@@ -792,9 +1355,13 @@ export default function ProgramsPage() {
         weeks: Number(generateForm.weeks) || 4,
         class_time: generateForm.class_time,
         duration_minutes: Number(generateForm.duration_minutes) || 60,
+        modality: generateForm.modality,
         branch_id: generateForm.branch_id || null,
         instructor_id: generateForm.instructor_id || null,
         max_capacity: Number(generateForm.max_capacity) || 20,
+        online_link: generateForm.online_link || null,
+        cancellation_deadline_hours: Math.max(0, Number(generateForm.cancellation_deadline_hours) || 0),
+        restricted_plan_id: generateForm.restricted_plan_id || null,
         // Pass browser's UTC offset so backend converts local time → UTC correctly
         utc_offset_minutes: new Date().getTimezoneOffset(),
         color: generateForm.color || null,
@@ -894,6 +1461,57 @@ export default function ProgramsPage() {
   const totalWeeks = programs.reduce((sum, program) => sum + (program.duration_weeks || 0), 0);
   const indefinitePrograms = programs.filter((program) => !program.duration_weeks).length;
   const totalEnrollments = programs.reduce((sum, program) => sum + (program.enrolled_count ?? 0), 0);
+  const groupedProgramBookings = useMemo<ProgramBookingGroup[]>(() => {
+    const classesByGroup = new Map<string, GymClass[]>();
+    programClasses.forEach((gymClass) => {
+      if (!gymClass.recurrence_group_id) return;
+      const current = classesByGroup.get(gymClass.recurrence_group_id) ?? [];
+      current.push(gymClass);
+      classesByGroup.set(gymClass.recurrence_group_id, current);
+    });
+
+    const groups = new Map<string, ProgramBookingGroup>();
+    programBookings.forEach((booking) => {
+      const current = groups.get(booking.recurrence_group_id);
+      if (current) {
+        current.bookings.push(booking);
+        return;
+      }
+      groups.set(booking.recurrence_group_id, {
+        recurrenceGroupId: booking.recurrence_group_id,
+        bookings: [booking],
+        classes: [...(classesByGroup.get(booking.recurrence_group_id) ?? [])],
+        activeCount: 0,
+        cancelledCount: 0,
+      });
+    });
+
+    return Array.from(groups.values())
+      .map((group) => {
+        const bookings = [...group.bookings].sort((left, right) => {
+          if (left.status !== right.status) {
+            return left.status === 'active' ? -1 : 1;
+          }
+          return (left.user_name ?? '').localeCompare(right.user_name ?? '', 'es');
+        });
+        const classes = [...group.classes].sort(
+          (left, right) => new Date(left.start_time).getTime() - new Date(right.start_time).getTime(),
+        );
+        const activeCount = bookings.filter((booking) => booking.status === 'active').length;
+        return {
+          ...group,
+          bookings,
+          classes,
+          activeCount,
+          cancelledCount: bookings.length - activeCount,
+        };
+      })
+      .sort((left, right) => {
+        const leftDate = new Date(left.classes[0]?.start_time ?? left.bookings[0]?.created_at ?? 0).getTime();
+        const rightDate = new Date(right.classes[0]?.start_time ?? right.bookings[0]?.created_at ?? 0).getTime();
+        return rightDate - leftDate;
+      });
+  }, [programBookings, programClasses]);
   function updateSchedule(schedule: ProgramScheduleDay[]) {
     setForm((current) => ({ ...current, schedule }));
   }
@@ -1161,11 +1779,11 @@ export default function ProgramsPage() {
                 </div>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-2">
+              <div className="mt-5 grid gap-2 sm:grid-cols-3">
                 <button
                   type="button"
                   onClick={() => { setSelectedProgramForModal(program); setShowEnrollmentsModal(true); }}
-                  className="btn-secondary flex-1 justify-center"
+                  className="btn-secondary justify-center"
                 >
                   <Users size={15} />
                   Inscritos
@@ -1173,10 +1791,18 @@ export default function ProgramsPage() {
                 <button
                   type="button"
                   onClick={() => { setSelectedProgramForModal(program); setShowClassesModal(true); }}
-                  className="btn-secondary flex-1 justify-center"
+                  className="btn-secondary justify-center"
                 >
                   <CalendarDays size={15} />
                   Clases
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedProgramForModal(program); setShowBookingsModal(true); }}
+                  className="btn-secondary justify-center"
+                >
+                  <Repeat2 size={15} />
+                  Reservas
                 </button>
               </div>
 
@@ -1365,6 +1991,9 @@ export default function ProgramsPage() {
                 onChange={updateSchedule}
                 selectedDay={selectedPlanningDay}
                 onSelectDay={setSelectedPlanningDay}
+                branches={branches}
+                instructors={trainers}
+                plans={plans}
               />
               {form.schedule.length > 0 && (
                 <div className="flex flex-wrap gap-3 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-800 dark:bg-surface-950/30">
@@ -1555,7 +2184,7 @@ export default function ProgramsPage() {
       <Modal
         open={Boolean(programToDelete)}
         title="Eliminar programa"
-        description="Esta acción eliminará el programa del catálogo y desvinculará sus inscripciones."
+        description="Esta acción eliminará el programa del catálogo, sus inscripciones y todas las clases generadas desde ese programa."
         onClose={() => {
           if (!deleteProgramMutation.isPending) {
             setProgramToDelete(null);
@@ -1569,6 +2198,11 @@ export default function ProgramsPage() {
               {programToDelete?.enrolled_count
                 ? `${programToDelete.enrolled_count} cliente${programToDelete.enrolled_count !== 1 ? 's' : ''} inscrito${programToDelete.enrolled_count !== 1 ? 's' : ''} perderán la asociación con este programa.`
                 : 'No se podrá recuperar una vez eliminado.'}
+            </p>
+            <p className="mt-1">
+              {programToDelete?.linked_class_count
+                ? `${programToDelete.linked_class_count} clase${programToDelete.linked_class_count !== 1 ? 's' : ''} generada${programToDelete.linked_class_count !== 1 ? 's' : ''} se eliminarán del calendario del administrador y de la agenda de clientes.`
+                : 'Si el programa tenía clases generadas, también desaparecerán del calendario del administrador y de la agenda de clientes.'}
             </p>
           </div>
 
@@ -1685,6 +2319,147 @@ export default function ProgramsPage() {
         </div>
       </Modal>
 
+      {/* ─── Reservas del programa ─────────────────────────────── */}
+      <Modal
+        open={showBookingsModal}
+        title={`Reservas — ${selectedProgramForModal?.name ?? ''}`}
+        description="Reservas del programa agrupadas por tanda generada."
+        onClose={() => setShowBookingsModal(false)}
+        size="lg"
+      >
+        <div className="space-y-4">
+          {isProgramBookingsLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-28 rounded-3xl" />)}
+            </div>
+          ) : groupedProgramBookings.length ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Reservas</p>
+                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{programBookings.length}</p>
+                </div>
+                <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Activas</p>
+                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                    {programBookings.filter((booking) => booking.status === 'active').length}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Tandas</p>
+                  <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{groupedProgramBookings.length}</p>
+                </div>
+              </div>
+
+              <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+                {groupedProgramBookings.map((group, index) => {
+                  const firstClass = group.classes[0];
+                  const lastClass = group.classes[group.classes.length - 1];
+                  const classCount = group.classes.length || group.bookings[0]?.total_classes || 0;
+
+                  return (
+                    <div
+                      key={group.recurrenceGroupId}
+                      className="rounded-3xl border border-surface-200 bg-white p-5 dark:border-surface-800 dark:bg-surface-950/20"
+                    >
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-surface-900 dark:text-white">Tanda {index + 1}</p>
+                          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                            {firstClass && lastClass
+                              ? `${formatDateTime(firstClass.start_time)} → ${formatDateTime(lastClass.start_time)}`
+                              : `Grupo ${group.recurrenceGroupId.slice(0, 8)}`}
+                          </p>
+                          <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
+                            {classCount} clase{classCount !== 1 ? 's' : ''} en esta tanda
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="badge badge-success">{group.activeCount} activas</span>
+                          {group.cancelledCount ? <span className="badge badge-neutral">{group.cancelledCount} canceladas</span> : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 space-y-3">
+                        {group.bookings.map((booking) => {
+                          const progressPct = booking.total_classes > 0
+                            ? Math.round((booking.reserved_classes / booking.total_classes) * 100)
+                            : 0;
+
+                          return (
+                            <div
+                              key={booking.id}
+                              className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-surface-800 dark:bg-surface-950/40"
+                            >
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-sm font-semibold text-surface-900 dark:text-white">
+                                      {booking.user_name || 'Cliente'}
+                                    </p>
+                                    <span className={cn('badge', booking.status === 'active' ? 'badge-success' : 'badge-neutral')}>
+                                      {booking.status === 'active' ? 'Activa' : 'Cancelada'}
+                                    </span>
+                                    {booking.waitlisted_classes ? (
+                                      <span className="badge badge-warning">
+                                        {booking.waitlisted_classes} en espera
+                                      </span>
+                                    ) : null}
+                                  </div>
+
+                                  <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
+                                    {booking.user_email || 'Sin correo'}
+                                    {booking.user_phone ? ` · ${booking.user_phone}` : ''}
+                                  </p>
+                                  <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
+                                    Reservó el {formatDateTime(booking.created_at)}
+                                    {booking.cancelled_at ? ` · Canceló el ${formatDateTime(booking.cancelled_at)}` : ''}
+                                  </p>
+                                </div>
+
+                                <div className="min-w-[180px] rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                                  <div className="flex items-center justify-between text-xs text-surface-500 dark:text-surface-400">
+                                    <span>Confirmadas</span>
+                                    <span>{booking.reserved_classes}/{booking.total_classes}</span>
+                                  </div>
+                                  <div className="mt-2 h-2 rounded-full bg-surface-200 dark:bg-surface-700">
+                                    <div
+                                      className="h-full rounded-full bg-emerald-500"
+                                      style={{ width: `${Math.min(progressPct, 100)}%` }}
+                                    />
+                                  </div>
+                                  <p className="mt-2 text-xs text-surface-400 dark:text-surface-500">
+                                    {booking.failed_classes} sin reservar
+                                  </p>
+                                </div>
+                              </div>
+
+                              {booking.cancel_reason ? (
+                                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+                                  <span className="font-semibold">Motivo:</span> {booking.cancel_reason}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <div className="rounded-3xl border border-dashed border-surface-300 px-5 py-8 text-center text-sm text-surface-500 dark:border-surface-700 dark:text-surface-400">
+              Este programa todavía no tiene reservas completas registradas.
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button type="button" className="btn-secondary" onClick={() => setShowBookingsModal(false)}>Cerrar</button>
+          </div>
+        </div>
+      </Modal>
+
       {/* ─── Generar clases desde schedule ──────────────────────── */}
       <Modal
         open={showGenerateModal}
@@ -1743,8 +2518,52 @@ export default function ProgramsPage() {
                 required
               />
             </div>
+          </div>
+
+          <div>
+            <label className="mb-3 block text-sm font-medium text-surface-700 dark:text-surface-300">Modalidad</label>
+            <ProgramClassModalitySelector
+              value={generateForm.modality}
+              onChange={(nextValue) => setGenerateForm((f) => ({ ...f, modality: nextValue }))}
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Capacidad máx.</label>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Sede
+                <span className="ml-2 text-xs font-normal text-surface-400">
+                  {generateForm.modality === 'online' ? 'Opcional para clases online' : 'Obligatoria para clases presenciales e híbridas'}
+                </span>
+              </label>
+              <select
+                className="input"
+                value={generateForm.branch_id}
+                onChange={(e) => setGenerateForm((f) => ({ ...f, branch_id: e.target.value }))}
+              >
+                <option value="">{generateForm.modality === 'online' ? 'Sin sede física' : 'Selecciona una sede'}</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>{branch.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Instructor</label>
+              <select
+                className="input"
+                value={generateForm.instructor_id}
+                onChange={(e) => setGenerateForm((f) => ({ ...f, instructor_id: e.target.value }))}
+              >
+                <option value="">Sin instructor asignado</option>
+                {trainers.map((trainer) => (
+                  <option key={trainer.id} value={trainer.id}>{trainer.full_name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Capacidad</label>
               <input
                 type="number"
                 min="1"
@@ -1754,32 +2573,7 @@ export default function ProgramsPage() {
                 required
               />
             </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Sede (opcional)</label>
-              <select
-                className="input"
-                value={generateForm.branch_id}
-                onChange={(e) => setGenerateForm((f) => ({ ...f, branch_id: e.target.value }))}
-              >
-                <option value="">Sin sede</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>{branch.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Instructor (opcional)</label>
-              <select
-                className="input"
-                value={generateForm.instructor_id}
-                onChange={(e) => setGenerateForm((f) => ({ ...f, instructor_id: e.target.value }))}
-              >
-                <option value="">Sin instructor</option>
-                {trainers.map((trainer) => (
-                  <option key={trainer.id} value={trainer.id}>{trainer.full_name}</option>
-                ))}
-              </select>
-            </div>
+
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
                 Tipo / categoría
@@ -1792,14 +2586,57 @@ export default function ProgramsPage() {
                 placeholder="Ej: funcional, yoga, fuerza..."
               />
             </div>
+          </div>
+
+          <ClassColorPicker
+            inputId="generate-program-classes-color"
+            value={generateForm.color}
+            onChange={(nextColor) => setGenerateForm((f) => ({ ...f, color: nextColor }))}
+          />
+
+          {(generateForm.modality === 'online' || generateForm.modality === 'hybrid') ? (
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color en agenda</label>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Enlace para la clase</label>
               <input
-                type="color"
-                className="input h-11 w-full p-2"
-                value={generateForm.color}
-                onChange={(e) => setGenerateForm((f) => ({ ...f, color: e.target.value }))}
+                type="url"
+                className="input"
+                value={generateForm.online_link}
+                onChange={(e) => setGenerateForm((f) => ({ ...f, online_link: e.target.value }))}
+                placeholder="https://zoom.us/... o enlace de Meet"
               />
+            </div>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Plan restringido <span className="text-xs font-normal text-surface-400">(opcional)</span>
+              </label>
+              <select
+                className="input"
+                value={generateForm.restricted_plan_id}
+                onChange={(e) => setGenerateForm((f) => ({ ...f, restricted_plan_id: e.target.value }))}
+              >
+                <option value="">Visible para todos</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>{plan.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-xs text-surface-400">Solo los clientes con este plan podrán ver y reservar esta clase.</p>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Anticipación mínima para cancelar</label>
+              <input
+                type="number"
+                min="0"
+                className="input"
+                value={generateForm.cancellation_deadline_hours}
+                onChange={(e) => setGenerateForm((f) => ({ ...f, cancellation_deadline_hours: e.target.value }))}
+              />
+              <p className="mt-1.5 text-xs text-surface-400">
+                Horas antes del inicio en las que el cliente aún puede cancelar. 0 = se puede cancelar hasta el inicio.
+              </p>
             </div>
           </div>
 

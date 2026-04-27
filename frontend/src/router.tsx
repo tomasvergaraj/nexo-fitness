@@ -5,6 +5,7 @@ import LoginPage from '@/pages/auth/LoginPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
 import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
+import AcceptInvitationPage from '@/pages/auth/AcceptInvitationPage';
 import BillingWallPage from '@/pages/billing/BillingWallPage';
 import DashboardPage from '@/pages/dashboard/DashboardPage';
 import ClassesPage from '@/pages/classes/ClassesPage';
@@ -13,16 +14,21 @@ import PlansPage from '@/pages/plans/PlansPage';
 import PromoCodesPage from '@/pages/promo/PromoCodesPage';
 import ApiClientsPage from '@/pages/developer/ApiClientsPage';
 import CheckInPage from '@/pages/checkin/CheckInPage';
+import ReceptionCheckInPage from '@/pages/checkin/ReceptionCheckInPage';
 import ProgramsPage from '@/pages/programs/ProgramsPage';
 import MarketingPage from '@/pages/marketing/MarketingPage';
 import ReportsPage from '@/pages/reports/ReportsPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
+import SubscriptionPage from '@/pages/subscription/SubscriptionPage';
 import SupportPage from '@/pages/support/SupportPage';
+import FeedbackPage from '@/pages/feedback/FeedbackPage';
 import PlatformTenantsPage from '@/pages/platform/PlatformTenantsPage';
 import PlatformPlansPage from '@/pages/platform/PlatformPlansPage';
 import PlatformLeadsPage from '@/pages/platform/PlatformLeadsPage';
-import PublicLandingPage from '@/pages/public/PublicLandingPage';
+import PlatformFeedbackPage from '@/pages/platform/PlatformFeedbackPage';
+import PlatformPromoCodesPage from '@/pages/platform/PlatformPromoCodesPage';
 import TenantStorefrontPage from '@/pages/public/TenantStorefrontPage';
+import StorefrontPage from '@/pages/storefront/StorefrontPage';
 import MemberAppPage from '@/pages/member/MemberAppPage';
 import POSPage from '@/pages/pos/POSPage';
 import InventoryPage from '@/pages/inventory/InventoryPage';
@@ -30,7 +36,7 @@ import ExpensesPage from '@/pages/expenses/ExpensesPage';
 import TermsPage from '@/pages/legal/TermsPage';
 import PrivacyPage from '@/pages/legal/PrivacyPage';
 import { useAuthStore } from '@/stores/authStore';
-import { isCustomStorefrontHost } from '@/utils';
+import { getDefaultRouteForRole, isCustomStorefrontHost } from '@/utils';
 
 function RootEntry() {
   if (isCustomStorefrontHost()) {
@@ -45,7 +51,7 @@ function RootEntry() {
     return <Navigate to="/member" replace />;
   }
 
-  return <Navigate to={user?.role === 'superadmin' ? '/platform/tenants' : '/dashboard'} replace />;
+  return <Navigate to={getDefaultRouteForRole(user?.role)} replace />;
 }
 
 export const router = createBrowserRouter([
@@ -54,12 +60,12 @@ export const router = createBrowserRouter([
     element: <RootEntry />,
   },
   {
-    path: '/site',
-    element: <PublicLandingPage />,
-  },
-  {
     path: '/store/:slug',
     element: <TenantStorefrontPage />,
+  },
+  {
+    path: '/s/:slug',
+    element: <StorefrontPage />,
   },
   {
     path: '/login',
@@ -78,11 +84,23 @@ export const router = createBrowserRouter([
     element: <ResetPasswordPage />,
   },
   {
+    path: '/accept-invitation',
+    element: <AcceptInvitationPage />,
+  },
+  {
     // Accesible para usuarios autenticados cuya suscripción venció
     path: '/billing/expired',
     element: (
       <AuthGuard>
         <BillingWallPage />
+      </AuthGuard>
+    ),
+  },
+  {
+    path: '/reception/checkin',
+    element: (
+      <AuthGuard roles={['owner', 'admin', 'reception']}>
+        <ReceptionCheckInPage />
       </AuthGuard>
     ),
   },
@@ -94,7 +112,14 @@ export const router = createBrowserRouter([
       </AuthGuard>
     ),
     children: [
-      { path: 'dashboard', element: <DashboardPage /> },
+      {
+        path: 'dashboard',
+        element: (
+          <AuthGuard roles={['owner', 'admin']}>
+            <DashboardPage />
+          </AuthGuard>
+        ),
+      },
       { path: 'classes', element: <ClassesPage /> },
       { path: 'clients', element: <ClientsPage /> },
       { path: 'plans', element: <PlansPage /> },
@@ -135,8 +160,31 @@ export const router = createBrowserRouter([
           </AuthGuard>
         ),
       },
-      { path: 'settings', element: <SettingsPage /> },
+      {
+        path: 'settings',
+        element: (
+          <AuthGuard roles={['owner', 'admin']}>
+            <SettingsPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'subscription',
+        element: (
+          <AuthGuard roles={['owner']}>
+            <SubscriptionPage />
+          </AuthGuard>
+        ),
+      },
       { path: 'support', element: <SupportPage /> },
+      {
+        path: 'feedback',
+        element: (
+          <AuthGuard roles={['owner', 'admin', 'reception']}>
+            <FeedbackPage />
+          </AuthGuard>
+        ),
+      },
       {
         path: 'platform/tenants',
         element: (
@@ -154,10 +202,26 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: 'platform/promo-codes',
+        element: (
+          <AuthGuard roles={['superadmin']}>
+            <PlatformPromoCodesPage />
+          </AuthGuard>
+        ),
+      },
+      {
         path: 'platform/leads',
         element: (
           <AuthGuard roles={['superadmin']}>
             <PlatformLeadsPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'platform/feedback',
+        element: (
+          <AuthGuard roles={['superadmin']}>
+            <PlatformFeedbackPage />
           </AuthGuard>
         ),
       },

@@ -826,7 +826,9 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
             select(POSTransactionItem).where(POSTransactionItem.transaction_id == tx.id)
         )
     ).scalars().all()
-    cashier = (await db.execute(select(User).where(User.id == tx.cashier_id))).scalar_one_or_none()
+    cashier = None
+    if tx.cashier_id:
+        cashier = (await db.execute(select(User).where(User.id == tx.cashier_id))).scalar_one_or_none()
 
     from app.schemas.pos import POSTransactionItemResponse
     return POSTransactionResponse(

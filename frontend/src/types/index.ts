@@ -37,6 +37,9 @@ export interface SaaSPlan {
   currency: string;
   price: number;
   discount_pct?: number | null;
+  tax_rate: number;
+  tax_amount: number;
+  total_price: number;
   billing_interval: 'month' | 'quarter' | 'semi_annual' | 'year' | 'manual';
   trial_days: number;
   max_members: number;
@@ -130,7 +133,7 @@ export interface TenantBilling {
   tenant_name: string;
   tenant_slug: string;
   status: 'active' | 'trial' | 'suspended' | 'expired' | 'cancelled';
-  license_type: 'monthly' | 'annual' | 'perpetual';
+  license_type: 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'perpetual';
   plan_key: string;
   plan_name: string;
   currency: string;
@@ -152,10 +155,40 @@ export interface TenantBilling {
   owner_email?: string;
   owner_name?: string;
   created_at: string;
+  next_plan_key?: string;
+  next_plan_name?: string;
+  next_plan_starts_at?: string;
+  next_plan_paid?: boolean;
 }
 
 export interface AdminTenantBilling extends TenantBilling {
   owner_user_id?: string;
+}
+
+export interface OwnerPaymentItem {
+  id: string;
+  plan_key: string;
+  plan_name: string;
+  base_amount: number;
+  promo_discount_amount: number;
+  tax_rate: number;
+  tax_amount: number;
+  total_amount: number;
+  currency: string;
+  payment_method: string;
+  external_reference?: string;
+  paid_at?: string;
+  starts_at: string;
+  expires_at?: string;
+  created_at: string;
+}
+
+export interface ReactivateResponse {
+  scheduled: boolean;
+  checkout_url?: string;
+  next_plan_key?: string;
+  next_plan_name?: string;
+  next_plan_starts_at?: string;
 }
 
 /* ─── User ───────────────────────────────────────────────────── */
@@ -198,9 +231,80 @@ export interface Tenant {
   slug: string;
   email: string;
   status: 'active' | 'suspended' | 'trial' | 'expired' | 'cancelled';
-  license_type: 'monthly' | 'annual' | 'perpetual';
+  license_type: 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'perpetual';
   is_active: boolean;
   created_at: string;
+}
+
+export interface BillingQuote {
+  valid: boolean;
+  reason?: string | null;
+  plan_key?: string | null;
+  plan_name?: string | null;
+  currency?: string | null;
+  promo_code_id?: string | null;
+  base_price?: number | null;
+  promo_discount_amount?: number | null;
+  taxable_subtotal?: number | null;
+  tax_rate?: number | null;
+  tax_amount?: number | null;
+  total_amount?: number | null;
+}
+
+export interface PlatformPromoCode {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  discount_type: 'percent' | 'fixed';
+  discount_value: number;
+  max_uses?: number | null;
+  uses_count: number;
+  expires_at?: string | null;
+  is_active: boolean;
+  plan_keys?: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformBillingPayment {
+  id: string;
+  tenant_id: string;
+  plan_key: string;
+  plan_name: string;
+  promo_code_id?: string | null;
+  base_amount: number;
+  promo_discount_amount: number;
+  tax_rate: number;
+  tax_amount: number;
+  total_amount: number;
+  currency: string;
+  payment_method: 'stripe' | 'fintoc' | 'webpay' | 'tuu' | 'transfer' | 'cash' | 'mercadopago' | 'other';
+  external_reference?: string | null;
+  notes?: string | null;
+  paid_at?: string | null;
+  starts_at: string;
+  expires_at?: string | null;
+  created_by?: string | null;
+  created_at: string;
+}
+
+export interface AdminTenantManualPaymentRequest {
+  plan_key: string;
+  starts_at: string;
+  payment_method: 'transfer';
+  promo_code_id?: string | null;
+  transfer_reference: string;
+  notes?: string;
+}
+
+export interface AdminTenantManualPaymentResponse {
+  tenant_id: string;
+  tenant_status: string;
+  plan_key: string;
+  plan_name: string;
+  license_expires_at?: string | null;
+  payment: PlatformBillingPayment;
 }
 
 /* ─── Branch ─────────────────────────────────────────────────── */
@@ -231,6 +335,7 @@ export interface Plan {
   duration_type: 'monthly' | 'annual' | 'perpetual' | 'custom';
   duration_days?: number;
   max_reservations_per_week?: number;
+  max_reservations_per_month?: number;
   is_active: boolean;
   is_featured: boolean;
   auto_renew: boolean;
@@ -258,10 +363,48 @@ export interface GymClass {
   online_link?: string;
   color?: string;
   program_id?: string;
+  restricted_plan_id?: string;
+  restricted_plan_name?: string;
   repeat_type: 'none' | 'daily' | 'weekly' | 'monthly';
   repeat_until?: string;
   recurrence_group_id?: string;
   created_at: string;
+}
+
+export interface BulkClassCancelRequest {
+  date_from: string;
+  date_to: string;
+  time_from: string;
+  time_to: string;
+  branch_id?: string;
+  instructor_id?: string;
+  cancel_reason?: string;
+  notify_members: boolean;
+}
+
+export interface BulkCancelableClassItem {
+  id: string;
+  name: string;
+  start_time: string;
+  end_time: string;
+  branch_name?: string;
+  instructor_name?: string;
+  current_bookings: number;
+}
+
+export interface BulkClassCancelPreviewResponse {
+  matched_classes: number;
+  confirmed_reservations: number;
+  waitlisted_reservations: number;
+  notified_users: number;
+  items: BulkCancelableClassItem[];
+}
+
+export interface BulkClassCancelResponse extends BulkClassCancelPreviewResponse {
+  cancelled_classes: number;
+  cancelled_reservations: number;
+  notification_failures: number;
+  skipped_classes: number;
 }
 
 /* ─── Reservation ────────────────────────────────────────────── */
@@ -274,6 +417,7 @@ export interface Reservation {
   waitlist_position?: number;
   cancel_reason?: string;
   cancelled_at?: string;
+  attended_at?: string;
   created_at: string;
 }
 
@@ -285,9 +429,14 @@ export interface ClassReservationDetail {
   user_phone?: string;
   gym_class_id: string;
   status: 'confirmed' | 'waitlisted' | 'cancelled' | 'no_show' | 'attended';
+  reservation_origin: 'individual' | 'program';
+  program_booking_id?: string | null;
+  program_booking_status?: 'active' | 'cancelled' | null;
+  program_name?: string | null;
   waitlist_position?: number;
   cancel_reason?: string;
   cancelled_at?: string;
+  attended_at?: string;
   created_at: string;
 }
 
@@ -298,8 +447,60 @@ export interface CheckIn {
   user_id: string;
   user_name?: string;
   gym_class_id?: string;
+  reservation_id?: string;
+  attendance_resolution: 'linked' | 'already_attended' | 'none';
+  resolved_gym_class_name?: string;
   check_type: string;
   checked_in_at: string;
+}
+
+export interface CheckInHistoryItem {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  branch_id?: string;
+  branch_name?: string;
+  gym_class_id?: string;
+  gym_class_name?: string;
+  reservation_id?: string;
+  attendance_resolution?: string;
+  check_type: string;
+  checked_in_at: string;
+  checked_in_by?: string;
+  checked_in_by_name?: string;
+}
+
+export interface CheckInContext {
+  tenant_name: string;
+  tenant_slug: string;
+  timezone: string;
+  logo_url?: string;
+  primary_color?: string;
+  secondary_color?: string;
+  branches: Branch[];
+}
+
+export interface CheckInInvestigationCase {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  user_email?: string;
+  status: 'open' | 'dismissed' | 'confirmed';
+  rule_code: string;
+  local_day: string;
+  first_triggered_at: string;
+  last_triggered_at: string;
+  daily_qr_count: number;
+  window_qr_count: number;
+  review_notes?: string | null;
+  reviewed_by?: string | null;
+  reviewed_by_name?: string | null;
+  reviewed_at?: string | null;
+  trigger_checkin_id?: string | null;
+}
+
+export interface CheckInInvestigationCaseDetail extends CheckInInvestigationCase {
+  related_checkins: CheckInHistoryItem[];
 }
 
 /* ─── Payment ────────────────────────────────────────────────── */
@@ -315,6 +516,11 @@ export interface Payment {
   description?: string;
   paid_at?: string;
   created_at: string;
+  plan_id_snapshot?: string | null;
+  plan_name_snapshot?: string | null;
+  membership_starts_at_snapshot?: string | null;
+  membership_expires_at_snapshot?: string | null;
+  membership_status_snapshot?: string | null;
 }
 
 /* ─── Campaign ───────────────────────────────────────────────── */
@@ -429,6 +635,14 @@ export interface Membership {
   auto_renew: boolean;
   frozen_until?: string;
   stripe_subscription_id?: string;
+  previous_membership_id?: string | null;
+  sale_source?: string | null;
+  payment_id?: string | null;
+  payment_amount?: number | null;
+  payment_currency?: string | null;
+  payment_method?: string | null;
+  payment_status?: string | null;
+  paid_at?: string | null;
   created_at: string;
   user_name?: string;
   plan_name?: string;
@@ -451,6 +665,9 @@ export interface MembershipManualSaleResult {
   membership: Membership;
   payment: Payment;
   replaced_membership_ids: string[];
+  effective_membership?: Membership | null;
+  scheduled_membership?: Membership | null;
+  scheduled: boolean;
 }
 
 export interface SupportInteraction {
@@ -466,6 +683,25 @@ export interface SupportInteraction {
   handler_name?: string;
 }
 
+export type FeedbackCategory = 'suggestion' | 'improvement' | 'problem' | 'other';
+
+export interface FeedbackSubmission {
+  id: string;
+  category: FeedbackCategory;
+  message: string;
+  image_url?: string | null;
+  created_at: string;
+  created_by?: string | null;
+  created_by_name?: string | null;
+}
+
+export interface PlatformFeedbackSubmission extends FeedbackSubmission {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  created_by_email?: string | null;
+}
+
 export interface ProgramExerciseLibraryItem {
   id: string;
   name: string;
@@ -478,10 +714,37 @@ export interface ProgramScheduleExercise {
   group?: string;
 }
 
+export type ProgramClassModality = 'in_person' | 'online' | 'hybrid';
+export type ProgramScheduleConfigMode = 'inherit' | 'custom';
+
+export type ProgramScheduleDayConfigValueMap = {
+  branch_id: string | null;
+  instructor_id: string | null;
+  modality: ProgramClassModality;
+  max_capacity: number;
+  online_link: string | null;
+  cancellation_deadline_hours: number;
+  restricted_plan_id: string | null;
+  color: string | null;
+  class_type: string | null;
+};
+
+export type ProgramScheduleDayConfigField<
+  Key extends keyof ProgramScheduleDayConfigValueMap = keyof ProgramScheduleDayConfigValueMap,
+> = {
+  mode: ProgramScheduleConfigMode;
+  value?: ProgramScheduleDayConfigValueMap[Key];
+};
+
+export type ProgramScheduleDayConfig = {
+  [Key in keyof ProgramScheduleDayConfigValueMap]?: ProgramScheduleDayConfigField<Key>;
+};
+
 export interface ProgramScheduleDay {
   day: string;
   focus: string;
   exercises: ProgramScheduleExercise[];
+  class_config?: ProgramScheduleDayConfig | null;
 }
 
 export interface TrainingProgram {
@@ -500,6 +763,25 @@ export interface TrainingProgram {
   enrollment_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProgramBooking {
+  id: string;
+  user_id: string;
+  program_id?: string | null;
+  user_name?: string | null;
+  user_email?: string | null;
+  user_phone?: string | null;
+  program_name?: string | null;
+  recurrence_group_id: string;
+  status: 'active' | 'cancelled';
+  total_classes: number;
+  reserved_classes: number;
+  waitlisted_classes: number;
+  failed_classes: number;
+  cancel_reason?: string | null;
+  cancelled_at?: string | null;
+  created_at: string;
 }
 
 export interface TenantBranding {
@@ -540,7 +822,7 @@ export interface TenantSettings {
 
 export interface PaymentProviderAccount {
   id: string;
-  provider: 'stripe' | 'mercadopago' | 'webpay' | 'fintoc' | 'manual';
+  provider: 'stripe' | 'mercadopago' | 'webpay' | 'fintoc' | 'tuu' | 'manual';
   status: 'pending' | 'connected' | 'disabled';
   account_label?: string;
   public_identifier?: string;
@@ -709,6 +991,17 @@ export interface PlatformLead {
   updated_at: string;
 }
 
+export interface WalletMembershipSummary {
+  membership_id: string;
+  plan_id: string;
+  plan_name?: string | null;
+  membership_status: string;
+  starts_at: string;
+  expires_at?: string | null;
+  auto_renew: boolean;
+  sale_source?: string | null;
+}
+
 export interface MobileWallet {
   tenant_slug: string;
   tenant_name: string;
@@ -716,8 +1009,11 @@ export interface MobileWallet {
   plan_id?: string;
   plan_name?: string;
   membership_status?: string;
+  starts_at?: string;
   expires_at?: string;
   auto_renew?: boolean;
+  current_membership?: WalletMembershipSummary | null;
+  next_membership?: WalletMembershipSummary | null;
   next_class?: {
     id: string;
     name: string;
@@ -753,6 +1049,11 @@ export interface MobilePaymentHistoryItem {
   receipt_url?: string;
   external_id?: string;
   plan_name?: string;
+  plan_id_snapshot?: string | null;
+  plan_name_snapshot?: string | null;
+  membership_starts_at_snapshot?: string | null;
+  membership_expires_at_snapshot?: string | null;
+  membership_status_snapshot?: string | null;
 }
 
 /* ─── Progress / Body Measurements ──────────────────────────── */
@@ -965,7 +1266,7 @@ export interface POSTransactionItem {
 export interface POSTransaction {
   id: string;
   branch_id?: string | null;
-  cashier_id: string;
+  cashier_id?: string | null;
   cashier_name?: string | null;
   subtotal: number;
   discount_amount: number;

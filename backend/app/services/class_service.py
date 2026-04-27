@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.business import Branch, GymClass
+from app.models.business import Branch, GymClass, Plan
 from app.models.user import User
 from app.schemas.business import GymClassResponse
 
@@ -70,6 +70,7 @@ async def build_gym_class_responses(
 ) -> list[GymClassResponse]:
     instructor_ids = list({gym_class.instructor_id for gym_class in classes if gym_class.instructor_id})
     branch_ids = list({gym_class.branch_id for gym_class in classes if gym_class.branch_id})
+    plan_ids = list({gym_class.restricted_plan_id for gym_class in classes if gym_class.restricted_plan_id})
 
     instructors_by_id: dict[UUID, str] = {}
     if instructor_ids:
@@ -83,6 +84,12 @@ async def build_gym_class_responses(
         for branch in branch_rows.scalars().all():
             branches_by_id[branch.id] = branch.name
 
+    plans_by_id: dict[UUID, str] = {}
+    if plan_ids:
+        plan_rows = await db.execute(select(Plan).where(Plan.id.in_(plan_ids)))
+        for plan in plan_rows.scalars().all():
+            plans_by_id[plan.id] = plan.name
+
     items: list[GymClassResponse] = []
     for gym_class in classes:
         payload = GymClassResponse.model_validate(gym_class)
@@ -90,6 +97,8 @@ async def build_gym_class_responses(
             payload.instructor_name = instructors_by_id.get(gym_class.instructor_id)
         if gym_class.branch_id:
             payload.branch_name = branches_by_id.get(gym_class.branch_id)
+        if gym_class.restricted_plan_id:
+            payload.restricted_plan_name = plans_by_id.get(gym_class.restricted_plan_id)
         items.append(payload)
     return items
 

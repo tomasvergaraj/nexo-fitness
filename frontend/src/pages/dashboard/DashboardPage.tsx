@@ -101,7 +101,7 @@ export default function DashboardPage() {
   });
 
   const upgradePlan = useMutation({
-    mutationFn: async (planKey: string) => (await billingApi.reactivate(planKey)).data as { checkout_url?: string },
+    mutationFn: async (planKey: string) => (await billingApi.reactivate({ plan_key: planKey })).data as { checkout_url?: string },
     onSuccess: (payload) => {
       if (payload.checkout_url) {
         window.location.href = payload.checkout_url;

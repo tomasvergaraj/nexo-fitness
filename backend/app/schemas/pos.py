@@ -218,7 +218,7 @@ class POSTransactionItemResponse(BaseModel):
 class POSTransactionResponse(BaseModel):
     id: UUID
     branch_id: Optional[UUID] = None
-    cashier_id: UUID
+    cashier_id: Optional[UUID] = None
     cashier_name: Optional[str] = None
     subtotal: Decimal
     discount_amount: Decimal

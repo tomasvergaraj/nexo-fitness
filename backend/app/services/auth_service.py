@@ -26,7 +26,6 @@ from app.schemas.auth import (
 )
 from app.core.exceptions import ActionRequiredError
 from app.services.tenant_access_service import (
-    create_reactivation_checkout,
     evaluate_tenant_access,
 )
 
@@ -221,17 +220,6 @@ class AuthService:
                 billing_status = tenant.status.value if isinstance(tenant.status, TenantStatus) else str(tenant.status)
                 billing_detail = access_state.detail
                 next_action = "billing_required"
-
-                # Try to get checkout URL (Stripe or Fintoc redirect)
-                renewable = {TenantStatus.TRIAL, TenantStatus.ACTIVE, TenantStatus.EXPIRED}
-                if tenant.status in renewable:
-                    try:
-                        url = await create_reactivation_checkout(db, tenant, user)
-                        if url:
-                            checkout_url = url
-                            next_action = "redirect_to_checkout"
-                    except Exception:
-                        pass
 
         await db.flush()
 

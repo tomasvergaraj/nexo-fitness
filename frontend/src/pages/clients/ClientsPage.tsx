@@ -9,6 +9,7 @@ import {
   Cake,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   Download,
   Eye,
   EyeOff,
@@ -25,6 +26,7 @@ import {
   RefreshCcw,
   Search,
   Snowflake,
+  Trash2,
   TrendingDown,
   Upload,
   Users,
@@ -32,6 +34,7 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
+import MembershipCardModal from '@/components/clients/MembershipCardModal';
 import { billingApi, clientsApi, membershipsApi, notificationsApi, plansApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
@@ -190,6 +193,45 @@ function getDateOnlyParts(value?: string | null) {
   return { year, month, day };
 }
 
+function formatMembershipPeriodStatus(status?: string | null) {
+  switch (status) {
+    case 'active':
+      return 'Activa';
+    case 'pending':
+      return 'Programada';
+    case 'frozen':
+      return 'Pausada';
+    case 'expired':
+      return 'Vencida';
+    case 'cancelled':
+      return 'Cancelada';
+    default:
+      return status || 'Sin estado';
+  }
+}
+
+function getMembershipPeriodStatusClass(status?: string | null) {
+  if (status === 'active') return 'badge-success';
+  if (status === 'pending') return 'badge-info';
+  if (status === 'frozen') return 'badge-info';
+  if (status === 'expired') return 'badge-warning';
+  if (status === 'cancelled') return 'badge-danger';
+  return 'badge-neutral';
+}
+
+function formatMembershipSaleSource(source?: string | null) {
+  switch (source) {
+    case 'manual_sale':
+      return 'Manual';
+    case 'public_checkout':
+      return 'Checkout';
+    case 'auto_renewal':
+      return 'Auto';
+    default:
+      return 'Histórico';
+  }
+}
+
 function downloadCsv(filename: string, rows: string[][]) {
   const csv = rows
     .map((row) =>
@@ -240,11 +282,14 @@ export default function ClientsPage() {
   const [historyClient, setHistoryClient] = useState<User | null>(null);
   const [notesClient, setNotesClient] = useState<User | null>(null);
   const [notesText, setNotesText] = useState('');
+  const [cardClient, setCardClient] = useState<User | null>(null);
+  const [deleteClient, setDeleteClient] = useState<User | null>(null);
   const [planLimitError, setPlanLimitError] = useState<PlanLimitErrorPayload | null>(null);
   const deferredSearch = useDeferredValue(search);
   const canCreateClients = Boolean(userRole && clientCreateRoles.includes(userRole));
   const canResetClientPasswords = Boolean(userRole && clientResetPasswordRoles.includes(userRole));
   const canUpgradePlan = Boolean(userRole && planUpgradeRoles.includes(userRole));
+  const canHardDeleteClients = userRole === 'owner' || userRole === 'admin';
   const readOnlyClientAccess = Boolean(userRole && !canCreateClients);
 
   useEffect(() => {
@@ -320,7 +365,7 @@ export default function ClientsPage() {
   }, [publicPlans, subscriptionData]);
 
   const upgradePlan = useMutation({
-    mutationFn: async (planKey: string) => (await billingApi.reactivate(planKey)).data as { checkout_url?: string },
+    mutationFn: async (planKey: string) => (await billingApi.reactivate({ plan_key: planKey })).data as { checkout_url?: string },
     onSuccess: (payload) => {
       if (payload.checkout_url) {
         window.location.href = payload.checkout_url;
@@ -381,6 +426,25 @@ export default function ClientsPage() {
         setPlanLimitError(limitError);
       }
       toast.error(getApiError(error, 'No se pudo actualizar el cliente'));
+    },
+  });
+
+  const hardDeleteClient = useMutation({
+    mutationFn: async (clientId: string) => {
+      await clientsApi.hardDelete(clientId);
+    },
+    onSuccess: () => {
+      toast.success('Cuenta eliminada definitivamente');
+      setDeleteClient(null);
+      setActionsClient(null);
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['support-clients'] });
+      queryClient.removeQueries({ queryKey: ['client-membership-history'] });
+      queryClient.removeQueries({ queryKey: ['client-stats'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo eliminar la cuenta'));
     },
   });
 
@@ -491,6 +555,14 @@ export default function ClientsPage() {
     expires_at: string | null;
     frozen_until: string | null;
     notes: string | null;
+    previous_membership_id?: string | null;
+    sale_source?: string | null;
+    payment_id?: string | null;
+    amount?: number | string | null;
+    currency?: string | null;
+    method?: string | null;
+    payment_status?: string | null;
+    paid_at?: string | null;
     created_at: string;
   };
 
@@ -578,11 +650,11 @@ export default function ClientsPage() {
       return response.data as MembershipManualSaleResult;
     },
     onSuccess: (result) => {
-      const replacedCount = result.replaced_membership_ids.length;
       const amountLabel = formatCurrency(parseApiNumber(result.payment.amount), result.payment.currency);
+      const scheduledStart = result.scheduled_membership?.starts_at || result.membership.starts_at;
       toast.success(
-        replacedCount
-          ? `Venta manual registrada. Nuevo plan activo y ${replacedCount} membresía(s) previa(s) cerrada(s).`
+        result.scheduled
+          ? `Renovación programada desde ${formatDate(scheduledStart)} por ${amountLabel}.`
           : `Venta manual registrada por ${amountLabel}.`,
       );
       setManualSaleClient(null);
@@ -650,7 +722,12 @@ export default function ClientsPage() {
   const openManualSaleModal = (client: User) => {
     setActionsClient(null);
     setManualSaleClient(client);
-    setManualSaleForm(createManualSaleForm(availablePlans[0]));
+    const nextForm = createManualSaleForm(availablePlans[0]);
+    if (client.membership_expires_at) {
+      nextForm.starts_at = getDateInputValue(client.membership_expires_at);
+      nextForm.expires_at = getSuggestedExpiryDate(availablePlans[0] ?? null, nextForm.starts_at);
+    }
+    setManualSaleForm(nextForm);
   };
 
   const updateManualSalePlan = (planId: string) => {
@@ -1045,6 +1122,16 @@ export default function ClientsPage() {
                 }}
               />
               <ClientActionTile
+                icon={CreditCard}
+                title="Tarjeta de ingreso"
+                description="Genera una tarjeta de crédito con QR para imprimir o plastificar."
+                accentClass="text-cyan-500"
+                onClick={() => {
+                  setActionsClient(null);
+                  setCardClient(actionsClient);
+                }}
+              />
+              <ClientActionTile
                 icon={Mail}
                 title="Enviar correo"
                 description="Abre tu cliente de correo con el email del cliente."
@@ -1115,11 +1202,76 @@ export default function ClientsPage() {
                   }}
                 />
               ) : null}
+              {canHardDeleteClients ? (
+                <ClientActionTile
+                  icon={Trash2}
+                  title="Eliminar definitivamente"
+                  description="Borra la cuenta completa, libera el correo y elimina el historial vinculado."
+                  accentClass="text-rose-500"
+                  onClick={() => {
+                    setActionsClient(null);
+                    setDeleteClient(actionsClient);
+                  }}
+                />
+              ) : null}
             </div>
 
             <div className="flex justify-end">
               <button type="button" className="btn-secondary" onClick={() => setActionsClient(null)}>
                 Cerrar
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={!!deleteClient}
+        title="Eliminar cuenta definitivamente"
+        description="Esta acción es irreversible y libera el correo para reutilizarlo en otra cuenta."
+        onClose={() => {
+          if (!hardDeleteClient.isPending) {
+            setDeleteClient(null);
+          }
+        }}
+      >
+        {deleteClient ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-200">
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold">Se eliminará toda la cuenta del cliente.</p>
+                  <p className="mt-1">
+                    Esto borra membresías, reservas, check-ins, pagos y demás historial asociado a este usuario.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-700 dark:bg-surface-800/40">
+              <p className="font-semibold text-surface-900 dark:text-white">
+                {deleteClient.first_name} {deleteClient.last_name}
+              </p>
+              <p className="text-sm text-surface-500">{deleteClient.email}</p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDeleteClient(null)}
+                disabled={hardDeleteClient.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() => hardDeleteClient.mutate(deleteClient.id)}
+                disabled={hardDeleteClient.isPending}
+              >
+                {hardDeleteClient.isPending ? 'Eliminando...' : 'Eliminar cuenta'}
               </button>
             </div>
           </div>
@@ -1274,7 +1426,9 @@ export default function ClientsPage() {
                     </div>
                     {manualSaleClient.membership_id ? (
                       <p className="mt-3 text-xs text-amber-600 dark:text-amber-300">
-                        Al guardar, la membresía activa o congelada actual se cerrará automáticamente para dejar esta venta como vigente.
+                        {manualSaleClient.membership_expires_at
+                          ? `La nueva compra se programará desde el vencimiento actual (${formatDate(manualSaleClient.membership_expires_at)}). La membresía vigente no se sobrescribirá.`
+                          : 'Si ya existe una membresía vigente, esta compra quedará programada para el siguiente período disponible sin sobrescribir el historial.'}
                       </p>
                     ) : null}
                   </div>
@@ -1909,7 +2063,7 @@ export default function ClientsPage() {
         ) : (
           <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
             {historyData.map((m) => (
-              <div key={m.id} className="rounded-2xl border border-surface-200/60 px-4 py-4 dark:border-surface-800/60">
+              <div key={m.id} className="rounded-2xl border border-surface-200/60 bg-white/80 px-4 py-4 dark:border-surface-800/60 dark:bg-surface-950/30">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="font-semibold text-surface-900 dark:text-white">{m.plan_name}</p>
@@ -1917,22 +2071,48 @@ export default function ClientsPage() {
                       {m.starts_at ? `Desde ${formatDate(m.starts_at)}` : 'Sin fecha inicio'}
                       {m.expires_at ? ` · Vence ${formatDate(m.expires_at)}` : ''}
                     </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="badge badge-neutral">{formatMembershipSaleSource(m.sale_source)}</span>
+                      {m.payment_status ? (
+                        <span className={cn('badge', getMembershipPeriodStatusClass(m.payment_status === 'completed' ? 'active' : m.payment_status))}>
+                          Pago {m.payment_status === 'completed' ? 'completado' : m.payment_status}
+                        </span>
+                      ) : null}
+                    </div>
                     {m.notes && (
                       <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 italic">"{m.notes}"</p>
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <span className={cn('badge',
-                      m.status === 'active' ? 'badge-success' :
-                      m.status === 'frozen' ? 'badge-info' :
-                      m.status === 'expired' ? 'badge-warning' :
-                      m.status === 'cancelled' ? 'badge-danger' : 'badge-neutral'
-                    )}>
-                      {m.status === 'active' ? 'Activa' : m.status === 'frozen' ? 'Pausada' : m.status === 'expired' ? 'Vencida' : m.status === 'cancelled' ? 'Cancelada' : m.status}
+                    <span className={cn('badge', getMembershipPeriodStatusClass(m.status))}>
+                      {formatMembershipPeriodStatus(m.status)}
                     </span>
                     {m.frozen_until && (
                       <span className="text-xs text-surface-400">Hasta {formatDate(m.frozen_until)}</span>
                     )}
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 text-xs text-surface-500 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-surface-50 px-3 py-3 dark:bg-surface-900/60">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-400">Pago vinculado</p>
+                    <p className="mt-2 font-medium text-surface-700 dark:text-surface-200">
+                      {m.amount != null && m.currency
+                        ? formatCurrency(parseApiNumber(m.amount), m.currency)
+                        : 'Sin monto histórico'}
+                    </p>
+                    <p className="mt-1">
+                      {m.method ? `Medio: ${m.method}` : 'Sin medio registrado'}
+                      {m.paid_at ? ` · ${formatDateTime(m.paid_at)}` : ''}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-surface-50 px-3 py-3 dark:bg-surface-900/60">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-400">Trazabilidad</p>
+                    <p className="mt-2">
+                      {m.previous_membership_id
+                        ? 'Renovación encadenada al período anterior.'
+                        : 'Período base o histórico sin vínculo previo.'}
+                    </p>
+                    <p className="mt-1">Registrado {formatDateTime(m.created_at)}</p>
                   </div>
                 </div>
               </div>
@@ -2114,6 +2294,11 @@ export default function ClientsPage() {
           </form>
         )}
       </Modal>
+
+      <MembershipCardModal
+        client={cardClient}
+        onClose={() => setCardClient(null)}
+      />
     </motion.div>
   );
 }

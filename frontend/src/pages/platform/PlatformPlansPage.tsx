@@ -321,31 +321,29 @@ export default function PlatformPlansPage() {
 
             <div className="mt-5 flex items-end justify-between gap-3">
               <div>
-                {plan.discount_pct ? (
-                  <>
-                    <div className="mb-1 flex items-center gap-1.5">
-                      <Tag size={11} className={plan.highlighted ? 'text-white' : 'text-emerald-500'} />
-                      <span className={cn('text-xs font-bold', plan.highlighted ? 'text-white' : 'text-emerald-700 dark:text-emerald-300')}>
-                        {plan.discount_pct}% descuento
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-2">
-                      <p className={cn('text-3xl font-bold font-display', !plan.highlighted && 'text-surface-900 dark:text-white')}>
-                        {formatCurrency(applyDiscount(parseApiNumber(plan.price), plan.discount_pct), plan.currency)}
-                      </p>
-                      <p className={cn('text-sm line-through', plan.highlighted ? 'text-white/50' : 'text-surface-400')}>
-                        {formatCurrency(parseApiNumber(plan.price), plan.currency)}
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <p className={cn('text-3xl font-bold font-display', !plan.highlighted && 'text-surface-900 dark:text-white')}>
-                    {formatCurrency(parseApiNumber(plan.price), plan.currency)}
-                  </p>
-                )}
+                <p className={cn('text-3xl font-bold font-display', !plan.highlighted && 'text-surface-900 dark:text-white')}>
+                  {formatCurrency(parseApiNumber(plan.price), plan.currency)}
+                </p>
+                <p className={cn('mt-1 text-xs uppercase tracking-[0.18em]', plan.highlighted ? 'text-white/70' : 'text-surface-500')}>
+                  Valor neto
+                </p>
                 <p className={cn('mt-1 text-xs uppercase tracking-[0.18em]', plan.highlighted ? 'text-white/70' : 'text-surface-500')}>
                   {plan.billing_interval === 'year' ? 'Cobro anual' : plan.billing_interval === 'quarter' ? 'Cobro trimestral' : plan.billing_interval === 'semi_annual' ? 'Cobro semestral' : plan.billing_interval === 'manual' ? 'Manual' : 'Cobro mensual'}
                 </p>
+                <p className={cn('mt-2 text-xs', plan.highlighted ? 'text-white/85' : 'text-surface-500')}>
+                  IVA 19%: {formatCurrency(parseApiNumber(plan.tax_amount), plan.currency)}
+                </p>
+                <p className={cn('mt-1 text-xs font-semibold', plan.highlighted ? 'text-white' : 'text-brand-700 dark:text-brand-300')}>
+                  Total cobrado: {formatCurrency(parseApiNumber(plan.total_price), plan.currency)}
+                </p>
+                {plan.discount_pct ? (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <Tag size={11} className={plan.highlighted ? 'text-white' : 'text-amber-500'} />
+                    <span className={cn('text-[11px]', plan.highlighted ? 'text-white/85' : 'text-amber-700 dark:text-amber-300')}>
+                      Legacy {plan.discount_pct}%: no entra en la nueva cotización SaaS por promo code.
+                    </span>
+                  </div>
+                ) : null}
               </div>
               <div className={cn('text-right text-xs', plan.highlighted ? 'text-white/80' : 'text-surface-500')}>
                 <p>{plan.trial_days} días de prueba</p>
@@ -441,7 +439,7 @@ export default function PlatformPlansPage() {
       <Modal
         open={showModal}
         title={isEditing ? 'Editar plan SaaS' : 'Nuevo plan SaaS'}
-        description="Este catálogo alimenta el registro público de gimnasios y el pago online."
+        description="Este catálogo alimenta el registro público, la cotización del owner y el cobro SaaS. El price corresponde al valor neto; el IVA se agrega en runtime."
         onClose={() => {
           if (!createPlan.isPending && !updatePlan.isPending) {
             setShowModal(false);
@@ -493,13 +491,13 @@ export default function PlatformPlansPage() {
 
           <div className="grid gap-4 sm:grid-cols-5">
             <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Precio base</label>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Valor neto</label>
               <input type="number" min="0" className="input" value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))} required />
             </div>
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
                 <Tag size={12} className="mr-1 inline-block text-emerald-500" />
-                Descuento %
+                Descuento legacy %
               </label>
               <input
                 type="number"
@@ -542,12 +540,13 @@ export default function PlatformPlansPage() {
             <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm dark:border-emerald-900/40 dark:bg-emerald-950/20">
               <Tag size={15} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
               <span className="text-emerald-800 dark:text-emerald-200">
-                Precio con descuento:{' '}
+                Referencia legacy:{' '}
                 <strong>
                   {formatCurrency(applyDiscount(Number(form.price), Number(form.discount_pct)), form.currency || 'CLP')}
                 </strong>
-                {' '}— {form.discount_pct}% de descuento sobre{' '}
+                {' '}— {form.discount_pct}% sobre{' '}
                 {formatCurrency(Number(form.price), form.currency || 'CLP')}
+                . La nueva cotización SaaS usa promo code + IVA, no este campo.
               </span>
             </div>
           ) : null}

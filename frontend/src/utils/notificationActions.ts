@@ -1,26 +1,17 @@
 import type { UserRole } from '@/types';
+import { canAccessDashboard, getDefaultRouteForRole } from '@/utils';
 
 type NotificationDestination =
   | { kind: 'internal'; href: string }
   | { kind: 'external'; href: string }
   | { kind: 'none' };
 
-function getDefaultRouteForRole(role?: UserRole | null) {
-  if (role === 'client') {
-    return '/member?tab=notifications';
-  }
-  if (role === 'superadmin') {
-    return '/platform/tenants';
-  }
-  return '/dashboard';
-}
-
 function isExternalUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
-function mapStaffTabToRoute(tab?: string | null) {
-  if (!tab) return '/dashboard';
+function mapStaffTabToRoute(tab?: string | null, role?: UserRole | null) {
+  if (!tab) return getDefaultRouteForRole(role);
   if (tab === 'agenda') return '/classes';
   if (tab === 'payments') return '/reports';
   if (tab === 'plans' || tab === 'store' || tab === 'checkout') return '/plans';
@@ -31,8 +22,8 @@ function mapStaffTabToRoute(tab?: string | null) {
   if (tab === 'reports') return '/reports';
   if (tab === 'promo-codes') return '/promo-codes';
   if (tab === 'settings') return '/settings';
-  if (tab === 'dashboard') return '/dashboard';
-  return '/dashboard';
+  if (tab === 'dashboard') return canAccessDashboard(role) ? '/dashboard' : getDefaultRouteForRole(role);
+  return getDefaultRouteForRole(role);
 }
 
 function mapClientTabToRoute(params: URLSearchParams) {
@@ -48,7 +39,7 @@ function resolveQueryAction(actionUrl: string, role?: UserRole | null): Notifica
   if (role === 'client') {
     return { kind: 'internal', href: mapClientTabToRoute(params) };
   }
-  return { kind: 'internal', href: mapStaffTabToRoute(params.get('tab')) };
+  return { kind: 'internal', href: mapStaffTabToRoute(params.get('tab'), role) };
 }
 
 function resolveNexoAction(actionUrl: string, role?: UserRole | null): NotificationDestination {
@@ -93,7 +84,9 @@ function resolveNexoAction(actionUrl: string, role?: UserRole | null): Notificat
   if (rawPath.includes('promo')) return { kind: 'internal', href: '/promo-codes' };
   if (rawPath.includes('client')) return { kind: 'internal', href: '/clients' };
   if (rawPath.includes('setting')) return { kind: 'internal', href: '/settings' };
-  if (rawPath.includes('dashboard')) return { kind: 'internal', href: '/dashboard' };
+  if (rawPath.includes('dashboard')) {
+    return { kind: 'internal', href: canAccessDashboard(role) ? '/dashboard' : getDefaultRouteForRole(role) };
+  }
   return { kind: 'internal', href: getDefaultRouteForRole(role) };
 }
 
@@ -108,6 +101,9 @@ export function resolveNotificationDestination(actionUrl?: string | null, role?:
   }
 
   if (trimmed.startsWith('/')) {
+    if (trimmed === '/dashboard' || trimmed.startsWith('/dashboard?')) {
+      return { kind: 'internal', href: canAccessDashboard(role) ? trimmed : getDefaultRouteForRole(role) };
+    }
     return { kind: 'internal', href: trimmed };
   }
 

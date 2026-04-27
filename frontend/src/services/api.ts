@@ -1,5 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/stores/authStore';
+import type { BulkClassCancelRequest } from '@/types';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
@@ -26,20 +27,18 @@ api.interceptors.response.use(
     const is403Billing = error.response?.status === 403
       && typeof error.response.data === 'object'
       && error.response.data !== null
-      && (error.response.data as Record<string, unknown>).next_action === 'redirect_to_checkout';
+      && (
+        (error.response.data as Record<string, unknown>).next_action === 'redirect_to_checkout'
+        || (error.response.data as Record<string, unknown>).next_action === 'billing_required'
+        || Boolean((error.response.data as Record<string, unknown>).billing_status)
+      );
 
     if (is403Billing && !window.location.pathname.startsWith('/billing/')) {
       const data = error.response!.data as Record<string, string>;
-      if (data.checkout_url) {
-        // Plan con Stripe activo → redirigir directo al checkout
-        window.location.href = data.checkout_url;
-      } else {
-        // Sin checkout configurado → mostrar billing wall interno
-        const params = new URLSearchParams();
-        if (data.billing_status) params.set('status', data.billing_status);
-        if (data.tenant_slug) params.set('tenant', data.tenant_slug);
-        window.location.href = `/billing/expired?${params.toString()}`;
-      }
+      const params = new URLSearchParams();
+      if (data.billing_status) params.set('status', data.billing_status);
+      if (data.tenant_slug) params.set('tenant', data.tenant_slug);
+      window.location.href = `/billing/expired?${params.toString()}`;
       return Promise.reject(error);
     }
 
@@ -102,12 +101,20 @@ export const billingApi = {
   currentSubscription: () => api.get('/billing/subscription'),
   /** Consulta estado sin forzar acceso — seguro para billing wall y banner */
   getStatus: () => api.get('/billing/status'),
+  quote: (data: { plan_key: string; promo_code?: string; promo_code_id?: string | null }) => api.post('/billing/quote', data),
   /** Genera URL de checkout para renovación. plan_key opcional para cambiar de plan. */
-  reactivate: (planKey?: string) => api.post('/billing/reactivate', planKey ? { plan_key: planKey } : {}),
+  reactivate: (data: { plan_key: string; promo_code?: string; promo_code_id?: string | null; force_immediate?: boolean; success_url?: string; cancel_url?: string }) => api.post('/billing/reactivate', data),
+  cancelNextPlan: () => api.delete('/billing/next-plan'),
+  listPayments: (params?: { page?: number; per_page?: number }) => api.get('/billing/payments', { params }),
   listAdminTenants: (params?: Record<string, unknown>) => api.get('/billing/admin/tenants', { params }),
   listAdminPlans: () => api.get('/billing/admin/plans'),
   createAdminPlan: (data: unknown) => api.post('/billing/admin/plans', data),
   updateAdminPlan: (planId: string, data: unknown) => api.patch(`/billing/admin/plans/${planId}`, data),
+  listAdminPromoCodes: () => api.get('/billing/admin/promo-codes'),
+  createAdminPromoCode: (data: unknown) => api.post('/billing/admin/promo-codes', data),
+  updateAdminPromoCode: (promoId: string, data: unknown) => api.patch(`/billing/admin/promo-codes/${promoId}`, data),
+  deleteAdminPromoCode: (promoId: string) => api.delete(`/billing/admin/promo-codes/${promoId}`),
+  registerTenantManualPayment: (tenantId: string, data: unknown) => api.post(`/billing/admin/tenants/${tenantId}/manual-payment`, data),
 };
 
 export const dashboardApi = {
@@ -121,6 +128,8 @@ export const classesApi = {
   listReservations: (id: string) => api.get(`/classes/${id}/reservations`),
   create: (data: Record<string, unknown>) => api.post('/classes', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/classes/${id}`, data),
+  previewBulkCancel: (data: BulkClassCancelRequest) => api.post('/classes/bulk-cancel/preview', data),
+  bulkCancel: (data: BulkClassCancelRequest) => api.post('/classes/bulk-cancel', data),
   cancel: (id: string, options?: { cancelReason?: string; series?: boolean }) =>
     api.delete(`/classes/${id}`, {
       params: {
@@ -128,6 +137,8 @@ export const classesApi = {
         ...(options?.series ? { series: true } : {}),
       },
     }),
+  replicate: (data: { mode: 'day' | 'week' | 'month'; source_date: string; target_dates: string[] }) =>
+    api.post('/classes/replicate', data),
 };
 
 export const reservationsApi = {
@@ -144,6 +155,7 @@ export const clientsApi = {
   get: (id: string) => api.get(`/clients/${id}`),
   create: (data: Record<string, unknown>) => api.post('/clients', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/clients/${id}`, data),
+  hardDelete: (id: string) => api.delete(`/clients/${id}/hard-delete`),
   resetPassword: (id: string, newPassword: string) => api.post(`/clients/${id}/reset-password`, { new_password: newPassword }),
   stats: (id: string) => api.get(`/clients/${id}/stats`),
   membershipHistory: (id: string) => api.get(`/clients/${id}/membership-history`),
@@ -161,12 +173,34 @@ export const paymentsApi = {
 };
 
 export const checkinsApi = {
+  context: () => api.get('/checkins/context'),
+  list: (params?: Record<string, unknown>) => api.get('/checkins', { params }),
   create: (data: Record<string, unknown>) => api.post('/checkins', data),
   scan: (data: Record<string, unknown>) => api.post('/checkins/scan', data),
+  listSuspiciousCases: (params?: Record<string, unknown>) => api.get('/checkins/suspicious-cases', { params }),
+  getSuspiciousCase: (id: string) => api.get(`/checkins/suspicious-cases/${id}`),
+  updateSuspiciousCase: (id: string, data: Record<string, unknown>) => api.patch(`/checkins/suspicious-cases/${id}`, data),
 };
 
 export const staffApi = {
-  list: () => api.get<Array<{ id: string; full_name: string; role: string; email: string }>>('/staff'),
+  list: () => api.get<Array<{ id: string; full_name: string; role: string; email: string; is_active: boolean }>>('/staff'),
+  invite: (data: { email: string; first_name: string; last_name: string; role: string; replace_pending?: boolean }) =>
+    api.post('/staff/invite', data),
+  listInvitations: () => api.get<Array<{
+    email: string; first_name: string; last_name: string;
+    role: string; role_label: string; invited_by: string;
+    invited_at: string; expires_in_hours: number;
+  }>>('/staff/invitations'),
+  cancelInvitation: (email: string) => api.delete(`/staff/invitations/${encodeURIComponent(email)}`),
+  update: (id: string, data: { role?: string; first_name?: string; last_name?: string; is_active?: boolean }) =>
+    api.patch(`/staff/${id}`, data),
+  deactivate: (id: string) => api.delete(`/staff/${id}`),
+  hardDelete: (id: string) => api.delete(`/staff/${id}/hard-delete`),
+};
+
+export const invitationApi = {
+  getInfo: (token: string) => api.get(`/auth/invitation/${token}`),
+  accept: (token: string, password: string) => api.post('/auth/accept-invitation', { token, password }),
 };
 
 export const uploadApi = {
@@ -205,6 +239,13 @@ export const supportApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/support/interactions/${id}`, data),
 };
 
+export const feedbackApi = {
+  list: (params?: Record<string, unknown>) => api.get('/feedback/submissions', { params }),
+  create: (formData: FormData) => api.post('/feedback/submissions', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+};
+
 export const programsApi = {
   list: (params?: Record<string, unknown>) => api.get('/programs', { params }),
   create: (data: Record<string, unknown>) => api.post('/programs', data),
@@ -216,6 +257,15 @@ export const programsApi = {
   listEnrollments: (id: string) => api.get(`/programs/${id}/enrollments`),
   listClasses: (id: string) => api.get(`/programs/${id}/classes`),
   generateClasses: (id: string, data: Record<string, unknown>) => api.post(`/programs/${id}/generate-classes`, data),
+};
+
+export const programBookingsApi = {
+  list: (params?: Record<string, unknown>) => api.get('/program-bookings', { params }),
+  create: (data: { program_id: string; recurrence_group_id: string }) => api.post('/program-bookings', data),
+  get: (id: string) => api.get(`/program-bookings/${id}`),
+  listReservations: (id: string) => api.get(`/program-bookings/${id}/reservations`),
+  cancel: (id: string, data?: { cancel_reason?: string }, force = false) =>
+    api.delete(`/program-bookings/${id}${force ? '?force=true' : ''}`, { data }),
 };
 
 export const settingsApi = {
@@ -245,6 +295,7 @@ export const paymentProviderApi = {
 
 export const platformApi = {
   listLeads: (params?: Record<string, unknown>) => api.get('/platform/leads', { params }),
+  listFeedback: (params?: Record<string, unknown>) => api.get('/platform/feedback', { params }),
   updateLead: (id: string, data: Record<string, unknown>) => api.patch(`/platform/leads/${id}`, data),
 };
 

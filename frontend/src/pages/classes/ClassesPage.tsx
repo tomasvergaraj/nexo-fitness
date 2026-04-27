@@ -4,16 +4,26 @@ import { AnimatePresence, motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   CalendarDays, Plus, Filter, Clock, Users, Video, ChevronLeft, ChevronRight,
-  Ban, ExternalLink, MapPin, Repeat2, UserCircle,
+  Ban, ExternalLink, MapPin, Repeat2, UserCircle, Copy, Tag,
 } from 'lucide-react';
+import ClassColorPicker from '@/components/ui/ClassColorPicker';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
-import { branchesApi, checkinsApi, classesApi, clientsApi, reservationsApi, staffApi } from '@/services/api';
+import { branchesApi, checkinsApi, classesApi, clientsApi, plansApi, reservationsApi, staffApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import {
   classStatusColor, cn, formatDateTime, formatTime, getApiError, occupancyColor,
 } from '@/utils';
-import type { Branch, ClassReservationDetail, GymClass, PaginatedResponse, User } from '@/types';
+import type {
+  Branch,
+  BulkClassCancelResponse,
+  BulkClassCancelPreviewResponse,
+  BulkClassCancelRequest,
+  ClassReservationDetail,
+  GymClass,
+  PaginatedResponse,
+  User,
+} from '@/types';
 
 type ViewMode = 'cards' | 'list' | 'calendar';
 type StatusFilter = 'all' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
@@ -34,6 +44,16 @@ type ClassFormState = {
   color: string;
   repeat_type: 'none' | 'daily' | 'weekly' | 'monthly';
   repeat_until: string;
+  restricted_plan_id: string;
+};
+
+type BulkCancelFormState = {
+  date_from: string;
+  date_to: string;
+  time_from: string;
+  time_to: string;
+  cancel_reason: string;
+  notify_members: true;
 };
 
 const CLASS_TYPE_PRESETS = [
@@ -44,6 +64,19 @@ const CLASS_TYPE_PRESETS = [
   { label: 'Pilates', value: 'pilates', color: '#8b5cf6', duration: 60, capacity: 18 },
   { label: 'CrossFit', value: 'crossfit', color: '#eab308', duration: 60, capacity: 14 },
   { label: 'Sesión Personal (1:1)', value: 'personal_training', color: '#a855f7', duration: 60, capacity: 1 },
+  { label: 'Zumba', value: 'zumba', color: '#ec4899', duration: 60, capacity: 25 },
+  { label: 'Boxeo', value: 'boxeo', color: '#dc2626', duration: 60, capacity: 16 },
+  { label: 'Kickboxing', value: 'kickboxing', color: '#b91c1c', duration: 60, capacity: 14 },
+  { label: 'Natación', value: 'natacion', color: '#0ea5e9', duration: 45, capacity: 12 },
+  { label: 'Stretching', value: 'stretching', color: '#34d399', duration: 45, capacity: 20 },
+  { label: 'TRX', value: 'trx', color: '#64748b', duration: 45, capacity: 15 },
+  { label: 'Aqua Fitness', value: 'aqua_fitness', color: '#38bdf8', duration: 45, capacity: 20 },
+  { label: 'Body Pump', value: 'body_pump', color: '#f59e0b', duration: 60, capacity: 20 },
+  { label: 'GAP', value: 'gap', color: '#10b981', duration: 45, capacity: 20 },
+  { label: 'Meditación', value: 'meditacion', color: '#818cf8', duration: 60, capacity: 15 },
+  { label: 'Calistenia', value: 'calistenia', color: '#84cc16', duration: 60, capacity: 15 },
+  { label: 'Muay Thai', value: 'muay_thai', color: '#b45309', duration: 60, capacity: 12 },
+  { label: 'Baile', value: 'baile', color: '#f472b6', duration: 60, capacity: 20 },
 ] as const;
 
 const START_TIME_PRESETS = ['06:00', '07:00', '08:00', '09:00', '18:00', '19:00', '20:00'];
@@ -77,6 +110,10 @@ function getSuggestedClassName(classType: string) {
     .join(' ');
 }
 
+function getClassTypePreset(classType: string) {
+  return CLASS_TYPE_PRESETS.find((item) => item.value === classType.trim());
+}
+
 function shouldSyncClassName(currentName: string, previousClassType: string) {
   const normalizedName = currentName.trim();
   if (!normalizedName) {
@@ -94,21 +131,41 @@ function shouldSyncClassName(currentName: string, previousClassType: string) {
   );
 }
 
+function shouldSyncPresetField(
+  currentValue: string,
+  previousClassType: string,
+  getPresetValue: (preset: (typeof CLASS_TYPE_PRESETS)[number]) => string,
+  initialValue: string,
+) {
+  const previousPreset = getClassTypePreset(previousClassType);
+  if (previousPreset) {
+    return currentValue === getPresetValue(previousPreset);
+  }
+  return currentValue === initialValue;
+}
+
 function applyClassTypeChange(
   current: ClassFormState,
   nextClassType: string,
   preset?: (typeof CLASS_TYPE_PRESETS)[number],
 ): ClassFormState {
   const nextState: ClassFormState = { ...current, class_type: nextClassType };
+  const resolvedPreset = preset ?? getClassTypePreset(nextClassType);
 
   if (shouldSyncClassName(current.name, current.class_type)) {
     nextState.name = getSuggestedClassName(nextClassType);
   }
 
-  if (preset) {
-    nextState.duration_minutes = String(preset.duration);
-    nextState.max_capacity = String(preset.capacity);
-    nextState.color = preset.color;
+  if (resolvedPreset) {
+    if (shouldSyncPresetField(current.duration_minutes, current.class_type, (item) => String(item.duration), '60')) {
+      nextState.duration_minutes = String(resolvedPreset.duration);
+    }
+    if (shouldSyncPresetField(current.max_capacity, current.class_type, (item) => String(item.capacity), '20')) {
+      nextState.max_capacity = String(resolvedPreset.capacity);
+    }
+    if (shouldSyncPresetField(current.color.toLowerCase(), current.class_type, (item) => item.color.toLowerCase(), '#06b6d4')) {
+      nextState.color = resolvedPreset.color;
+    }
   }
 
   return nextState;
@@ -139,6 +196,7 @@ function createInitialForm(date: Date, defaultBranchId = ''): ClassFormState {
     color: '#06b6d4',
     repeat_type: 'none',
     repeat_until: '',
+    restricted_plan_id: '',
   };
 }
 
@@ -162,6 +220,7 @@ function gymClassToFormState(gymClass: GymClass): ClassFormState {
     color: gymClass.color || '#06b6d4',
     repeat_type: 'none',
     repeat_until: '',
+    restricted_plan_id: gymClass.restricted_plan_id || '',
   };
 }
 
@@ -227,6 +286,28 @@ function formatHourLabel(hour: number) {
   return `${`${hour}`.padStart(2, '0')}:00`;
 }
 
+function formatCalendarTimeInput(hour: number) {
+  if (hour >= 24) {
+    return '23:59';
+  }
+  return formatHourLabel(hour);
+}
+
+function createInitialBulkCancelForm(
+  weekDates: Date[],
+  calendarHourStart: number,
+  calendarHourEnd: number,
+): BulkCancelFormState {
+  return {
+    date_from: formatDateKey(weekDates[0]),
+    date_to: formatDateKey(weekDates[weekDates.length - 1]),
+    time_from: formatCalendarTimeInput(calendarHourStart),
+    time_to: formatCalendarTimeInput(calendarHourEnd),
+    cancel_reason: '',
+    notify_members: true,
+  };
+}
+
 function formatClassStatusLabel(status: GymClass['status']) {
   if (status === 'scheduled') return 'Programada';
   if (status === 'in_progress') return 'En curso';
@@ -239,6 +320,55 @@ function formatClassModalityLabel(modality: ClassFormState['modality'] | GymClas
   if (modality === 'in_person') return 'Presencial';
   if (modality === 'online') return 'Online';
   return 'Híbrida';
+}
+
+function isPlanRestrictedClass(gymClass: GymClass) {
+  return Boolean(gymClass.restricted_plan_id);
+}
+
+function getPlanMarkerLabel(gymClass: GymClass, isTiny: boolean) {
+  if (isTiny) return 'Plan';
+  return gymClass.restricted_plan_name?.trim() || 'Plan';
+}
+
+function hasHiddenClassesInDay(
+  dayClasses: GymClass[],
+  calendarStartMinutes: number,
+  calendarEndMinutes: number,
+) {
+  return dayClasses.some((gymClass) => {
+    const startMinutes = getMinutesOfDay(new Date(gymClass.start_time));
+    const endMinutes = getMinutesOfDay(new Date(gymClass.end_time));
+    return endMinutes <= calendarStartMinutes || startMinutes >= calendarEndMinutes;
+  });
+}
+
+function renderCalendarClassTooltip(gymClass: GymClass) {
+  const locationLabel = gymClass.branch_name || formatClassModalityLabel(gymClass.modality);
+  const planLabel = gymClass.restricted_plan_name || 'Plan específico';
+
+  return (
+    <div className="min-w-[220px] space-y-2">
+      <div>
+        <p className="text-sm font-semibold leading-tight">{gymClass.name}</p>
+        <p className="mt-0.5 text-[11px] opacity-80">
+          {formatTime(gymClass.start_time)} - {formatTime(gymClass.end_time)}
+        </p>
+      </div>
+
+      <div className="space-y-1 text-[11px] leading-5">
+        <p><span className="opacity-70">Estado:</span> {formatClassStatusLabel(gymClass.status)}</p>
+        <p><span className="opacity-70">Ubicación:</span> {locationLabel}</p>
+        <p><span className="opacity-70">Instructor:</span> {gymClass.instructor_name || 'Sin asignar'}</p>
+        <p><span className="opacity-70">Cupos:</span> {gymClass.current_bookings}/{gymClass.max_capacity}</p>
+        {isPlanRestrictedClass(gymClass) ? (
+          <p><span className="opacity-70">Plan:</span> {planLabel}</p>
+        ) : null}
+      </div>
+
+      <p className="text-[10px] opacity-65">Haz clic para ver acciones de la clase.</p>
+    </div>
+  );
 }
 
 type ClassLayout = { gymClass: GymClass; col: number; totalCols: number };
@@ -293,6 +423,14 @@ function reservationStatusBadgeClass(status: ClassReservationDetail['status']) {
   return 'badge-neutral';
 }
 
+function getProgramOriginTooltip(reservation: ClassReservationDetail) {
+  const programLabel = reservation.program_name?.trim() || 'Programa';
+  const sourceLabel = reservation.program_booking_status === 'cancelled'
+    ? 'Reserva originada en un programa ya cancelado'
+    : 'Reserva originada en un programa completo';
+  return `${sourceLabel}: ${programLabel}`;
+}
+
 export default function ClassesPage() {
   const today = useMemo(() => {
     const next = new Date();
@@ -321,6 +459,20 @@ export default function ClassesPage() {
   const [enrollClientId, setEnrollClientId] = useState('');
   const [cancelingReservationId, setCancelingReservationId] = useState<string | null>(null);
 
+  // Calendar class action menu
+  const [calendarMenuClass, setCalendarMenuClass] = useState<GymClass | null>(null);
+  const [showBulkCancelModal, setShowBulkCancelModal] = useState(false);
+  const [bulkCancelForm, setBulkCancelForm] = useState<BulkCancelFormState>(() => createInitialBulkCancelForm(buildWeekDays(new Date()), 6, 23));
+  const [bulkCancelPreview, setBulkCancelPreview] = useState<BulkClassCancelPreviewResponse | null>(null);
+
+  // Replicate modal
+  type ReplicateMode = 'day' | 'week' | 'month';
+  const [showReplicateModal, setShowReplicateModal] = useState(false);
+  const [replicateMode, setReplicateMode] = useState<ReplicateMode>('day');
+  const [replicateSourceDate, setReplicateSourceDate] = useState('');
+  const [replicateTargetStart, setReplicateTargetStart] = useState('');
+  const [replicateTargetEnd, setReplicateTargetEnd] = useState('');
+
   const weekDates = useMemo(() => buildWeekDays(weekStartDate), [weekStartDate]);
 
   const selectedDate = weekDates[selectedDay];
@@ -328,6 +480,11 @@ export default function ClassesPage() {
   const { data: branches = [] } = useQuery<Branch[]>({
     queryKey: ['branches'],
     queryFn: async () => (await branchesApi.list()).data,
+  });
+
+  const { data: plans = [] } = useQuery<import('@/types').Plan[]>({
+    queryKey: ['plans-active'],
+    queryFn: async () => (await plansApi.list({ is_active: true })).data?.items ?? [],
   });
 
   const { data: staffList = [] } = useQuery<Array<{ id: string; full_name: string; role: string }>>({
@@ -366,6 +523,8 @@ export default function ClassesPage() {
     month: 'long',
   });
   const weekRangeLabel = `${weekDates[0].toLocaleDateString('es-CL', { day: 'numeric', month: 'short' })} - ${weekDates[6].toLocaleDateString('es-CL', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  const selectedBranchName = activeBranches.find((branch) => branch.id === selectedBranchId)?.name || 'Todas las sucursales';
+  const selectedInstructorName = staffList.find((staff) => staff.id === selectedInstructorId)?.full_name || 'Todos los instructores';
 
   useEffect(() => {
     if (form.modality === 'in_person' && form.online_link) {
@@ -385,6 +544,28 @@ export default function ClassesPage() {
     }
     setForm((current) => ({ ...current, branch_id: defaultBranchId }));
   }, [defaultBranchId, form.branch_id, showCreateModal]);
+
+  const updateBulkCancelForm = (patch: Partial<BulkCancelFormState>) => {
+    setBulkCancelForm((current) => ({ ...current, ...patch }));
+    setBulkCancelPreview(null);
+  };
+
+  const buildBulkCancelPayload = (): BulkClassCancelRequest => ({
+    date_from: bulkCancelForm.date_from,
+    date_to: bulkCancelForm.date_to,
+    time_from: bulkCancelForm.time_from,
+    time_to: bulkCancelForm.time_to,
+    cancel_reason: bulkCancelForm.cancel_reason.trim() || undefined,
+    notify_members: true,
+    ...(selectedBranchId ? { branch_id: selectedBranchId } : {}),
+    ...(selectedInstructorId ? { instructor_id: selectedInstructorId } : {}),
+  });
+
+  const openBulkCancelModal = () => {
+    setBulkCancelForm(createInitialBulkCancelForm(weekDates, calendarHourStart, calendarHourEnd));
+    setBulkCancelPreview(null);
+    setShowBulkCancelModal(true);
+  };
 
   const calendarRange = useMemo(() => {
     const firstDay = weekDates[0];
@@ -490,6 +671,7 @@ export default function ClassesPage() {
         color: form.color,
         repeat_type: form.repeat_type,
         repeat_until: form.repeat_type !== 'none' && form.repeat_until ? form.repeat_until : null,
+        restricted_plan_id: form.restricted_plan_id || null,
       });
       return response.data;
     },
@@ -526,6 +708,47 @@ export default function ClassesPage() {
     },
   });
 
+  const previewBulkCancel = useMutation({
+    mutationFn: async () => {
+      const response = await classesApi.previewBulkCancel(buildBulkCancelPayload());
+      return response.data as BulkClassCancelPreviewResponse;
+    },
+    onSuccess: (data) => {
+      setBulkCancelPreview(data);
+      if (data.matched_classes === 0) {
+        toast('No encontramos clases futuras programadas dentro del rango y horario visibles.');
+      }
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo previsualizar la cancelación masiva'));
+    },
+  });
+
+  const executeBulkCancel = useMutation({
+    mutationFn: async () => {
+      const response = await classesApi.bulkCancel(buildBulkCancelPayload());
+      return response.data as BulkClassCancelResponse;
+    },
+    onSuccess: (data) => {
+      const baseMessage = `${data.cancelled_classes} clase${data.cancelled_classes !== 1 ? 's' : ''} cancelada${data.cancelled_classes !== 1 ? 's' : ''}`;
+      if (data.notification_failures > 0) {
+        toast.success(`${baseMessage}. ${data.notification_failures} entrega${data.notification_failures !== 1 ? 's' : ''} push con error.`);
+      } else {
+        toast.success(baseMessage);
+      }
+      setShowBulkCancelModal(false);
+      setBulkCancelPreview(null);
+      setBulkCancelForm(createInitialBulkCancelForm(weekDates, calendarHourStart, calendarHourEnd));
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['class-reservations'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo ejecutar la cancelación masiva'));
+    },
+  });
+
   const updateClass = useMutation({
     mutationFn: async () => {
       if (!editingClass) throw new Error('No hay clase para editar');
@@ -555,6 +778,7 @@ export default function ClassesPage() {
         waitlist_enabled: editForm.waitlist_enabled,
         online_link: editForm.modality === 'in_person' ? null : editForm.online_link || null,
         color: editForm.color,
+        restricted_plan_id: editForm.restricted_plan_id || null,
       });
       return response.data;
     },
@@ -632,15 +856,66 @@ export default function ClassesPage() {
     },
   });
 
+  const replicateMutation = useMutation({
+    mutationFn: (payload: { mode: 'day' | 'week' | 'month'; source_date: string; target_dates: string[] }) =>
+      classesApi.replicate(payload),
+    onSuccess: (res: any) => {
+      const count = res.data?.created ?? 0;
+      toast.success(`${count} clase${count !== 1 ? 's' : ''} replicada${count !== 1 ? 's' : ''} correctamente`);
+      setShowReplicateModal(false);
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo replicar')),
+  });
+
+  function buildTargetDates(mode: ReplicateMode, start: string, end: string): string[] {
+    if (!start || !end) return [];
+    const dates: string[] = [];
+    const startD = new Date(start + 'T12:00:00');
+    const endD = new Date(end + 'T12:00:00');
+    if (endD < startD) return [];
+
+    if (mode === 'day') {
+      const cur = new Date(startD);
+      while (cur <= endD) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setDate(cur.getDate() + 1);
+      }
+    } else if (mode === 'week') {
+      const cur = new Date(startD);
+      while (cur <= endD) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setDate(cur.getDate() + 7);
+      }
+    } else {
+      const cur = new Date(startD);
+      while (cur <= endD) {
+        dates.push(cur.toISOString().slice(0, 10));
+        cur.setMonth(cur.getMonth() + 1);
+      }
+    }
+    return dates;
+  }
+
+  function handleReplicate() {
+    const targets = buildTargetDates(replicateMode, replicateTargetStart, replicateTargetEnd);
+    if (!replicateSourceDate || targets.length === 0) return;
+    replicateMutation.mutate({ mode: replicateMode, source_date: replicateSourceDate, target_dates: targets });
+  }
+
   const classes = data?.items ?? [];
   const calendarClasses = calendarData?.items ?? [];
+  const isCalendarWeekEmpty = calendarClasses.length === 0;
   const calendarClassesByDay = useMemo(() => (
-    calendarClasses.reduce<Record<string, GymClass[]>>((accumulator, gymClass) => {
-      const key = formatDateKeyFromIso(gymClass.start_time);
-      accumulator[key] = accumulator[key] ? [...accumulator[key], gymClass] : [gymClass];
-      return accumulator;
-    }, {})
-  ), [calendarClasses]);
+    calendarClasses
+      .filter(gc => statusFilter === 'cancelled' || gc.status !== 'cancelled')
+      .reduce<Record<string, GymClass[]>>((accumulator, gymClass) => {
+        const key = formatDateKeyFromIso(gymClass.start_time);
+        accumulator[key] = accumulator[key] ? [...accumulator[key], gymClass] : [gymClass];
+        return accumulator;
+      }, {})
+  ), [calendarClasses, statusFilter]);
   const classReservations = classReservationsQuery.data ?? [];
   const confirmedReservations = classReservations.filter((item) => item.status === 'confirmed' || item.status === 'attended').length;
   const waitlistedReservations = classReservations.filter((item) => item.status === 'waitlisted').length;
@@ -667,6 +942,28 @@ export default function ClassesPage() {
     }
     setCreateModalDate(nextDate);
     setForm(createInitialForm(nextDate, defaultBranchId));
+    setShowCreateModal(true);
+  };
+
+  const openCreateModalForClassSlot = (gymClass: GymClass) => {
+    const startDate = new Date(gymClass.start_time);
+    const endDate = new Date(gymClass.end_time);
+    const durationMins = Math.max(
+      Math.round((endDate.getTime() - startDate.getTime()) / 60000),
+      15,
+    );
+    const dayIndex = weekDates.findIndex((item) => isSameDay(item, startDate));
+    const nextForm = createInitialForm(startDate, gymClass.branch_id || defaultBranchId);
+
+    if (dayIndex >= 0) {
+      setSelectedDay(dayIndex);
+    }
+
+    nextForm.branch_id = gymClass.branch_id || nextForm.branch_id;
+    nextForm.duration_minutes = String(durationMins);
+
+    setCreateModalDate(startDate);
+    setForm(nextForm);
     setShowCreateModal(true);
   };
 
@@ -852,6 +1149,29 @@ export default function ClassesPage() {
                 {formatHourLabel(calendarHourStart)} - {formatHourLabel(calendarHourEnd)}
               </p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const todayStr = weekDates[selectedDay]?.toISOString().slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+                setReplicateSourceDate(todayStr);
+                setReplicateTargetStart('');
+                setReplicateTargetEnd('');
+                setReplicateMode('day');
+                setShowReplicateModal(true);
+              }}
+              className="btn-secondary flex items-center gap-1.5 text-sm"
+            >
+              <Copy size={14} /> Replicar
+            </button>
+
+            <button
+              type="button"
+              onClick={openBulkCancelModal}
+              className="btn-danger flex items-center gap-1.5 text-sm"
+            >
+              <Ban size={14} /> Cancelar masivamente
+            </button>
           </div>
         </motion.div>
       ) : (
@@ -994,6 +1314,17 @@ export default function ClassesPage() {
                   })}
                 </div>
 
+                {isCalendarWeekEmpty ? (
+                  <div className="border-b border-surface-200/70 bg-brand-50/40 px-4 py-3 text-center dark:border-surface-800/70 dark:bg-brand-950/10">
+                    <p className="text-sm font-medium text-surface-700 dark:text-surface-200">
+                      No hay clases esta semana.
+                    </p>
+                    <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
+                      Haz clic en cualquier bloque horario para crear la primera clase y dejarla marcada en el calendario.
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="grid grid-cols-[88px_repeat(7,minmax(148px,1fr))]">
                   <div className="border-r border-surface-200/70 bg-surface-50/70 dark:border-surface-800/70 dark:bg-surface-950/20">
                     {calendarHourSlots.map((hour) => (
@@ -1018,6 +1349,7 @@ export default function ClassesPage() {
                       return endMinutes > calendarStartMinutes && startMinutes < calendarEndMinutes;
                     });
                     const dayLayout = computeDayLayout(visibleDayClasses);
+                    const hasHiddenClasses = hasHiddenClassesInDay(dayClasses, calendarStartMinutes, calendarEndMinutes);
 
                     return (
                       <div
@@ -1059,57 +1391,79 @@ export default function ClassesPage() {
 
                           const top = ((visibleStartMinutes - calendarStartMinutes) / 60) * CALENDAR_SLOT_HEIGHT;
                           const rawHeight = ((visibleEndMinutes - visibleStartMinutes) / 60) * CALENDAR_SLOT_HEIGHT;
-                          const height = Math.max(rawHeight - 8, 30);
+                          const height = Math.max(rawHeight, 30);
                           const leftPct = (col / totalCols) * 100;
                           const rightPct = ((totalCols - col - 1) / totalCols) * 100;
                           const isTiny = height < 50;
+                          const isRestricted = isPlanRestrictedClass(gymClass);
+                          const planMarkerLabel = getPlanMarkerLabel(gymClass, isTiny);
+                          const planMarkerTitle = gymClass.restricted_plan_name
+                            ? `Clase ligada al plan ${gymClass.restricted_plan_name}`
+                            : 'Clase ligada a un plan específico';
 
                           return (
-                            <button
+                            <div
                               key={gymClass.id}
-                              type="button"
-                              onClick={() => setSelectedClass(gymClass)}
-                              className="absolute z-10 overflow-hidden rounded-2xl px-2.5 py-2 text-left shadow-lg shadow-surface-950/5 ring-1 ring-black/5 transition-transform hover:scale-[1.01]"
+                              className="absolute z-10"
                               style={{
-                                top: `${top + 4}px`,
+                                top: `${top}px`,
                                 height: `${height}px`,
-                                left: `calc(${leftPct}% + 5px)`,
-                                right: `calc(${rightPct}% + 5px)`,
-                                backgroundColor: gymClass.color || '#06b6d4',
-                                opacity: gymClass.status === 'cancelled' ? 0.5 : 1,
+                                left: `${leftPct}%`,
+                                right: `${rightPct}%`,
                               }}
                             >
-                              <div className="flex h-full flex-col justify-between text-white">
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold leading-tight">{gymClass.name}</p>
-                                  {!isTiny ? (
-                                    <p className="mt-0.5 text-[10px] font-medium text-white/85">
-                                      {formatTime(gymClass.start_time)} – {formatTime(gymClass.end_time)}
-                                    </p>
-                                  ) : null}
-                                </div>
-                                {!isTiny ? (
-                                  <div className="mt-1 space-y-0.5 text-[10px] text-white/85">
-                                    <div className="flex items-center gap-1">
-                                      <span className="truncate">{gymClass.branch_name || formatClassModalityLabel(gymClass.modality)}</span>
-                                      <span className="shrink-0">{gymClass.current_bookings}/{gymClass.max_capacity}</span>
+                              <Tooltip
+                                content={renderCalendarClassTooltip(gymClass)}
+                                className="flex h-full w-full"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setCalendarMenuClass(gymClass)}
+                                  title={isRestricted ? planMarkerTitle : undefined}
+                                  className="h-full w-full overflow-hidden rounded-xl px-2.5 py-2 text-left shadow-lg shadow-surface-950/5 ring-1 ring-black/5 transition-transform hover:scale-[1.01]"
+                                  style={{ backgroundColor: gymClass.color || '#06b6d4' }}
+                                >
+                                  <div className="flex h-full flex-col justify-between text-white">
+                                    <div className="min-w-0">
+                                      {isRestricted ? (
+                                        <div className="mb-1 flex">
+                                          <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-black/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white/95">
+                                            <Tag size={9} className="shrink-0" />
+                                            <span className="truncate">{planMarkerLabel}</span>
+                                          </span>
+                                        </div>
+                                      ) : null}
+                                      <p className="truncate text-sm font-semibold leading-tight">{gymClass.name}</p>
+                                      {!isTiny ? (
+                                        <p className="mt-0.5 text-[10px] font-medium text-white/85">
+                                          {formatTime(gymClass.start_time)} – {formatTime(gymClass.end_time)}
+                                        </p>
+                                      ) : null}
                                     </div>
-                                    {gymClass.instructor_name ? (
-                                      <p className="truncate">{gymClass.instructor_name}</p>
+                                    {!isTiny ? (
+                                      <div className="mt-1 space-y-0.5 text-[10px] text-white/85">
+                                        <div className="flex items-center gap-1">
+                                          <span className="truncate">{gymClass.branch_name || formatClassModalityLabel(gymClass.modality)}</span>
+                                          <span className="shrink-0">{gymClass.current_bookings}/{gymClass.max_capacity}</span>
+                                        </div>
+                                        {gymClass.instructor_name ? (
+                                          <p className="truncate">{gymClass.instructor_name}</p>
+                                        ) : null}
+                                      </div>
                                     ) : null}
                                   </div>
-                                ) : null}
-                              </div>
-                            </button>
+                                </button>
+                              </Tooltip>
+                            </div>
                           );
                         })}
 
-                        {!visibleDayClasses.length ? (
+                        {!visibleDayClasses.length && hasHiddenClasses ? (
                           <div
                             className="pointer-events-none absolute inset-x-3 rounded-2xl border border-dashed border-surface-200/80 bg-white/50 px-3 py-2 text-[11px] text-surface-400 dark:border-surface-700/70 dark:bg-surface-950/10 dark:text-surface-500"
                             style={{ top: '8px' }}
                           >
-                            {dayClasses.length ? 'Fuera del rango visible' : 'Sin clases'}
+                            Fuera del rango visible
                           </div>
                         ) : null}
                       </div>
@@ -1546,45 +1900,40 @@ export default function ClassesPage() {
             </div>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Capacidad</label>
-              <div className="flex flex-wrap gap-2">
-                {CAPACITY_PRESETS.map((capacity) => (
-                  <button
-                    key={capacity}
-                    type="button"
-                    onClick={() => setForm((current) => ({ ...current, max_capacity: String(capacity) }))}
-                    className={cn(
-                      'rounded-full border px-3 py-1.5 text-sm transition-colors',
-                      Number(form.max_capacity) === capacity
-                        ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
-                        : 'border-surface-200 text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:text-surface-300',
-                    )}
-                  >
-                    {capacity} cupos
-                  </button>
-                ))}
-              </div>
-              <input
-                type="number"
-                min="1"
-                className="input mt-3"
-                value={form.max_capacity}
-                onChange={(event) => setForm((current) => ({ ...current, max_capacity: event.target.value }))}
-                required
-              />
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Capacidad</label>
+            <div className="flex flex-wrap gap-2">
+              {CAPACITY_PRESETS.map((capacity) => (
+                <button
+                  key={capacity}
+                  type="button"
+                  onClick={() => setForm((current) => ({ ...current, max_capacity: String(capacity) }))}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-sm transition-colors',
+                    Number(form.max_capacity) === capacity
+                      ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/20 dark:text-brand-300'
+                      : 'border-surface-200 text-surface-600 hover:border-surface-300 dark:border-surface-800 dark:text-surface-300',
+                  )}
+                >
+                  {capacity} cupos
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color</label>
-              <input
-                type="color"
-                className="input h-11 w-full min-w-[88px] p-2"
-                value={form.color}
-                onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))}
-              />
-            </div>
+            <input
+              type="number"
+              min="1"
+              className="input mt-3"
+              value={form.max_capacity}
+              onChange={(event) => setForm((current) => ({ ...current, max_capacity: event.target.value }))}
+              required
+            />
           </div>
+
+          <ClassColorPicker
+            inputId="create-class-color-picker"
+            value={form.color}
+            onChange={(nextColor) => setForm((current) => ({ ...current, color: nextColor }))}
+          />
 
           {(form.modality === 'online' || form.modality === 'hybrid') ? (
             <div>
@@ -1621,6 +1970,24 @@ export default function ClassesPage() {
               <p className="text-xs text-surface-400">Cuando la clase esté llena, los clientes pueden anotarse en espera</p>
             </div>
           </label>
+
+          {/* ─── Plan restringido ─── */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+              Plan restringido <span className="text-surface-400 font-normal">(opcional)</span>
+            </label>
+            <select
+              className="input"
+              value={form.restricted_plan_id}
+              onChange={(event) => setForm((current) => ({ ...current, restricted_plan_id: event.target.value }))}
+            >
+              <option value="">Visible para todos</option>
+              {plans.map((plan) => (
+                <option key={plan.id} value={plan.id}>{plan.name}</option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-surface-400">Solo los clientes con este plan podrán ver y reservar esta clase.</p>
+          </div>
 
           {/* ─── Recurrencia ─── */}
           <div className="rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-800 dark:bg-surface-950/20">
@@ -1905,34 +2272,29 @@ export default function ClassesPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
-                  Sede
-                  {editForm.modality !== 'online' ? <span className="ml-2 text-xs font-normal text-surface-400">Obligatoria</span> : null}
-                </label>
-                <select
-                  className="input"
-                  value={editForm.branch_id}
-                  onChange={(event) => setEditForm((current) => ({ ...current, branch_id: event.target.value }))}
-                  required={editForm.modality !== 'online'}
-                >
-                  <option value="">{editForm.modality === 'online' ? 'Sin sede física' : 'Selecciona una sede'}</option>
-                  {activeBranches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>{branch.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Color</label>
-                <input
-                  type="color"
-                  className="input h-11 w-full min-w-[88px] p-2"
-                  value={editForm.color}
-                  onChange={(event) => setEditForm((current) => ({ ...current, color: event.target.value }))}
-                />
-              </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Sede
+                {editForm.modality !== 'online' ? <span className="ml-2 text-xs font-normal text-surface-400">Obligatoria</span> : null}
+              </label>
+              <select
+                className="input"
+                value={editForm.branch_id}
+                onChange={(event) => setEditForm((current) => ({ ...current, branch_id: event.target.value }))}
+                required={editForm.modality !== 'online'}
+              >
+                <option value="">{editForm.modality === 'online' ? 'Sin sede física' : 'Selecciona una sede'}</option>
+                {activeBranches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>{branch.name}</option>
+                ))}
+              </select>
             </div>
+
+            <ClassColorPicker
+              inputId="edit-class-color-picker"
+              value={editForm.color}
+              onChange={(nextColor) => setEditForm((current) => ({ ...current, color: nextColor }))}
+            />
 
             {staffList.length > 0 ? (
               <div>
@@ -1985,6 +2347,24 @@ export default function ClassesPage() {
                 <p className="text-xs text-surface-400">Cuando la clase esté llena, los clientes pueden anotarse en espera</p>
               </div>
             </label>
+
+            {/* ─── Plan restringido ─── */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                Plan restringido <span className="text-surface-400 font-normal">(opcional)</span>
+              </label>
+              <select
+                className="input"
+                value={editForm.restricted_plan_id}
+                onChange={(event) => setEditForm((current) => ({ ...current, restricted_plan_id: event.target.value }))}
+              >
+                <option value="">Visible para todos</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>{plan.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-xs text-surface-400">Solo los clientes con este plan podrán ver y reservar esta clase.</p>
+            </div>
 
             <div className="flex justify-end gap-2 pt-2">
               <button
@@ -2090,6 +2470,14 @@ export default function ClassesPage() {
                             <span className={cn('badge', reservationStatusBadgeClass(reservation.status))}>
                               {formatReservationStatusLabel(reservation.status)}
                             </span>
+                            {reservation.reservation_origin === 'program' ? (
+                              <Tooltip content={getProgramOriginTooltip(reservation)}>
+                                <span className={cn('badge', reservation.program_booking_status === 'cancelled' ? 'badge-neutral' : 'badge-info')}>
+                                  <Repeat2 size={11} />
+                                  Prog.
+                                </span>
+                              </Tooltip>
+                            ) : null}
                             {reservation.status === 'waitlisted' && reservation.waitlist_position ? (
                               <span className="badge badge-neutral">#{reservation.waitlist_position}</span>
                             ) : null}
@@ -2098,6 +2486,7 @@ export default function ClassesPage() {
                             <span>{reservation.user_email || 'Sin correo'}</span>
                             <span>{reservation.user_phone || 'Sin teléfono'}</span>
                             <span>Reservó {formatDateTime(reservation.created_at)}</span>
+                            {reservation.attended_at ? <span className="text-emerald-600 dark:text-emerald-400">Asistió {formatDateTime(reservation.attended_at)}</span> : null}
                             {reservation.cancelled_at ? <span>Canceló {formatDateTime(reservation.cancelled_at)}</span> : null}
                           </div>
                           {reservation.cancel_reason ? (
@@ -2203,6 +2592,109 @@ export default function ClassesPage() {
         </div>
       </Modal>
 
+      {/* ── Calendar class action menu ──────────────────────────── */}
+      <Modal
+        open={Boolean(calendarMenuClass)}
+        title={calendarMenuClass?.name ?? ''}
+        description={calendarMenuClass ? `${formatDateTime(calendarMenuClass.start_time)} – ${formatTime(calendarMenuClass.end_time)}${calendarMenuClass.instructor_name ? ` · ${calendarMenuClass.instructor_name}` : ''}${calendarMenuClass.branch_name ? ` · ${calendarMenuClass.branch_name}` : ''}` : ''}
+        onClose={() => setCalendarMenuClass(null)}
+      >
+        {calendarMenuClass && (
+          <div className="space-y-2 pt-1">
+            {/* occupancy bar */}
+            <div className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-50 px-4 py-3 dark:bg-surface-800/50">
+              <div
+                className="h-3 w-3 shrink-0 rounded-full"
+                style={{ backgroundColor: calendarMenuClass.color || '#06b6d4' }}
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-surface-500">Capacidad</p>
+                <div className="mt-1 h-1.5 w-full rounded-full bg-surface-200 dark:bg-surface-700">
+                  <div
+                    className="h-1.5 rounded-full bg-brand-500 transition-all"
+                    style={{ width: `${Math.min((calendarMenuClass.current_bookings / calendarMenuClass.max_capacity) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+              <span className="text-sm font-semibold text-surface-700 dark:text-surface-300 shrink-0">
+                {calendarMenuClass.current_bookings}/{calendarMenuClass.max_capacity}
+              </span>
+            </div>
+
+            {isPlanRestrictedClass(calendarMenuClass) ? (
+              <div className="mb-4 flex items-center gap-2 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800 dark:border-brand-900/40 dark:bg-brand-950/20 dark:text-brand-200">
+                <Tag size={15} className="shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold">Clase ligada a plan</p>
+                  <p className="truncate text-xs text-brand-700/80 dark:text-brand-200/80">
+                    {calendarMenuClass.restricted_plan_name || 'Solo disponible para un plan específico'}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              className="w-full flex items-center gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3.5 text-left hover:bg-surface-50 dark:border-surface-700 dark:bg-surface-900 dark:hover:bg-surface-800 transition-colors"
+              onClick={() => { setSelectedClass(calendarMenuClass); setCalendarMenuClass(null); }}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-100 dark:bg-brand-950/40">
+                <Users size={16} className="text-brand-600 dark:text-brand-400" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-surface-900 dark:text-white">Ver inscritos</p>
+                <p className="text-xs text-surface-400">Gestiona reservas e inscribe clientes</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="w-full flex items-center gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3.5 text-left hover:bg-surface-50 dark:border-surface-700 dark:bg-surface-900 dark:hover:bg-surface-800 transition-colors"
+              onClick={() => {
+                openCreateModalForClassSlot(calendarMenuClass);
+                setCalendarMenuClass(null);
+              }}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-950/40">
+                <Plus size={16} className="text-emerald-600 dark:text-emerald-400" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-surface-900 dark:text-white">Nueva clase en este horario</p>
+                <p className="text-xs text-surface-400">Abre el formulario con el mismo día, hora y duración</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="w-full flex items-center gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3.5 text-left hover:bg-surface-50 dark:border-surface-700 dark:bg-surface-900 dark:hover:bg-surface-800 transition-colors"
+              onClick={() => { openEditModal(calendarMenuClass); setCalendarMenuClass(null); }}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-100 dark:bg-surface-800">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-surface-600 dark:text-surface-400"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-surface-900 dark:text-white">Editar clase</p>
+                <p className="text-xs text-surface-400">Modifica horario, instructor, capacidad…</p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="w-full flex items-center gap-3 rounded-2xl border border-red-100 bg-white px-4 py-3.5 text-left hover:bg-red-50 dark:border-red-950/40 dark:bg-surface-900 dark:hover:bg-red-950/20 transition-colors"
+              onClick={() => { setClassToCancel(calendarMenuClass); setCancelReason(''); setCancelSeries(false); setCalendarMenuClass(null); }}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-100 dark:bg-red-950/40">
+                <Ban size={16} className="text-red-600 dark:text-red-400" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-red-700 dark:text-red-400">Cancelar clase</p>
+                <p className="text-xs text-surface-400">Se notificará a los inscritos</p>
+              </div>
+            </button>
+          </div>
+        )}
+      </Modal>
+
       <Modal
         open={Boolean(classToCancel)}
         title={classToCancel ? `Cancelar ${classToCancel.name}` : 'Cancelar clase'}
@@ -2285,6 +2777,341 @@ export default function ClassesPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={showBulkCancelModal}
+        title="Cancelar clases masivamente"
+        description="Cancela clases futuras programadas usando el rango visible del calendario y los filtros activos."
+        size="lg"
+        onClose={() => {
+          if (previewBulkCancel.isPending || executeBulkCancel.isPending) {
+            return;
+          }
+          setShowBulkCancelModal(false);
+          setBulkCancelPreview(null);
+        }}
+      >
+        <form
+          className="space-y-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!bulkCancelPreview || bulkCancelPreview.matched_classes === 0) {
+              return;
+            }
+            executeBulkCancel.mutate();
+          }}
+        >
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+            Solo se cancelarán clases futuras con estado programado dentro del rango de fechas y horario visibles.
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Desde</label>
+              <input
+                type="date"
+                className="input w-full"
+                value={bulkCancelForm.date_from}
+                onChange={(event) => updateBulkCancelForm({ date_from: event.target.value })}
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Hasta</label>
+              <input
+                type="date"
+                className="input w-full"
+                value={bulkCancelForm.date_to}
+                onChange={(event) => updateBulkCancelForm({ date_to: event.target.value })}
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Horario visible desde</label>
+              <input
+                type="time"
+                className="input w-full"
+                value={bulkCancelForm.time_from}
+                onChange={(event) => updateBulkCancelForm({ time_from: event.target.value })}
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Horario visible hasta</label>
+              <input
+                type="time"
+                className="input w-full"
+                value={bulkCancelForm.time_to}
+                onChange={(event) => updateBulkCancelForm({ time_to: event.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-800 dark:bg-surface-950/20">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-400">Semana visible</p>
+              <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{weekRangeLabel}</p>
+            </div>
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-800 dark:bg-surface-950/20">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-400">Sucursal</p>
+              <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{selectedBranchName}</p>
+            </div>
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-800 dark:bg-surface-950/20">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-400">Instructor</p>
+              <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{selectedInstructorName}</p>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Motivo de cancelación</label>
+            <textarea
+              className="input min-h-24 resize-y"
+              value={bulkCancelForm.cancel_reason}
+              onChange={(event) => updateBulkCancelForm({ cancel_reason: event.target.value })}
+              placeholder="Ej: error al replicar la parrilla, feriado, mantención del salón, etc."
+              maxLength={500}
+            />
+            <p className="mt-2 text-xs text-surface-500">{bulkCancelForm.cancel_reason.length}/500 caracteres</p>
+          </div>
+
+          <label className="flex items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50/70 px-4 py-3 text-sm text-surface-700 dark:border-brand-900/40 dark:bg-brand-950/20 dark:text-surface-200">
+            <input
+              type="checkbox"
+              checked={bulkCancelForm.notify_members}
+              disabled
+              readOnly
+              className="h-4 w-4 rounded border-surface-300 text-brand-600"
+            />
+            <span>Notificar inscritos por notificación interna/push</span>
+          </label>
+
+          {bulkCancelPreview ? (
+            <div className="space-y-4 rounded-3xl border border-surface-200/70 bg-surface-50/70 px-4 py-4 dark:border-surface-800/70 dark:bg-surface-950/20">
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-400">Clases</p>
+                  <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">{bulkCancelPreview.matched_classes}</p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-400">Confirmadas</p>
+                  <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">{bulkCancelPreview.confirmed_reservations}</p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-400">Espera</p>
+                  <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">{bulkCancelPreview.waitlisted_reservations}</p>
+                </div>
+                <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-400">Clientes a notificar</p>
+                  <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">{bulkCancelPreview.notified_users}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-surface-900 dark:text-white">Clases afectadas</p>
+                <div className="mt-3 space-y-2">
+                  {bulkCancelPreview.items.length > 0 ? bulkCancelPreview.items.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex flex-col gap-2 rounded-2xl border border-surface-200/70 bg-white px-4 py-3 dark:border-surface-800 dark:bg-surface-900 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold text-surface-900 dark:text-white">{item.name}</p>
+                        <p className="text-xs text-surface-500">
+                          {formatDateTime(item.start_time)} - {formatTime(item.end_time)}
+                          {item.branch_name ? ` · ${item.branch_name}` : ''}
+                          {item.instructor_name ? ` · ${item.instructor_name}` : ''}
+                        </p>
+                      </div>
+                      <span className="badge badge-neutral shrink-0">
+                        {item.current_bookings} inscrito{item.current_bookings !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  )) : (
+                    <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-center text-sm text-surface-500 dark:border-surface-700">
+                      No encontramos clases elegibles con el criterio actual.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setShowBulkCancelModal(false);
+                setBulkCancelPreview(null);
+              }}
+              disabled={previewBulkCancel.isPending || executeBulkCancel.isPending}
+            >
+              Volver
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => previewBulkCancel.mutate()}
+              disabled={previewBulkCancel.isPending || executeBulkCancel.isPending}
+            >
+              {previewBulkCancel.isPending ? 'Previsualizando...' : 'Previsualizar impacto'}
+            </button>
+            <button
+              type="submit"
+              className="btn-danger"
+              disabled={
+                previewBulkCancel.isPending
+                || executeBulkCancel.isPending
+                || !bulkCancelPreview
+                || bulkCancelPreview.matched_classes === 0
+              }
+            >
+              {executeBulkCancel.isPending
+                ? 'Cancelando...'
+                : `Cancelar ${bulkCancelPreview?.matched_classes ?? 0} clase${(bulkCancelPreview?.matched_classes ?? 0) !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Replicate Modal ─────────────────────────────────────── */}
+      <Modal
+        open={showReplicateModal}
+        title="Copiar clases al calendario"
+        onClose={() => setShowReplicateModal(false)}
+      >
+        <div className="space-y-5">
+
+          {/* Step 1 — what to copy */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-[11px] font-bold text-white">1</span>
+              <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">¿Qué quieres copiar?</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { mode: 'day' as const, label: 'Un día', sub: 'Todas las clases de ese día' },
+                { mode: 'week' as const, label: 'Una semana', sub: 'Lunes a domingo completo' },
+                { mode: 'month' as const, label: 'Un mes', sub: 'Todas las clases del mes' },
+              ]).map(({ mode, label, sub }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => { setReplicateMode(mode); setReplicateTargetStart(''); setReplicateTargetEnd(''); }}
+                  className={cn(
+                    'rounded-2xl border p-3 text-left transition-all',
+                    replicateMode === mode
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/30'
+                      : 'border-surface-200 hover:border-surface-300 dark:border-surface-700 dark:hover:border-surface-600',
+                  )}
+                >
+                  <p className={cn('text-sm font-semibold', replicateMode === mode ? 'text-brand-700 dark:text-brand-300' : 'text-surface-800 dark:text-surface-200')}>{label}</p>
+                  <p className="mt-0.5 text-[11px] text-surface-400 leading-tight">{sub}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Step 2 — source */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-[11px] font-bold text-white">2</span>
+              <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+                {replicateMode === 'day' ? '¿Qué día copiar?' : replicateMode === 'week' ? '¿Qué semana copiar?' : '¿Qué mes copiar?'}
+              </p>
+            </div>
+            <input
+              type="date"
+              className="input w-full"
+              value={replicateSourceDate}
+              onChange={e => setReplicateSourceDate(e.target.value)}
+            />
+            {replicateSourceDate && (
+              <p className="mt-1.5 text-xs text-surface-400">
+                {replicateMode === 'day' && (() => {
+                  const d = new Date(replicateSourceDate + 'T12:00:00');
+                  return `Se copiarán las clases del ${d.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}`;
+                })()}
+                {replicateMode === 'week' && (() => {
+                  const d = new Date(replicateSourceDate + 'T12:00:00');
+                  const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+                  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+                  return `Semana del ${mon.toLocaleDateString('es-CL', { day: 'numeric', month: 'long' })} al ${sun.toLocaleDateString('es-CL', { day: 'numeric', month: 'long' })}`;
+                })()}
+                {replicateMode === 'month' && (() => {
+                  const d = new Date(replicateSourceDate + 'T12:00:00');
+                  return `Mes de ${d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' })}`;
+                })()}
+              </p>
+            )}
+          </div>
+
+          {/* Step 3 — target range */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-[11px] font-bold text-white">3</span>
+              <p className="text-sm font-semibold text-surface-800 dark:text-surface-200">
+                {replicateMode === 'day' ? '¿A qué días pegar?' : replicateMode === 'week' ? '¿A qué semanas pegar?' : '¿A qué meses pegar?'}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-surface-400">
+                  {replicateMode === 'day' ? 'Primer día destino' : replicateMode === 'week' ? 'Primera semana destino' : 'Primer mes destino'}
+                </label>
+                <input type="date" className="input w-full" value={replicateTargetStart} onChange={e => setReplicateTargetStart(e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-surface-400">
+                  {replicateMode === 'day' ? 'Último día destino' : replicateMode === 'week' ? 'Última semana destino' : 'Último mes destino'}
+                </label>
+                <input type="date" className="input w-full" value={replicateTargetEnd} onChange={e => setReplicateTargetEnd(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          {/* Preview */}
+          {replicateTargetStart && replicateTargetEnd && (() => {
+            const targets = buildTargetDates(replicateMode, replicateTargetStart, replicateTargetEnd);
+            if (targets.length === 0) return (
+              <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-950/20 dark:text-red-400">
+                La fecha de inicio debe ser anterior a la fecha de fin.
+              </p>
+            );
+            return (
+              <div className="rounded-xl bg-emerald-50 px-4 py-3 dark:bg-emerald-950/20">
+                <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                  Se copiarán las clases en <strong>{targets.length}</strong>{' '}
+                  {replicateMode === 'day' ? `día${targets.length !== 1 ? 's' : ''}` : replicateMode === 'week' ? `semana${targets.length !== 1 ? 's' : ''}` : `mes${targets.length !== 1 ? 'es' : ''}`}
+                </p>
+                {targets.length <= 6 && (
+                  <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-500">
+                    {targets.map(t => {
+                      const d = new Date(t + 'T12:00:00');
+                      return d.toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' });
+                    }).join(' · ')}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" className="flex-1 btn-secondary text-sm py-2.5" onClick={() => setShowReplicateModal(false)}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={
+                replicateMutation.isPending ||
+                !replicateSourceDate ||
+                buildTargetDates(replicateMode, replicateTargetStart, replicateTargetEnd).length === 0
+              }
+              onClick={handleReplicate}
+              className="flex-1 btn-primary text-sm py-2.5 flex items-center justify-center gap-2"
+            >
+              {replicateMutation.isPending ? 'Copiando...' : 'Copiar clases'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </motion.div>
   );

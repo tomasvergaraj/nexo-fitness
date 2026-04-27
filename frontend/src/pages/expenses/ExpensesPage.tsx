@@ -117,13 +117,13 @@ export default function ExpensesPage() {
   const isPending = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <div className="px-6 py-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Gastos</h1>
           <p className="text-sm text-surface-500 mt-0.5">Registro de gastos operacionales</p>
         </div>
-        <button onClick={openCreate} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+        <button onClick={openCreate} className="btn-primary flex w-full items-center justify-center gap-1.5 px-4 py-2.5 text-sm sm:w-auto">
           <Plus size={15} /> Registrar gasto
         </button>
       </div>
@@ -182,57 +182,59 @@ export default function ExpensesPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white dark:bg-surface-800 rounded-3xl border border-surface-200 dark:border-surface-700 overflow-hidden">
+      <div className="overflow-hidden rounded-3xl border border-surface-200 bg-white dark:border-surface-700 dark:bg-surface-800">
         {isLoading ? (
           <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-brand-500" /></div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-surface-400 border-b border-surface-200 dark:border-surface-800">
-                <th className="px-6 py-3 font-medium">Descripción</th>
-                <th className="px-4 py-3 font-medium">Categoría</th>
-                <th className="px-4 py-3 font-medium">Monto</th>
-                <th className="px-4 py-3 font-medium">Fecha</th>
-                <th className="px-4 py-3 font-medium">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
-              {expenses.map(expense => (
-                <tr key={expense.id} className="hover:bg-surface-50 dark:hover:bg-surface-800/30">
-                  <td className="px-6 py-3">
-                    <p className="font-medium text-surface-800 dark:text-surface-200">{expense.description}</p>
-                    {expense.receipt_url && (
-                      <a href={expense.receipt_url} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-brand-500 hover:underline">Ver recibo</a>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', CATEGORY_COLORS[expense.category])}>
-                      {CATEGORY_LABELS[expense.category] || expense.category}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-bold text-red-600 dark:text-red-400">
-                    {formatCLP(expense.amount)}
-                  </td>
-                  <td className="px-4 py-3 text-surface-500 text-xs">
-                    {new Date(expense.expense_date + 'T12:00:00').toLocaleDateString('es-CL', { dateStyle: 'medium' })}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      <button onClick={() => openEdit(expense)}
-                        className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-400 hover:text-brand-500">
-                        <Edit2 size={14} />
-                      </button>
-                      <button onClick={() => deleteMutation.mutate(expense.id)}
-                        className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-400 hover:text-red-500">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="min-w-[720px] w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-surface-400 border-b border-surface-200 dark:border-surface-800">
+                  <th className="px-6 py-3 font-medium">Descripción</th>
+                  <th className="px-4 py-3 font-medium">Categoría</th>
+                  <th className="px-4 py-3 font-medium">Monto</th>
+                  <th className="px-4 py-3 font-medium">Fecha</th>
+                  <th className="px-4 py-3 font-medium">Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
+                {expenses.map(expense => (
+                  <tr key={expense.id} className="hover:bg-surface-50 dark:hover:bg-surface-800/30">
+                    <td className="px-6 py-3">
+                      <p className="font-medium text-surface-800 dark:text-surface-200">{expense.description}</p>
+                      {expense.receipt_url && (
+                        <a href={expense.receipt_url} target="_blank" rel="noopener noreferrer"
+                          className="text-xs text-brand-500 hover:underline">Ver recibo</a>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', CATEGORY_COLORS[expense.category])}>
+                        {CATEGORY_LABELS[expense.category] || expense.category}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-bold text-red-600 dark:text-red-400">
+                      {formatCLP(expense.amount)}
+                    </td>
+                    <td className="px-4 py-3 text-surface-500 text-xs">
+                      {new Date(expense.expense_date + 'T12:00:00').toLocaleDateString('es-CL', { dateStyle: 'medium' })}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        <button onClick={() => openEdit(expense)}
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-400 hover:text-brand-500">
+                          <Edit2 size={14} />
+                        </button>
+                        <button onClick={() => deleteMutation.mutate(expense.id)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-400 hover:text-red-500">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {!isLoading && expenses.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-surface-400">
@@ -247,37 +249,37 @@ export default function ExpensesPage() {
         <div className="space-y-4">
           <div>
             <label className="text-xs text-surface-500 block mb-1">Categoría *</label>
-            <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className="input-field w-full">
+            <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} className="input w-full">
               {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="text-xs text-surface-500 block mb-1">Monto ($) *</label>
               <input type="number" min={0} value={form.amount}
                 onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
-                className="input-field w-full" placeholder="50000" />
+                className="input w-full" placeholder="50000" />
             </div>
             <div>
               <label className="text-xs text-surface-500 block mb-1">Fecha *</label>
               <input type="date" value={form.expense_date}
                 onChange={e => setForm(f => ({ ...f, expense_date: e.target.value }))}
-                className="input-field w-full" />
+                className="input w-full" />
             </div>
           </div>
           <div>
             <label className="text-xs text-surface-500 block mb-1">Descripción *</label>
             <input type="text" value={form.description}
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              className="input-field w-full" placeholder="Arriendo mes de abril" />
+              className="input w-full" placeholder="Arriendo mes de abril" />
           </div>
           <div>
             <label className="text-xs text-surface-500 block mb-1">URL recibo (opcional)</label>
             <input type="url" value={form.receipt_url}
               onChange={e => setForm(f => ({ ...f, receipt_url: e.target.value }))}
-              className="input-field w-full" placeholder="https://..." />
+              className="input w-full" placeholder="https://..." />
           </div>
-          <div className="flex gap-3 pt-2">
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row">
             <button onClick={() => setModalOpen(false)} className="flex-1 btn-secondary text-sm py-2.5">Cancelar</button>
             <button onClick={handleSubmit}
               disabled={isPending || !form.amount || !form.description || !form.expense_date}

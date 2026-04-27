@@ -36,19 +36,42 @@ class StripeService:
 
     async def create_checkout_session(
         self,
-        price_id: str,
+        price_id: Optional[str],
         customer_id: str,
         success_url: str,
         cancel_url: str,
         mode: str = "subscription",
         metadata: Optional[dict] = None,
+        amount: Optional[int] = None,
+        currency: str = "CLP",
+        product_name: str = "Nexo Fitness SaaS",
     ) -> dict:
         self._ensure_init()
+        line_items = None
+        resolved_mode = mode
+
+        if price_id:
+            line_items = [{"price": price_id, "quantity": 1}]
+        elif amount is not None:
+            resolved_mode = "payment"
+            line_items = [
+                {
+                    "price_data": {
+                        "currency": currency.lower(),
+                        "product_data": {"name": product_name},
+                        "unit_amount": int(amount),
+                    },
+                    "quantity": 1,
+                }
+            ]
+        else:
+            raise ValueError("Stripe checkout requiere price_id o amount.")
+
         session = self._stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=["card"],
-            line_items=[{"price": price_id, "quantity": 1}],
-            mode=mode,
+            line_items=line_items,
+            mode=resolved_mode,
             success_url=success_url,
             cancel_url=cancel_url,
             metadata=metadata or {},

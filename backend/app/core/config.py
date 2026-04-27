@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     EMAIL_FROM: str = "noreply@nexofitness.cl"
     EMAIL_FROM_NAME: str = "Nexo Fitness"
+    FEEDBACK_TO_EMAIL: str = ""
 
     # Payments
     STRIPE_SECRET_KEY: str = ""
@@ -105,6 +106,7 @@ class Settings(BaseSettings):
     PUBLIC_APP_URL: str = ""  # Si vacío, cae en FRONTEND_URL
     SAAS_TRIAL_DAYS: int = 14
     SAAS_CURRENCY: str = "CLP"
+    SAAS_TAX_RATE_PERCENT: int = 19
     SAAS_MONTHLY_PRICE: int = 34990
     SAAS_QUARTERLY_PRICE: int = 94990
     SAAS_SEMI_ANNUAL_PRICE: int = 184990

@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+from uuid import UUID
 from urllib.parse import urlencode
 
 import structlog
@@ -17,6 +18,7 @@ from app.integrations.payments.fintoc_service import fintoc_service
 from app.models.platform import SaaSPlan
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, UserRole
+from app.services.platform_billing_service import resolve_platform_saas_quote
 from app.services.saas_plan_service import SaaSPlanDefinition, definition_from_record, default_saas_plan_definitions
 from app.services.webpay_checkout_service import create_platform_webpay_transaction
 
@@ -118,11 +120,16 @@ async def create_reactivation_checkout(
     user: User,
     *,
     plan_key: Optional[str] = None,
+    promo_code_id: Optional[UUID] = None,
+    queue_after_payment: bool = False,
+    queue_starts_at: Optional[datetime] = None,
+    success_url: Optional[str] = None,
+    cancel_url: Optional[str] = None,
 ) -> Optional[str]:
     """
     Genera URL de checkout para reactivar la suscripción.
-    Si plan_key se provee, busca ese plan en vez del plan actual del tenant.
-    Retorna la redirect_url del checkout (Stripe o Fintoc hosted).
+    Si queue_after_payment=True, el webhook encola el plan en lugar de activarlo
+    de inmediato (útil cuando el tenant aún tiene suscripción vigente).
     """
     if user.role not in {UserRole.OWNER, UserRole.ADMIN}:
         return None
@@ -146,17 +153,41 @@ async def create_reactivation_checkout(
     if not plan:
         return None
 
+    pricing = await resolve_platform_saas_quote(
+        db,
+        plan_key=plan.key,
+        promo_code_id=promo_code_id,
+        require_public_plan=False,
+    )
+    if pricing.plan is None or pricing.total_amount is None:
+        raise ValueError(pricing.reason or "No se pudo cotizar el plan SaaS.")
+    if promo_code_id and not pricing.valid:
+        raise ValueError(pricing.reason or "No se pudo aplicar el código promocional SaaS.")
+
     provider = plan.checkout_provider
-    success_url, cancel_url = _build_login_return_urls(user.email, tenant.slug)
+    if not provider:
+        return None
+    _default_success, _default_cancel = _build_login_return_urls(user.email, tenant.slug)
+    success_url = success_url or _default_success
+    cancel_url = cancel_url or _default_cancel
+
+    _queue_meta: dict[str, str] = {
+        "queue_after_payment": "true" if queue_after_payment else "false",
+        "queue_starts_at": queue_starts_at.isoformat() if queue_starts_at else "",
+        "saas_plan_name": plan.name,
+    }
 
     if provider == "fintoc":
-        return await create_reactivation_fintoc_checkout(db, tenant, user, plan=plan)
+        return await create_reactivation_fintoc_checkout(
+            db, tenant, user, plan=plan, promo_code_id=promo_code_id,
+            extra_metadata=_queue_meta, success_url=success_url, cancel_url=cancel_url,
+        )
     if provider == "webpay":
         transaction = await create_platform_webpay_transaction(
             db,
             tenant=tenant,
             user=user,
-            amount=plan.price,
+            amount=pricing.total_amount,
             currency=plan.currency or "CLP",
             flow_type="saas_reactivation",
             flow_reference=plan.key,
@@ -168,6 +199,14 @@ async def create_reactivation_checkout(
                 "owner_user_id": str(user.id),
                 "owner_email": user.email,
                 "saas_plan_key": plan.key,
+                "promo_code_id": str(pricing.promo.id) if pricing.promo else "",
+                "base_amount": str(pricing.base_price or ""),
+                "promo_discount_amount": str(pricing.promo_discount_amount or ""),
+                "taxable_subtotal": str(pricing.taxable_subtotal or ""),
+                "tax_rate": str(pricing.tax_rate or ""),
+                "tax_amount": str(pricing.tax_amount or ""),
+                "total_amount": str(pricing.total_amount),
+                **_queue_meta,
             },
         )
         await db.flush()
@@ -189,16 +228,28 @@ async def create_reactivation_checkout(
         tenant.stripe_customer_id = customer_id
 
     checkout = await stripe_service.create_checkout_session(
-        price_id=plan.stripe_price_id,
+        price_id=plan.stripe_price_id or None,
         customer_id=customer_id,
         success_url=success_url,
         cancel_url=cancel_url,
+        mode="payment",
         metadata={
             "tenant_id": str(tenant.id),
             "tenant_slug": tenant.slug,
             "owner_user_id": str(user.id),
             "saas_plan_key": plan.key,
+            "promo_code_id": str(pricing.promo.id) if pricing.promo else "",
+            "base_amount": str(pricing.base_price or ""),
+            "promo_discount_amount": str(pricing.promo_discount_amount or ""),
+            "taxable_subtotal": str(pricing.taxable_subtotal or ""),
+            "tax_rate": str(pricing.tax_rate or ""),
+            "tax_amount": str(pricing.tax_amount or ""),
+            "total_amount": str(pricing.total_amount),
+            **_queue_meta,
         },
+        amount=int(pricing.total_amount),
+        currency=plan.currency or "CLP",
+        product_name=f"Plan SaaS {plan.name}",
     )
     await db.flush()
     return checkout["url"]
@@ -210,6 +261,10 @@ async def create_reactivation_fintoc_checkout(
     user: User,
     *,
     plan: Optional[SaaSPlanDefinition] = None,
+    promo_code_id: Optional[UUID] = None,
+    extra_metadata: Optional[dict[str, str]] = None,
+    success_url: Optional[str] = None,
+    cancel_url: Optional[str] = None,
 ) -> Optional[str]:
     """
     Crea una Checkout Session de Fintoc para reactivar la suscripción.
@@ -223,9 +278,22 @@ async def create_reactivation_fintoc_checkout(
     if not plan or plan.checkout_provider != "fintoc":
         return None
 
-    success_url, cancel_url = _build_login_return_urls(user.email, tenant.slug)
+    pricing = await resolve_platform_saas_quote(
+        db,
+        plan_key=plan.key,
+        promo_code_id=promo_code_id,
+        require_public_plan=False,
+    )
+    if pricing.plan is None or pricing.total_amount is None:
+        raise ValueError(pricing.reason or "No se pudo cotizar el plan SaaS.")
+    if promo_code_id and not pricing.valid:
+        raise ValueError(pricing.reason or "No se pudo aplicar el código promocional SaaS.")
+
+    _default_success, _default_cancel = _build_login_return_urls(user.email, tenant.slug)
+    success_url = success_url or _default_success
+    cancel_url = cancel_url or _default_cancel
     session = await fintoc_service.create_checkout_session(
-        amount=int(plan.price),
+        amount=int(pricing.total_amount),
         currency=plan.currency or "CLP",
         customer_name=user.full_name,
         customer_email=user.email,
@@ -236,6 +304,14 @@ async def create_reactivation_fintoc_checkout(
             "tenant_slug": tenant.slug,
             "owner_user_id": str(user.id),
             "saas_plan_key": plan.key,
+            "promo_code_id": str(pricing.promo.id) if pricing.promo else "",
+            "base_amount": str(pricing.base_price or ""),
+            "promo_discount_amount": str(pricing.promo_discount_amount or ""),
+            "taxable_subtotal": str(pricing.taxable_subtotal or ""),
+            "tax_rate": str(pricing.tax_rate or ""),
+            "tax_amount": str(pricing.tax_amount or ""),
+            "total_amount": str(pricing.total_amount),
+            **(extra_metadata or {}),
         },
         recipient_account=None,
     )
@@ -260,7 +336,6 @@ async def enforce_tenant_access(
         tenant.is_active = False
 
     checkout_url: Optional[str] = None
-    next_action: Optional[str] = None
     renewable_statuses = {TenantStatus.TRIAL, TenantStatus.ACTIVE, TenantStatus.EXPIRED}
     if original_status in renewable_statuses or tenant.status in renewable_statuses:
         try:
@@ -272,13 +347,11 @@ async def enforce_tenant_access(
                 user_id=str(user.id),
                 error=str(exc),
             )
-        if checkout_url:
-            next_action = "redirect_to_checkout"
 
     await db.flush()
     raise ActionRequiredError(
         access_state.detail or "Esta cuenta no está activa. Revisa tu estado de facturación o contacta a soporte.",
-        next_action=next_action,
+        next_action="billing_required",
         checkout_url=checkout_url,
         billing_status=tenant.status.value if isinstance(tenant.status, TenantStatus) else str(tenant.status),
         tenant_slug=tenant.slug,

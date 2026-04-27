@@ -14,10 +14,19 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_tenant, get_current_user, require_roles, require_superadmin
 from app.models.tenant import Tenant, TenantStatus
 from app.schemas.billing import (
+    AdminTenantManualPaymentRequest,
+    AdminTenantManualPaymentResponse,
     AdminSaaSPlanCreateRequest,
     AdminSaaSPlanResponse,
     AdminSaaSPlanUpdateRequest,
     AdminTenantBillingResponse,
+    BillingQuoteRequest,
+    BillingQuoteResponse,
+    OwnerPaymentItem,
+    PlatformPromoCodeCreateRequest,
+    PlatformPromoCodeResponse,
+    PlatformPromoCodeUpdateRequest,
+    ReactivateRequest,
     SaaSPlanResponse,
     SaaSSignupRequest,
     SaaSSignupResponse,
@@ -62,14 +71,54 @@ async def get_current_subscription(
     return await BillingService.describe_tenant_billing(db, tenant)
 
 
+@router.get("/payments", response_model=PaginatedResponse)
+async def list_owner_payments(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    tenant=Depends(get_current_tenant),
+    _user=Depends(require_roles("owner")),
+):
+    result = await BillingService.list_owner_payments(db, tenant.id, page=page, per_page=per_page)
+    result["items"] = [OwnerPaymentItem(**item.model_dump()) if hasattr(item, "model_dump") else item for item in result["items"]]
+    return result
+
+
+@router.post("/reactivate")
+async def reactivate_or_schedule_plan(
+    data: ReactivateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant=Depends(get_current_tenant),
+    current_user=Depends(get_current_user),
+    _user=Depends(require_roles("owner")),
+):
+    try:
+        result = await BillingService.schedule_next_plan(db, tenant, current_user, data)
+        await db.commit()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/next-plan", status_code=204)
+async def cancel_next_plan(
+    db: AsyncSession = Depends(get_db),
+    tenant=Depends(get_current_tenant),
+    _user=Depends(require_roles("owner")),
+):
+    await BillingService.cancel_next_plan(db, tenant)
+    await db.commit()
+
+
 @router.get("/admin/tenants", response_model=PaginatedResponse)
 async def list_platform_tenants(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
     _user=Depends(require_superadmin()),
 ):
-    result = await BillingService.list_tenants_for_admin(db, page=page, per_page=per_page)
+    result = await BillingService.list_tenants_for_admin(db, page=page, per_page=per_page, search=search)
     result["items"] = [AdminTenantBillingResponse(**item) for item in result["items"]]
     return result
 
@@ -99,6 +148,64 @@ async def update_platform_plan(
     _user=Depends(require_superadmin()),
 ):
     return await BillingService.update_admin_plan(db, plan_id, data)
+
+
+@router.get("/admin/promo-codes", response_model=list[PlatformPromoCodeResponse])
+async def list_platform_promo_codes(
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    return await BillingService.list_admin_promo_codes(db)
+
+
+@router.post("/admin/promo-codes", response_model=PlatformPromoCodeResponse, status_code=201)
+async def create_platform_promo_code(
+    data: PlatformPromoCodeCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    return await BillingService.create_admin_promo_code(db, data)
+
+
+@router.patch("/admin/promo-codes/{promo_id}", response_model=PlatformPromoCodeResponse)
+async def update_platform_promo_code(
+    promo_id: UUID,
+    data: PlatformPromoCodeUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    return await BillingService.update_admin_promo_code(db, promo_id, data)
+
+
+@router.delete("/admin/promo-codes/{promo_id}", status_code=204)
+async def delete_platform_promo_code(
+    promo_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    await BillingService.delete_admin_promo_code(db, promo_id)
+
+
+@router.post("/quote", response_model=BillingQuoteResponse)
+async def quote_platform_plan(
+    data: BillingQuoteRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.is_superadmin or not current_user.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No aplica")
+    return await BillingService.quote_plan(db, data)
+
+
+@router.post("/admin/tenants/{tenant_id}/manual-payment", response_model=AdminTenantManualPaymentResponse, status_code=201)
+async def register_platform_manual_payment(
+    tenant_id: UUID,
+    data: AdminTenantManualPaymentRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+    _user=Depends(require_superadmin()),
+):
+    return await BillingService.register_manual_payment(db, tenant_id=tenant_id, data=data, actor=current_user)
 
 
 @router.get("/status")
@@ -144,19 +251,6 @@ async def get_billing_status(
         delta = tenant.license_expires_at - now
         days_remaining = max(0, delta.days)
 
-    checkout_url: str | None = None
-    widget_token: str | None = None
-    checkout_provider: str | None = None
-
-    if not access.allow_access:
-        try:
-            url = await create_reactivation_checkout(db, tenant, current_user)
-            if url:
-                checkout_url = url
-                await db.flush()
-        except Exception:
-            pass
-
     plan = get_effective_plan_for_tenant(tenant)
 
     return {
@@ -167,15 +261,17 @@ async def get_billing_status(
         "days_remaining": days_remaining,
         "trial_ends_at": tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None,
         "license_expires_at": tenant.license_expires_at.isoformat() if tenant.license_expires_at else None,
-        "checkout_url": checkout_url,
-        "widget_token": widget_token,
-        "checkout_provider": checkout_provider,
+        "checkout_url": None,
+        "widget_token": None,
+        "checkout_provider": plan.checkout_provider,
+        "plan_key": plan.key,
         "plan_name": plan.name,
     }
 
 
 class ReactivateRequest(BaseModel):
     plan_key: Optional[str] = None
+    promo_code_id: Optional[UUID] = None
 
 
 @router.post("/reactivate")
@@ -202,7 +298,13 @@ async def reactivate_subscription(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
 
     try:
-        checkout_url = await create_reactivation_checkout(db, tenant, current_user, plan_key=body.plan_key)
+        checkout_url = await create_reactivation_checkout(
+            db,
+            tenant,
+            current_user,
+            plan_key=body.plan_key,
+            promo_code_id=body.promo_code_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

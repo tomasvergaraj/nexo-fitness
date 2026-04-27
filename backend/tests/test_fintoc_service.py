@@ -60,8 +60,8 @@ class DummyAsyncClient:
 
 
 VALID_URLS = {
-    "success_url": "https://nexofitness.cl/store/gym?checkout=success",
-    "cancel_url": "https://nexofitness.cl/store/gym?checkout=cancelled",
+    "success_url": "https://app.nexofitness.cl/store/gym?checkout=success",
+    "cancel_url": "https://app.nexofitness.cl/store/gym?checkout=cancelled",
 }
 
 
@@ -240,7 +240,7 @@ def test_validate_return_url_rejects_http(monkeypatch: pytest.MonkeyPatch) -> No
 def test_validate_return_url_accepts_https(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.integrations.payments.fintoc_service.settings.FINTOC_SECRET_KEY", "sk_test_dummy")
     service = FintocService()
-    service._validate_return_url("https://nexofitness.cl/store/gym?checkout=success", "success_url")
+        service._validate_return_url("https://app.nexofitness.cl/store/gym?checkout=success", "success_url")
 
 
 # ── sin key configurada ───────────────────────────────────────────────────────

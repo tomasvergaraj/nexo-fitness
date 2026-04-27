@@ -6,15 +6,16 @@ import secrets
 import structlog
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.core.security import create_email_verified_token
-from app.models.user import User
+from app.core.security import create_email_verified_token, decode_staff_invitation_token, hash_password as _hash_password
+from app.models.user import User, UserRole
+from app.models.tenant import Tenant
 from app.schemas.auth import (
     LoginRequest, LoginResponse, RefreshRequest, RegisterRequest,
     TenantOnboardingRequest, UserResponse,
@@ -172,6 +173,29 @@ async def _get_redis():
     return aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+def _get_staff_invitation_status_message(status_value: str | None) -> str:
+    if status_value == "accepted":
+        return "Esta invitación ya fue aceptada."
+    if status_value == "invalidated":
+        return "Esta invitación fue invalidada. Solicita una nueva invitación."
+    return "Esta invitación ya no es válida."
+
+
+def _can_reactivate_staff_invitation(existing_user: User | None, tenant_id: str) -> bool:
+    if not existing_user:
+        return False
+    if existing_user.is_active:
+        return False
+    if str(existing_user.tenant_id) != str(tenant_id):
+        return False
+    return existing_user.role in {
+        UserRole.ADMIN,
+        UserRole.RECEPTION,
+        UserRole.TRAINER,
+        UserRole.MARKETING,
+    }
+
+
 @router.post("/email-verification/send", status_code=status.HTTP_200_OK)
 async def send_email_verification(
     data: EmailVerificationSendRequest,
@@ -263,3 +287,132 @@ async def confirm_email_verification(data: EmailVerificationConfirmRequest):
 
     verified_token = create_email_verified_token(email)
     return {"verified_token": verified_token}
+
+
+# ── Staff Invitation ──────────────────────────────────────────────────────────
+
+class AcceptInvitationRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("La contraseña debe tener al menos 8 caracteres")
+        if not any(c.isupper() for c in v):
+            raise ValueError("La contraseña debe incluir al menos una mayúscula")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("La contraseña debe incluir al menos un número")
+        return v
+
+
+@router.get("/invitation/{token}")
+async def get_invitation_info(token: str, db: AsyncSession = Depends(get_db)):
+    """Public endpoint — validate an invitation token and return its metadata."""
+    import hashlib as _hl
+    try:
+        payload = decode_staff_invitation_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Check not already used
+    token_hash = _hl.sha256(token.encode()).hexdigest()
+    redis = await _get_redis()
+    invite_status = await redis.get(f"staff_invite_used:{token_hash}")
+    await redis.aclose()
+    if invite_status:
+        raise HTTPException(status_code=400, detail=_get_staff_invitation_status_message(invite_status))
+
+    # Check email not already registered
+    email = payload["sub"]
+    existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if existing and not _can_reactivate_staff_invitation(existing, str(payload["tenant_id"])):
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese correo.")
+
+    role_labels = {
+        "admin": "Administrador", "reception": "Recepción",
+        "trainer": "Entrenador", "marketing": "Marketing",
+    }
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == payload["tenant_id"]))).scalar_one_or_none()
+
+    return {
+        "email": email,
+        "first_name": payload.get("first_name", ""),
+        "last_name": payload.get("last_name", ""),
+        "role": payload["role"],
+        "role_label": role_labels.get(payload["role"], payload["role"]),
+        "gym_name": tenant.name if tenant else "el gimnasio",
+        "invited_by": payload.get("invited_by", ""),
+    }
+
+
+@router.post("/accept-invitation")
+async def accept_invitation(data: AcceptInvitationRequest, db: AsyncSession = Depends(get_db)):
+    """Public endpoint — accept a staff invitation and create the account."""
+    import hashlib as _hl
+    try:
+        payload = decode_staff_invitation_token(data.token)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    token_hash = _hl.sha256(data.token.encode()).hexdigest()
+    redis = await _get_redis()
+    invite_status = await redis.get(f"staff_invite_used:{token_hash}")
+    if invite_status:
+        await redis.aclose()
+        raise HTTPException(status_code=400, detail=_get_staff_invitation_status_message(invite_status))
+
+    email = payload["sub"]
+    tenant_id = payload["tenant_id"]
+    role = payload["role"]
+
+    # Double-check email not taken, unless this invitation is reactivating
+    # an inactive staff member from the same tenant.
+    existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    can_reactivate_existing_staff = _can_reactivate_staff_invitation(existing, tenant_id)
+    if existing and not can_reactivate_existing_staff:
+        await redis.aclose()
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese correo.")
+
+    if can_reactivate_existing_staff and existing:
+        existing.hashed_password = _hash_password(data.password)
+        existing.first_name = payload.get("first_name", existing.first_name)
+        existing.last_name = payload.get("last_name", existing.last_name)
+        existing.role = UserRole(role)
+        existing.is_active = True
+        existing.is_verified = True
+        existing.refresh_token = None
+        user_record = existing
+    else:
+        user_record = User(
+            tenant_id=tenant_id,
+            email=email,
+            hashed_password=_hash_password(data.password),
+            first_name=payload.get("first_name", ""),
+            last_name=payload.get("last_name", ""),
+            role=UserRole(role),
+            is_active=True,
+            is_verified=True,
+        )
+        db.add(user_record)
+
+    await db.flush()
+    await db.refresh(user_record)
+
+    # Burn invitation token (TTL=259200 = 72h)
+    await redis.set(f"staff_invite_used:{token_hash}", "accepted", ex=259200)
+    # Remove pending markers and list metadata
+    await redis.delete(f"staff_invite_pending:{tenant_id}:{email}")
+    await redis.delete(f"staff_invite_meta:{tenant_id}:{email}")
+    await redis.srem(f"staff_invite_list:{tenant_id}", email)
+    await redis.aclose()
+
+    return {
+        "detail": (
+            "Acceso reactivado exitosamente. Ya puedes iniciar sesión."
+            if can_reactivate_existing_staff
+            else "Cuenta activada exitosamente. Ya puedes iniciar sesión."
+        ),
+        "email": email,
+    }

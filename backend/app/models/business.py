@@ -60,6 +60,7 @@ class PaymentMethod(str, enum.Enum):
     MERCADOPAGO = "mercadopago"
     FINTOC = "fintoc"
     WEBPAY = "webpay"
+    TUU = "tuu"
     CASH = "cash"
     TRANSFER = "transfer"
     OTHER = "other"
@@ -84,6 +85,13 @@ class InteractionChannel(str, enum.Enum):
     EMAIL = "email"
     PHONE = "phone"
     IN_PERSON = "in_person"
+
+
+class FeedbackCategory(str, enum.Enum):
+    SUGGESTION = "suggestion"
+    IMPROVEMENT = "improvement"
+    PROBLEM = "problem"
+    OTHER = "other"
 
 
 class PlanDuration(str, enum.Enum):
@@ -167,12 +175,19 @@ class Membership(Base):
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     frozen_until: Mapped[Optional[date]] = mapped_column(Date)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    previous_membership_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("memberships.id", ondelete="SET NULL"),
+        index=True,
+    )
+    sale_source: Mapped[Optional[str]] = mapped_column(String(30))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    user = relationship("User", back_populates="membership")
+    user = relationship("User", back_populates="memberships")
     plan = relationship("Plan", back_populates="memberships")
+    previous_membership = relationship("Membership", remote_side=[id], foreign_keys=[previous_membership_id])
 
 
 # ─── GymClass ─────────────────────────────────────────────────────────────────
@@ -201,6 +216,8 @@ class GymClass(Base):
     color: Mapped[Optional[str]] = mapped_column(String(7))
     # Program integration
     program_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("training_programs.id", ondelete="SET NULL"), index=True)
+    # Plan restriction (optional — null = visible to all)
+    restricted_plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("plans.id", ondelete="SET NULL"), index=True)
     # Recurrence
     repeat_type: Mapped[str] = mapped_column(String(20), default="none")  # none | daily | weekly | monthly
     repeat_until: Mapped[Optional[date]] = mapped_column(Date)
@@ -240,6 +257,26 @@ class Reservation(Base):
     gym_class = relationship("GymClass", back_populates="reservations")
 
 
+# ─── ProgramBooking ───────────────────────────────────────────────────────────
+
+class ProgramBooking(Base):
+    __tablename__ = "program_bookings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    program_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("training_programs.id", ondelete="SET NULL"), index=True)
+    recurrence_group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "recurrence_group_id", name="uq_program_booking_user_group"),
+    )
+
+
 # ─── CheckIn ──────────────────────────────────────────────────────────────────
 
 class CheckIn(Base):
@@ -249,6 +286,7 @@ class CheckIn(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     gym_class_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("gym_classes.id"))
+    reservation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("reservations.id", ondelete="SET NULL"), index=True)
     branch_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("branches.id"))
     check_type: Mapped[str] = mapped_column(String(20), default="manual")  # manual, qr, auto
     checked_in_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -256,6 +294,60 @@ class CheckIn(Base):
 
     user = relationship("User", back_populates="checkins", foreign_keys=[user_id])
     gym_class = relationship("GymClass", back_populates="checkins")
+    reservation = relationship("Reservation", foreign_keys=[reservation_id])
+
+
+class CheckInInvestigationCase(Base):
+    __tablename__ = "checkin_investigation_cases"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "local_day",
+            "rule_code",
+            name="uq_checkin_investigation_case_per_rule_day",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    trigger_checkin_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("checkins.id", ondelete="SET NULL"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    rule_code: Mapped[str] = mapped_column(String(50), nullable=False, default="qr_frequency", index=True)
+    local_day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    first_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    daily_qr_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_qr_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    review_notes: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 # ─── Payment ──────────────────────────────────────────────────────────────────
@@ -275,6 +367,11 @@ class Payment(Base):
     external_id: Mapped[Optional[str]] = mapped_column(String(255))  # Stripe/MP payment ID
     receipt_url: Mapped[Optional[str]] = mapped_column(String(500))
     metadata_json: Mapped[Optional[str]] = mapped_column(Text)  # JSON
+    plan_id_snapshot: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
+    plan_name_snapshot: Mapped[Optional[str]] = mapped_column(String(255))
+    membership_starts_at_snapshot: Mapped[Optional[date]] = mapped_column(Date)
+    membership_expires_at_snapshot: Mapped[Optional[date]] = mapped_column(Date)
+    membership_status_snapshot: Mapped[Optional[str]] = mapped_column(String(20))
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     refunded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -354,6 +451,26 @@ class SupportInteraction(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     handled_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# ─── Feedback Submission ──────────────────────────────────────────────────────
+
+class FeedbackSubmission(Base):
+    __tablename__ = "feedback_submissions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    category: Mapped[FeedbackCategory] = mapped_column(
+        SAEnum(
+            FeedbackCategory,
+            name="feedback_category_enum",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        )
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    image_path: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 

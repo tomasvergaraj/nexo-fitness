@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Bell, Clock, CreditCard, Globe, Lock, MapPin, Palette, Pencil, Plus, Shield, ShieldCheck, Store, Trash2, Users } from 'lucide-react';
+import { Bell, ChevronDown, Clock, CreditCard, Globe, Lock, Mail, MapPin, Palette, Pencil, Plus, Shield, ShieldCheck, Store, Trash2, UserCog, UserMinus, UserPlus, Users } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import LogoUploader from '@/components/ui/LogoUploader';
-import { branchesApi, paymentProviderApi, settingsApi } from '@/services/api';
+import { branchesApi, paymentProviderApi, settingsApi, staffApi } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import type { Branch, PaymentProviderAccount, TenantSettings } from '@/types';
 import {
@@ -23,6 +24,9 @@ type AccountForm = {
   account_label: string;
   public_identifier: string;
   checkout_base_url: string;
+  tuu_account_id: string;
+  tuu_secret_key: string;
+  tuu_environment: 'integration' | 'production';
   fintoc_secret_key: string;
   fintoc_holder_id: string;
   fintoc_account_number: string;
@@ -40,6 +44,9 @@ const emptyAccount: AccountForm = {
   account_label: '',
   public_identifier: '',
   checkout_base_url: '',
+  tuu_account_id: '',
+  tuu_secret_key: '',
+  tuu_environment: 'integration',
   fintoc_secret_key: '',
   fintoc_holder_id: '',
   fintoc_account_number: '',
@@ -98,10 +105,37 @@ function buildPaymentAccountPayload(
   const basePayload = {
     account_label: form.account_label.trim() || null,
     public_identifier: form.public_identifier.trim() || null,
-    checkout_base_url: form.provider === 'webpay' || form.provider === 'fintoc' ? null : form.checkout_base_url.trim() || null,
+    checkout_base_url: form.provider === 'webpay' || form.provider === 'fintoc' || form.provider === 'tuu' ? null : form.checkout_base_url.trim() || null,
     status: form.status,
     is_default: form.is_default,
   };
+
+  if (form.provider === 'tuu') {
+    const metadata: Record<string, unknown> = {
+      environment: form.tuu_environment,
+      account_id: form.tuu_account_id.trim(),
+    };
+    const nextSecretKey = form.tuu_secret_key.trim();
+    if (nextSecretKey) {
+      metadata.secret_key = nextSecretKey;
+    }
+
+    const tuuPayload = {
+      ...basePayload,
+      public_identifier: form.tuu_account_id.trim() || basePayload.public_identifier,
+      checkout_base_url: null,
+      metadata,
+    };
+
+    if (existingAccount) {
+      return tuuPayload;
+    }
+
+    return {
+      provider: form.provider,
+      ...tuuPayload,
+    };
+  }
 
   if (form.provider === 'fintoc') {
     const fintocMetadata: Record<string, unknown> = {};
@@ -184,6 +218,11 @@ function buildAccountFormFromAccount(account: PaymentProviderAccount): AccountFo
     account_label: account.account_label ?? '',
     public_identifier: account.public_identifier ?? '',
     checkout_base_url: account.checkout_base_url ?? '',
+    tuu_account_id: typeof metadata.account_id === 'string'
+      ? metadata.account_id
+      : account.public_identifier ?? '',
+    tuu_secret_key: '',
+    tuu_environment: metadata.environment === 'production' ? 'production' : 'integration',
     fintoc_secret_key: '',
     fintoc_holder_id: typeof fintocRecipientAccount.holder_id === 'string' ? fintocRecipientAccount.holder_id : '',
     fintoc_account_number: typeof fintocRecipientAccount.number === 'string' ? fintocRecipientAccount.number : '',
@@ -201,14 +240,98 @@ function buildAccountFormFromAccount(account: PaymentProviderAccount): AccountFo
 
 function getPaymentProviderLabel(provider: PaymentProviderAccount['provider']) {
   if (provider === 'fintoc') return 'Fintoc';
+  if (provider === 'tuu') return 'TUU';
   if (provider === 'webpay') return 'Webpay';
   if (provider === 'mercadopago') return 'MercadoPago';
   if (provider === 'stripe') return 'Stripe';
   return 'Manual';
 }
 
+// ─── Team / Staff ─────────────────────────────────────────────────────────────
+
+type StaffRole = 'admin' | 'reception' | 'trainer' | 'marketing';
+
+interface StaffMember {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+}
+
+interface InviteForm {
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: StaffRole;
+}
+
+interface PendingInvitation {
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+  role_label: string;
+  invited_by: string;
+  invited_at: string;
+  expires_in_hours: number;
+}
+
+type InviteRequest = InviteForm & {
+  replace_pending?: boolean;
+};
+
+type StaffMenuDirection = 'up' | 'down';
+
+const STAFF_ROLES: { value: StaffRole; label: string; description: string; modules: string[] }[] = [
+  {
+    value: 'admin',
+    label: 'Administrador',
+    description: 'Acceso completo excepto configuración de propietario',
+    modules: ['Dashboard', 'Clases', 'Clientes', 'Planes', 'Check-in', 'Programas', 'Marketing', 'Reportes', 'POS', 'Inventario', 'Gastos', 'Feedback', 'Configuración'],
+  },
+  {
+    value: 'reception',
+    label: 'Recepción',
+    description: 'Atención al cliente, check-in y caja',
+    modules: ['Clases', 'Clientes', 'Check-in', 'POS', 'Feedback'],
+  },
+  {
+    value: 'trainer',
+    label: 'Entrenador',
+    description: 'Gestión de clases y programas de entrenamiento',
+    modules: ['Clases', 'Clientes', 'Programas'],
+  },
+  {
+    value: 'marketing',
+    label: 'Marketing',
+    description: 'Campañas, notificaciones y reportes',
+    modules: ['Marketing', 'Reportes'],
+  },
+];
+
+const ROLE_BADGE_COLORS: Record<string, string> = {
+  owner: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+  admin: 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
+  reception: 'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300',
+  trainer: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+  marketing: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
+};
+
+const ROLE_LABEL: Record<string, string> = {
+  owner: 'Propietario', admin: 'Administrador', reception: 'Recepción',
+  trainer: 'Entrenador', marketing: 'Marketing',
+};
+
+const emptyInviteForm: InviteForm = {
+  email: '', first_name: '', last_name: '', role: 'reception',
+};
+
+
 export default function SettingsPage() {
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
+  const canManageSettings = currentUser?.role === 'owner' || currentUser?.role === 'admin';
   const [form, setForm] = useState<SettingsForm | null>(null);
   const [accountForm, setAccountForm] = useState<AccountForm>(emptyAccount);
   const [showAccountModal, setShowAccountModal] = useState(false);
@@ -222,8 +345,19 @@ export default function SettingsPage() {
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
   const isEditingBranch = Boolean(editingBranch);
 
+  // ── Team state ────────────────────────────────────────────────────────────
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteForm, setInviteForm] = useState<InviteForm>(emptyInviteForm);
+  const [selectedRoleInfo, setSelectedRoleInfo] = useState(STAFF_ROLES[1]);
+  const [inviteToReplace, setInviteToReplace] = useState<PendingInvitation | null>(null);
+  const [openStaffMenuId, setOpenStaffMenuId] = useState<string | null>(null);
+  const [staffMenuDirection, setStaffMenuDirection] = useState<StaffMenuDirection>('down');
+  const [staffToDeactivate, setStaffToDeactivate] = useState<StaffMember | null>(null);
+  const [staffToDelete, setStaffToDelete] = useState<StaffMember | null>(null);
+
   const { data: settings, isLoading, isError } = useQuery<TenantSettings>({
     queryKey: ['tenant-settings'],
+    enabled: canManageSettings,
     queryFn: async () => {
       const response = await settingsApi.get();
       return response.data;
@@ -232,6 +366,7 @@ export default function SettingsPage() {
 
   const { data: paymentAccounts = [] } = useQuery<PaymentProviderAccount[]>({
     queryKey: ['payment-provider-accounts'],
+    enabled: canManageSettings,
     queryFn: async () => {
       const response = await paymentProviderApi.list();
       return response.data;
@@ -246,12 +381,177 @@ export default function SettingsPage() {
     },
   });
 
+  const { data: staffList = [] } = useQuery<StaffMember[]>({
+    queryKey: ['staff-team'],
+    enabled: canManageSettings,
+    queryFn: async () => (await staffApi.list()).data,
+  });
+
+  const { data: pendingInvitations = [] } = useQuery<PendingInvitation[]>({
+    queryKey: ['staff-invitations'],
+    enabled: canManageSettings,
+    queryFn: async () => (await staffApi.listInvitations()).data,
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: (data: InviteRequest) => staffApi.invite(data),
+    onSuccess: (_response, variables) => {
+      toast.success(
+        variables.replace_pending
+          ? `Nueva invitación enviada a ${variables.email}. La anterior fue invalidada.`
+          : `Invitación enviada a ${variables.email}`,
+      );
+      setShowInviteModal(false);
+      setInviteForm(emptyInviteForm);
+      setSelectedRoleInfo(STAFF_ROLES[1]);
+      setInviteToReplace(null);
+      queryClient.invalidateQueries({ queryKey: ['staff-invitations'] });
+    },
+    onError: (error: any, variables) => {
+      const detail = getApiError(error, 'No se pudo enviar la invitación');
+      const hasPendingConflict = error?.response?.status === 409 && detail === 'Ya existe una invitación pendiente para ese correo.';
+      if (hasPendingConflict && !variables.replace_pending) {
+        const matchingInvitation = pendingInvitations.find(
+          (inv) => inv.email.toLowerCase() === variables.email.trim().toLowerCase(),
+        );
+        if (matchingInvitation) {
+          setInviteToReplace(matchingInvitation);
+          return;
+        }
+      }
+      toast.error(detail);
+    },
+  });
+
+  const cancelInvitationMutation = useMutation({
+    mutationFn: (email: string) => staffApi.cancelInvitation(email),
+    onSuccess: () => {
+      toast.success('Invitación cancelada');
+      queryClient.invalidateQueries({ queryKey: ['staff-invitations'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo cancelar la invitación'));
+    },
+  });
+
+  const updateStaffMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { role?: string; is_active?: boolean } }) =>
+      staffApi.update(id, data),
+    onSuccess: () => {
+      toast.success('Miembro actualizado');
+      queryClient.invalidateQueries({ queryKey: ['staff-team'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo actualizar el miembro'));
+    },
+  });
+
+  const deactivateStaffMutation = useMutation({
+    mutationFn: (id: string) => staffApi.deactivate(id),
+    onSuccess: () => {
+      toast.success('Miembro desactivado');
+      setStaffToDeactivate(null);
+      queryClient.invalidateQueries({ queryKey: ['staff-team'] });
+      queryClient.invalidateQueries({ queryKey: ['staff'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo desactivar el miembro'));
+    },
+  });
+
+  const hardDeleteStaffMutation = useMutation({
+    mutationFn: (id: string) => staffApi.hardDelete(id),
+    onSuccess: () => {
+      toast.success('Cuenta eliminada definitivamente');
+      setStaffToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ['staff-team'] });
+      queryClient.invalidateQueries({ queryKey: ['staff'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['programs'] });
+      queryClient.invalidateQueries({ queryKey: ['support-interactions'] });
+      queryClient.invalidateQueries({ queryKey: ['support-staff'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo eliminar la cuenta'));
+    },
+  });
+
+  const normalizedInviteEmail = inviteForm.email.trim().toLowerCase();
+  const existingPendingInvitation = normalizedInviteEmail
+    ? pendingInvitations.find((inv) => inv.email.toLowerCase() === normalizedInviteEmail) ?? null
+    : null;
+
+  const submitInvite = (replacePending = false) => {
+    inviteMutation.mutate({
+      ...inviteForm,
+      email: inviteForm.email.trim(),
+      replace_pending: replacePending,
+    });
+  };
+
+  const handleInviteSubmit = () => {
+    if (existingPendingInvitation) {
+      setInviteToReplace(existingPendingInvitation);
+      return;
+    }
+    submitInvite();
+  };
+
+  const closeInviteModal = () => {
+    if (inviteMutation.isPending) return;
+    setShowInviteModal(false);
+    setInviteToReplace(null);
+  };
+
+  const toggleStaffMenu = (memberId: string, event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (openStaffMenuId === memberId) {
+      setOpenStaffMenuId(null);
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const estimatedMenuHeight = STAFF_ROLES.length * 44 + 84;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const nextDirection: StaffMenuDirection = (
+      spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow
+    ) ? 'up' : 'down';
+
+    setStaffMenuDirection(nextDirection);
+    setOpenStaffMenuId(memberId);
+  };
+
   useEffect(() => {
     if (settings) {
       const { branding: _branding, ...rest } = settings;
       setForm(rest);
     }
   }, [settings]);
+
+  useEffect(() => {
+    if (!openStaffMenuId) return undefined;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest('[data-staff-menu-root="true"]')) return;
+      setOpenStaffMenuId(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenStaffMenuId(null);
+      }
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openStaffMenuId]);
 
   const settingsMutation = useMutation({
     mutationFn: async () => {
@@ -830,7 +1130,7 @@ export default function SettingsPage() {
                 <div key={account.id} className="rounded-2xl border border-surface-200/60 px-4 py-4 dark:border-surface-800/60">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-semibold capitalize text-surface-900 dark:text-white">{account.provider}</p>
+                      <p className="font-semibold text-surface-900 dark:text-white">{getPaymentProviderLabel(account.provider)}</p>
                       <p className="text-sm text-surface-500">{account.account_label || 'Sin etiqueta'}</p>
                     </div>
                     <span className={`badge ${account.status === 'connected' ? 'badge-success' : account.status === 'pending' ? 'badge-warning' : 'badge-neutral'}`}>
@@ -860,7 +1160,14 @@ export default function SettingsPage() {
                         )}
                       </>
                     ) : null}
-                    {account.provider !== 'webpay' && account.provider !== 'fintoc' ? (
+                    {account.provider === 'tuu' ? (
+                      <>
+                        <p>Account ID: {String(account.metadata.account_id || account.public_identifier || 'No definido')}</p>
+                        <p>Ambiente: {String(account.metadata.environment || 'integration')}</p>
+                        <p>Secret key: {account.metadata.secret_key_configured ? 'Configurada' : 'Pendiente'}</p>
+                      </>
+                    ) : null}
+                    {account.provider !== 'webpay' && account.provider !== 'fintoc' && account.provider !== 'tuu' ? (
                       <>
                         <p>ID público: {account.public_identifier || 'No definido'}</p>
                         <p>Checkout base: {account.checkout_base_url || 'No definido'}</p>
@@ -917,6 +1224,411 @@ export default function SettingsPage() {
           </motion.div>
         </div>
       </div>
+
+      {/* ── Equipo ──────────────────────────────────────────────────── */}
+      {(currentUser?.role === 'owner' || currentUser?.role === 'admin') ? (
+        <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-6 dark:border-surface-800/50 dark:bg-surface-900">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-50 text-brand-500 dark:bg-brand-950/40">
+                <Users size={20} />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Equipo</h2>
+                <p className="text-sm text-surface-500">Gestiona el acceso de tu equipo al panel de administración</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn-primary flex items-center gap-2"
+              onClick={() => { setInviteForm(emptyInviteForm); setSelectedRoleInfo(STAFF_ROLES[1]); setShowInviteModal(true); }}
+            >
+              <UserPlus size={16} />
+              <span className="hidden sm:inline">Invitar miembro</span>
+            </button>
+          </div>
+
+          {/* Active members */}
+          {staffList.length === 0 && pendingInvitations.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-surface-200 py-10 text-center dark:border-surface-700">
+              <Users size={32} className="mx-auto mb-3 text-surface-300 dark:text-surface-600" />
+              <p className="text-sm text-surface-500">Aún no hay miembros del equipo.</p>
+              <p className="mt-1 text-xs text-surface-400">Invita a tu primer colaborador con el botón de arriba.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {staffList.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-400">Miembros activos</p>
+                  <div className="divide-y divide-surface-100 dark:divide-surface-800">
+                    {staffList.map((member) => (
+                      <div key={member.id} className="flex items-center justify-between gap-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-100 text-sm font-semibold text-surface-600 dark:bg-surface-800 dark:text-surface-300">
+                            {member.full_name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-surface-900 dark:text-white">
+                              {member.full_name}
+                              {!member.is_active && (
+                                <span className="ml-2 text-xs text-surface-400">(inactivo)</span>
+                              )}
+                            </p>
+                            <p className="truncate text-xs text-surface-400">{member.email}</p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_BADGE_COLORS[member.role] ?? 'bg-surface-100 text-surface-600'}`}>
+                            {ROLE_LABEL[member.role] ?? member.role}
+                          </span>
+                          {member.role !== 'owner' && member.id !== currentUser?.id && (
+                            <div className="relative" data-staff-menu-root="true">
+                              <button
+                                type="button"
+                                onClick={(event) => toggleStaffMenu(member.id, event)}
+                                aria-expanded={openStaffMenuId === member.id}
+                                className="flex items-center gap-1 rounded-lg border border-surface-200 px-2 py-1.5 text-xs text-surface-500 hover:bg-surface-50 dark:border-surface-700 dark:hover:bg-surface-800"
+                              >
+                                <UserCog size={13} />
+                                <ChevronDown size={11} />
+                              </button>
+                              <div
+                                className={`absolute right-0 z-20 min-w-[160px] overflow-hidden rounded-xl border border-surface-200 bg-white py-1 shadow-lg dark:border-surface-700 dark:bg-surface-900 ${
+                                  openStaffMenuId === member.id ? 'block' : 'hidden'
+                                } ${
+                                  staffMenuDirection === 'up'
+                                    ? 'bottom-full mb-1 origin-bottom-right'
+                                    : 'top-full mt-1 origin-top-right'
+                                }`}
+                              >
+                                {STAFF_ROLES.map((r) => (
+                                  <button
+                                    key={r.value}
+                                    type="button"
+                                    disabled={updateStaffMutation.isPending}
+                                    onClick={() => {
+                                      setOpenStaffMenuId(null);
+                                      updateStaffMutation.mutate({ id: member.id, data: { role: r.value } });
+                                    }}
+                                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface-50 dark:hover:bg-surface-800 ${member.role === r.value ? 'font-semibold text-brand-600 dark:text-brand-400' : 'text-surface-700 dark:text-surface-300'}`}
+                                  >
+                                    {r.label}
+                                  </button>
+                                ))}
+                                <div className="my-1 border-t border-surface-100 dark:border-surface-800" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenStaffMenuId(null);
+                                    setStaffToDeactivate(member);
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/20"
+                                >
+                                  <UserMinus size={13} />
+                                  Desactivar acceso
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenStaffMenuId(null);
+                                    setStaffToDelete(member);
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/20"
+                                >
+                                  <Trash2 size={13} />
+                                  Eliminar cuenta
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Pending invitations */}
+              {pendingInvitations.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-400">
+                    Invitaciones pendientes
+                  </p>
+                  <div className="divide-y divide-surface-100 dark:divide-surface-800">
+                    {pendingInvitations.map((inv) => (
+                      <div key={inv.email} className="flex items-center justify-between gap-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-sm font-semibold text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
+                            <Mail size={15} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-surface-900 dark:text-white">
+                              {inv.first_name} {inv.last_name}
+                            </p>
+                            <p className="truncate text-xs text-surface-400">
+                              {inv.email} · vence en {inv.expires_in_hours}h
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            Pendiente
+                          </span>
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_BADGE_COLORS[inv.role] ?? 'bg-surface-100 text-surface-600'}`}>
+                            {inv.role_label}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={cancelInvitationMutation.isPending}
+                            onClick={() => cancelInvitationMutation.mutate(inv.email)}
+                            className="flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1.5 text-xs text-rose-500 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:hover:bg-rose-950/20"
+                            title="Cancelar invitación"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </motion.div>
+      ) : null}
+
+      {/* ── Invite modal ─────────────────────────────────────────────── */}
+      <Modal
+        open={showInviteModal}
+        title="Invitar miembro del equipo"
+        description="El invitado recibirá un correo para activar su cuenta y crear su contraseña."
+        onClose={closeInviteModal}
+      >
+        <form
+          className="space-y-5"
+          onSubmit={(e) => { e.preventDefault(); handleInviteSubmit(); }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
+                Nombre <span className="text-rose-500">*</span>
+              </label>
+              <input
+                className="input"
+                required
+                value={inviteForm.first_name}
+                onChange={(e) => setInviteForm((f) => ({ ...f, first_name: e.target.value }))}
+                placeholder="Juan"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
+                Apellido <span className="text-rose-500">*</span>
+              </label>
+              <input
+                className="input"
+                required
+                value={inviteForm.last_name}
+                onChange={(e) => setInviteForm((f) => ({ ...f, last_name: e.target.value }))}
+                placeholder="García"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
+              Correo electrónico <span className="text-rose-500">*</span>
+            </label>
+            <div className="relative">
+              <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
+              <input
+                className="input pl-9"
+                type="email"
+                required
+                value={inviteForm.email}
+                onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))}
+                placeholder="colaborador@gimnasio.cl"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-2 block text-xs font-medium text-surface-600 dark:text-surface-400">
+              Rol <span className="text-rose-500">*</span>
+            </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {STAFF_ROLES.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => { setInviteForm((f) => ({ ...f, role: r.value })); setSelectedRoleInfo(r); }}
+                  className={`rounded-2xl border p-3 text-left transition-colors ${
+                    inviteForm.role === r.value
+                      ? 'border-brand-400 bg-brand-50 dark:border-brand-600 dark:bg-brand-950/20'
+                      : 'border-surface-200 hover:border-surface-300 dark:border-surface-700'
+                  }`}
+                >
+                  <p className={`text-sm font-semibold ${inviteForm.role === r.value ? 'text-brand-700 dark:text-brand-300' : 'text-surface-800 dark:text-surface-200'}`}>
+                    {r.label}
+                  </p>
+                  <p className="mt-0.5 text-xs text-surface-400">{r.description}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Access preview */}
+          <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-700 dark:bg-surface-800/40">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-500">
+              Módulos con acceso — {selectedRoleInfo.label}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {selectedRoleInfo.modules.map((mod) => (
+                <span key={mod} className="rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-medium text-brand-700 dark:bg-brand-950/40 dark:text-brand-300">
+                  {mod}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {existingPendingInvitation ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
+              Ya existe una invitación pendiente para este correo. Puedes crear una nueva invitación para invalidar el enlace anterior.
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" className="btn-secondary" onClick={closeInviteModal} disabled={inviteMutation.isPending}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn-primary flex items-center gap-2" disabled={inviteMutation.isPending}>
+              {inviteMutation.isPending ? (
+                <>Enviando...</>
+              ) : (
+                <><Mail size={15} /> {existingPendingInvitation ? 'Crear nueva invitación' : 'Enviar invitación'}</>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={!!inviteToReplace}
+        title="Crear nueva invitación"
+        description="La invitación pendiente dejará de funcionar y se enviará un nuevo correo."
+        onClose={() => { if (!inviteMutation.isPending) setInviteToReplace(null); }}
+      >
+        {inviteToReplace ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-700 dark:bg-surface-800/40">
+              <p className="font-semibold text-surface-900 dark:text-white">
+                {inviteToReplace.first_name} {inviteToReplace.last_name}
+              </p>
+              <p className="text-sm text-surface-500">{inviteToReplace.email}</p>
+              <p className="mt-2 text-sm text-surface-500">
+                La invitación actual vence en {inviteToReplace.expires_in_hours}h.
+              </p>
+            </div>
+
+            <p className="text-sm text-surface-600 dark:text-surface-300">
+              Se invalidará el enlace anterior y se enviará una nueva invitación con los datos actuales del formulario.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setInviteToReplace(null)}
+                disabled={inviteMutation.isPending}
+              >
+                Mantener invitación actual
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => submitInvite(true)}
+                disabled={inviteMutation.isPending}
+              >
+                {inviteMutation.isPending ? 'Enviando...' : 'Invalidar y reenviar'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* ── Deactivate confirmation ───────────────────────────────────── */}
+      <Modal
+        open={!!staffToDeactivate}
+        title="Desactivar acceso"
+        description="El miembro ya no podrá iniciar sesión en el panel."
+        onClose={() => { if (!deactivateStaffMutation.isPending) setStaffToDeactivate(null); }}
+      >
+        {staffToDeactivate ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-700 dark:bg-surface-800/40">
+              <p className="font-semibold text-surface-900 dark:text-white">{staffToDeactivate.full_name}</p>
+              <p className="text-sm text-surface-500">{staffToDeactivate.email}</p>
+              <span className={`mt-2 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_BADGE_COLORS[staffToDeactivate.role] ?? ''}`}>
+                {ROLE_LABEL[staffToDeactivate.role] ?? staffToDeactivate.role}
+              </span>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" className="btn-secondary" onClick={() => setStaffToDeactivate(null)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={deactivateStaffMutation.isPending}
+                onClick={() => deactivateStaffMutation.mutate(staffToDeactivate.id)}
+              >
+                {deactivateStaffMutation.isPending ? 'Desactivando...' : 'Desactivar acceso'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={!!staffToDelete}
+        title="Eliminar cuenta del equipo"
+        description="La cuenta se borrará definitivamente y el correo quedará disponible para reutilizarlo."
+        onClose={() => { if (!hardDeleteStaffMutation.isPending) setStaffToDelete(null); }}
+      >
+        {staffToDelete ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-200">
+              <p className="font-semibold">Esta acción es irreversible.</p>
+              <p className="mt-1">
+                Se eliminará el acceso, se liberará el correo y las referencias operativas históricas quedarán desvinculadas de esta cuenta.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-surface-700 dark:bg-surface-800/40">
+              <p className="font-semibold text-surface-900 dark:text-white">{staffToDelete.full_name}</p>
+              <p className="text-sm text-surface-500">{staffToDelete.email}</p>
+              <span className={`mt-2 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${ROLE_BADGE_COLORS[staffToDelete.role] ?? ''}`}>
+                {ROLE_LABEL[staffToDelete.role] ?? staffToDelete.role}
+              </span>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setStaffToDelete(null)}
+                disabled={hardDeleteStaffMutation.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={hardDeleteStaffMutation.isPending}
+                onClick={() => hardDeleteStaffMutation.mutate(staffToDelete.id)}
+              >
+                {hardDeleteStaffMutation.isPending ? 'Eliminando...' : 'Eliminar cuenta'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       {/* ── Branch modal ──────────────────────────────────────────── */}
       <Modal
@@ -1065,6 +1777,7 @@ export default function SettingsPage() {
               onChange={(event) => setAccountForm((current) => ({ ...current, provider: event.target.value as AccountForm['provider'] }))}
             >
               <option value="fintoc">Fintoc (transferencia bancaria)</option>
+              <option value="tuu">TUU Pago Online</option>
               <option value="webpay">Webpay</option>
               <option value="mercadopago">MercadoPago</option>
               <option value="stripe">Stripe</option>
@@ -1106,6 +1819,51 @@ export default function SettingsPage() {
                 placeholder="API key secreta"
               />
             </div>
+          ) : accountForm.provider === 'tuu' ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
+                    Account ID de TUU <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    className="input font-mono text-sm"
+                    value={accountForm.tuu_account_id}
+                    onChange={(event) => setAccountForm((current) => ({ ...current, tuu_account_id: event.target.value }))}
+                    placeholder="62224230"
+                    required={accountForm.status === 'connected'}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">Ambiente</label>
+                  <select
+                    className="input"
+                    value={accountForm.tuu_environment}
+                    onChange={(event) => setAccountForm((current) => ({ ...current, tuu_environment: event.target.value as AccountForm['tuu_environment'] }))}
+                  >
+                    <option value="integration">integration</option>
+                    <option value="production">production</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
+                  Secret key de TUU <span className="text-rose-500">*</span>
+                  <span className="ml-1 text-surface-400">(entregada por TUU al habilitar Pago Online)</span>
+                </label>
+                <input
+                  className="input font-mono text-sm"
+                  type="password"
+                  value={accountForm.tuu_secret_key}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, tuu_secret_key: event.target.value }))}
+                  placeholder="Secret key"
+                  required={accountForm.status === 'connected'}
+                />
+              </div>
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-300">
+                TUU usa un checkout firmado por Nexo y callback server-to-server para confirmar el pago del cliente antes de activar la membresía.
+              </div>
+            </div>
           ) : accountForm.provider === 'fintoc' ? (
             <div className="space-y-4">
               <div>
@@ -1135,6 +1893,11 @@ export default function SettingsPage() {
           {isEditingAccount && accountForm.provider === 'webpay' && (editingAccount?.metadata.api_key_configured) ? (
             <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-300">
               Deja la API key en blanco si quieres conservar la credencial actual.
+            </div>
+          ) : null}
+          {isEditingAccount && accountForm.provider === 'tuu' && (editingAccount?.metadata.secret_key_configured) ? (
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-300">
+              Deja la secret key en blanco si quieres conservar la credencial actual de TUU.
             </div>
           ) : null}
           <label className="flex items-center gap-3 rounded-2xl border border-surface-200 px-4 py-3 dark:border-surface-800">

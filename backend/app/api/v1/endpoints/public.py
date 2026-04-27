@@ -3,14 +3,17 @@
 import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from html import escape
+from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import aliased
 
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -20,21 +23,21 @@ from app.integrations.email.email_service import email_service
 from app.models.business import (
     Branch,
     ClassStatus,
+    FeedbackCategory,
+    FeedbackSubmission,
     GymClass,
-    Membership,
-    MembershipStatus,
     Payment,
     PaymentMethod,
     PaymentStatus,
     Plan,
-    PlanDuration,
     PromoCode,
 )
-from app.models.platform import PlatformLead, TenantPaymentProviderAccount, WebpayTransaction
-from app.models.tenant import Tenant
+from app.models.platform import PlatformLead, TenantPaymentProviderAccount, TuuTransaction, WebpayTransaction
+from app.models.tenant import LicenseType, Tenant
 from app.models.user import User, UserRole
 from app.schemas.business import GymClassResponse, PaginatedResponse, PlanResponse
 from app.schemas.platform import (
+    PlatformFeedbackSubmissionResponse,
     PlatformLeadCreateRequest,
     PlatformLeadResponse,
     PlatformLeadUpdateRequest,
@@ -45,19 +48,29 @@ from app.schemas.platform import (
     TenantPublicProfileResponse,
 )
 from app.integrations.payments.fintoc_service import fintoc_service
+from app.integrations.payments.tuu_service import tuu_service
 from app.integrations.payments.webpay_service import webpay_service
 from app.services.branding_service import DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR, coerce_brand_color
-from app.services.custom_domain_service import extract_hostname, normalize_custom_domain
+from app.services.custom_domain_service import build_storefront_url, extract_hostname, normalize_custom_domain
 from app.services.public_checkout_service import build_public_checkout_urls, build_storefront_return_urls
 from app.services.billing_service import activate_tenant_subscription
 from app.services.class_service import build_gym_class_responses
+from app.services.membership_sale_service import SALE_SOURCE_PUBLIC_CHECKOUT, allocate_membership_purchase
 from app.services.promo_code_service import resolve_tenant_promo_pricing
-from app.services.saas_plan_service import definition_from_record, default_saas_plan_definitions
+from app.services.platform_billing_service import pricing_from_snapshot, record_platform_billing_payment
+from app.services.saas_plan_service import definition_from_record, default_saas_plan_definitions, get_public_saas_plan_definition
 from app.services.support_contact_service import resolve_tenant_support_contacts
 from app.services.tenant_quota_service import assert_can_create_client
 from app.services.webpay_checkout_service import (
     build_webpay_redirect_url,
     create_tenant_webpay_transaction,
+)
+from app.services.tuu_checkout_service import (
+    build_tuu_cancel_url,
+    build_tuu_complete_url,
+    build_tuu_redirect_url,
+    create_tenant_tuu_transaction,
+    generate_tuu_reference,
 )
 from app.models.platform import SaaSPlan
 
@@ -92,6 +105,35 @@ def _lead_payload(lead: PlatformLead) -> PlatformLeadResponse:
         metadata=_loads_dict(lead.metadata_json),
         created_at=lead.created_at,
         updated_at=lead.updated_at,
+    )
+
+
+def _build_upload_url(request: Request, file_path: str | None) -> str | None:
+    if not file_path:
+        return None
+    return f"{str(request.base_url).rstrip('/')}{file_path}"
+
+
+def _full_name(first_name: str | None, last_name: str | None) -> str | None:
+    value = " ".join(part for part in [first_name, last_name] if part).strip()
+    return value or None
+
+
+def _platform_feedback_payload(row, request: Request) -> PlatformFeedbackSubmissionResponse:
+    data = row._mapping if hasattr(row, "_mapping") else row
+    category = data["category"]
+    return PlatformFeedbackSubmissionResponse(
+        id=data["id"],
+        tenant_id=data["tenant_id"],
+        tenant_name=data["tenant_name"],
+        tenant_slug=data["tenant_slug"],
+        category=str(category.value if hasattr(category, "value") else category),
+        message=data["message"],
+        image_url=_build_upload_url(request, data["image_path"]),
+        created_at=data["created_at"],
+        created_by=data["created_by"],
+        created_by_name=_full_name(data.get("created_by_first_name"), data.get("created_by_last_name")),
+        created_by_email=data.get("created_by_email"),
     )
 
 
@@ -173,6 +215,8 @@ def _payment_account_checkout_ready(account: TenantPaymentProviderAccount | None
         return bool(tenant_key or fintoc_service.is_configured())
     if account.provider == "webpay":
         return webpay_service.is_account_configured(metadata)
+    if account.provider == "tuu":
+        return tuu_service.is_account_configured(metadata)
     if account.provider in {"stripe", "mercadopago", "manual"}:
         return bool((account.checkout_base_url or "").strip())
     return False
@@ -233,35 +277,6 @@ def _event_data_object(event: dict) -> dict:
     if isinstance(nested_object, dict):
         return nested_object
     return data if isinstance(data, dict) else {}
-
-
-def _membership_expiration_from(plan: Plan, anchor_date: date) -> date | None:
-    if plan.duration_days:
-        return anchor_date + timedelta(days=plan.duration_days)
-
-    duration_type = plan.duration_type.value if hasattr(plan.duration_type, "value") else str(plan.duration_type)
-    if duration_type == PlanDuration.MONTHLY.value:
-        return anchor_date + timedelta(days=30)
-    if duration_type == PlanDuration.ANNUAL.value:
-        return anchor_date + timedelta(days=365)
-    if duration_type == PlanDuration.PERPETUAL.value:
-        return None
-    return None
-
-
-def _resolve_membership_dates(plan: Plan, membership: Membership | None, today: date) -> tuple[date, date | None]:
-    if (
-        membership
-        and membership.status == MembershipStatus.ACTIVE
-        and membership.plan_id == plan.id
-        and membership.expires_at
-        and membership.expires_at >= today
-    ):
-        starts_at = membership.starts_at
-        expires_at = _membership_expiration_from(plan, membership.expires_at)
-        return starts_at, expires_at
-
-    return today, _membership_expiration_from(plan, today)
 
 
 def _build_checkout_reset_url(user_id: UUID) -> str:
@@ -479,39 +494,6 @@ async def _activate_checkout_purchase(
         customer_password=None,
     )
 
-    membership = (
-        await db.execute(
-            select(Membership)
-            .where(Membership.user_id == user.id)
-            .order_by(Membership.created_at.desc())
-        )
-    ).scalars().first()
-
-    today = datetime.now(timezone.utc).date()
-    starts_at, expires_at = _resolve_membership_dates(plan, membership, today)
-
-    if membership is None:
-        membership = Membership(
-            tenant_id=tenant.id,
-            user_id=user.id,
-            plan_id=plan.id,
-            status=MembershipStatus.ACTIVE,
-            starts_at=starts_at,
-            expires_at=expires_at,
-            auto_renew=plan.auto_renew,
-        )
-        db.add(membership)
-        await db.flush()
-    else:
-        membership.tenant_id = tenant.id
-        membership.plan_id = plan.id
-        membership.status = MembershipStatus.ACTIVE
-        membership.starts_at = starts_at
-        membership.expires_at = expires_at
-        membership.auto_renew = plan.auto_renew
-        membership.cancelled_at = None
-        membership.frozen_until = None
-
     payment_metadata = {
         "checkout_session_id": checkout_session_id,
         "customer_email": customer_email,
@@ -521,35 +503,31 @@ async def _activate_checkout_purchase(
         "session_reference": session_reference,
         **metadata,
     }
-    amount_decimal = Decimal(str(amount or plan.price))
-
-    if payment is None:
-        payment = Payment(
-            tenant_id=tenant.id,
-            user_id=user.id,
-            membership_id=membership.id,
+    amount_decimal = Decimal(str(amount if amount is not None else plan.price))
+    try:
+        purchase = await allocate_membership_purchase(
+            db,
+            tenant=tenant,
+            client=user,
+            plan=plan,
+            starts_at=datetime.now(timezone.utc).date(),
+            payment_method=payment_method,
             amount=amount_decimal,
             currency=(currency or plan.currency or "CLP").upper(),
-            status=PaymentStatus.COMPLETED,
-            method=payment_method,
             description=f"Checkout publico - {plan.name}",
-            external_id=external_payment_id,
-            metadata_json=json.dumps(payment_metadata),
+            auto_renew=plan.auto_renew,
+            sale_source=SALE_SOURCE_PUBLIC_CHECKOUT,
+            payment_status=PaymentStatus.COMPLETED,
             paid_at=datetime.now(timezone.utc),
+            external_id=external_payment_id,
+            metadata=payment_metadata,
+            existing_payment=payment,
         )
-        db.add(payment)
-    else:
-        payment.user_id = user.id
-        payment.membership_id = membership.id
-        payment.amount = amount_decimal
-        payment.currency = (currency or payment.currency or plan.currency or "CLP").upper()
-        payment.status = PaymentStatus.COMPLETED
-        payment.method = payment_method
-        payment.description = payment.description or f"Checkout publico - {plan.name}"
-        payment.metadata_json = json.dumps(payment_metadata)
-        payment.paid_at = payment.paid_at or datetime.now(timezone.utc)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
-    await db.flush()
+    membership = purchase.membership
+    payment = purchase.payment
 
     # Increment promo code uses_count if a promo was applied
     if promo_code_id:
@@ -810,6 +788,62 @@ async def _create_public_checkout_session_for_tenant(
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Error de Fintoc: {exc}") from exc
 
+    # ── TUU: preparar sesión firmada y devolver relay interno ───────────────
+    if account.provider == "tuu":
+        if not (data.customer_phone or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="TUU requiere teléfono del cliente para iniciar el checkout.",
+            )
+        if (plan.currency or "CLP").upper() != "CLP":
+            raise HTTPException(
+                status_code=400,
+                detail="TUU solo admite cobros en CLP.",
+            )
+
+        try:
+            tuu_reference = generate_tuu_reference(tenant.slug)
+            transaction = await create_tenant_tuu_transaction(
+                db,
+                tenant=tenant,
+                payment_account=account,
+                user=None,
+                amount=pricing.final_price,
+                currency=plan.currency or "CLP",
+                flow_type="tenant_plan_checkout",
+                flow_reference=tuu_reference,
+                success_url=data.success_url or success_url,
+                cancel_url=data.cancel_url or cancel_url,
+                metadata={
+                    "tenant_id": str(tenant.id),
+                    "tenant_slug": tenant.slug,
+                    "tenant_name": tenant.name,
+                    "plan_id": str(plan.id),
+                    "plan_name": plan.name,
+                    "customer_name": data.customer_name or "",
+                    "customer_email": data.customer_email,
+                    "customer_phone": data.customer_phone or "",
+                    "customer_date_of_birth": data.customer_date_of_birth.isoformat() if data.customer_date_of_birth else "",
+                    "promo_code_id": str(data.promo_code_id) if data.promo_code_id else "",
+                    "price_before_promo": str(pricing.price_before_promo or ""),
+                    "promo_discount_amount": str(pricing.promo_discount_amount or ""),
+                    "final_price": str(pricing.final_price),
+                    "payment_account_id": str(account.id),
+                },
+            )
+            return PublicCheckoutSessionResponse(
+                provider="tuu",
+                status="ready",
+                checkout_url=transaction.checkout_url or build_tuu_redirect_url(str(transaction.id)),
+                payment_link_url=transaction.checkout_url or build_tuu_redirect_url(str(transaction.id)),
+                qr_payload=transaction.checkout_url or build_tuu_redirect_url(str(transaction.id)),
+                session_reference=tuu_reference,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Error de TUU: {exc}") from exc
+
     # ── Webpay: crear transacción real y devolver relay interno ─────────────
     if account.provider == "webpay":
         try:
@@ -874,14 +908,63 @@ async def _create_public_checkout_session_for_tenant(
     )
 
 
+async def _payment_dates_from_metadata(
+    db: AsyncSession,
+    metadata: dict,
+    tenant: Tenant,
+) -> tuple[date, Optional[date]]:
+    """Calculates (starts_at, expires_at) for a SaaS billing payment record.
+
+    For queued payments, starts_at = queue_starts_at and expires_at is
+    derived from the plan's billing interval.  For immediate activations,
+    starts_at = today and expires_at = tenant.license_expires_at.
+    """
+    queue_after = metadata.get("queue_after_payment") == "true"
+    queue_starts_raw = metadata.get("queue_starts_at", "")
+    payment_starts: Optional[date] = None
+    if queue_after and queue_starts_raw:
+        try:
+            payment_starts = datetime.fromisoformat(queue_starts_raw).date()
+        except ValueError:
+            pass
+
+    starts_at: date = payment_starts or datetime.now(timezone.utc).date()
+
+    if not queue_after:
+        expires_at = tenant.license_expires_at.date() if tenant.license_expires_at else None
+        return starts_at, expires_at
+
+    # Queued: calculate expiry from plan duration
+    plan_key = str(metadata.get("saas_plan_key") or "").strip()
+    plan_def = await get_public_saas_plan_definition(db, plan_key) if plan_key else None
+    if plan_def:
+        anchor = datetime.combine(starts_at, datetime.min.time()).replace(tzinfo=timezone.utc)
+        if plan_def.license_type == LicenseType.ANNUAL:
+            expires_at = (anchor + timedelta(days=365)).date()
+        elif plan_def.license_type == LicenseType.SEMI_ANNUAL:
+            expires_at = (anchor + timedelta(days=180)).date()
+        elif plan_def.license_type == LicenseType.QUARTERLY:
+            expires_at = (anchor + timedelta(days=90)).date()
+        elif plan_def.license_type == LicenseType.PERPETUAL:
+            expires_at = None
+        else:
+            expires_at = (anchor + timedelta(days=30)).date()
+    else:
+        expires_at = None
+    return starts_at, expires_at
+
+
 async def _activate_saas_tenant(
     db: AsyncSession,
     tenant_id: str,
     saas_plan_key: str,
+    *,
+    metadata: Optional[dict] = None,
 ) -> bool:
     """
-    Activa el tenant SaaS tras un pago confirmado de Fintoc.
-    Retorna True si la activación fue exitosa.
+    Activa o encola el plan SaaS tras un pago confirmado.
+    Si metadata["queue_after_payment"] == "true", encola en lugar de activar.
+    Retorna True si la operación fue exitosa.
     """
     import structlog as _structlog
     _logger = _structlog.get_logger()
@@ -891,10 +974,9 @@ async def _activate_saas_tenant(
 
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        _logger.warning("fintoc_saas_activation_tenant_not_found", tenant_id=tenant_id)
+        _logger.warning("saas_activation_tenant_not_found", tenant_id=tenant_id)
         return False
 
-    # Buscar plan en DB primero, luego en defaults
     result = await db.execute(
         select(SaaSPlan).where(
             SaaSPlan.key == saas_plan_key,
@@ -911,17 +993,36 @@ async def _activate_saas_tenant(
         )
 
     if not plan:
-        _logger.warning("fintoc_saas_activation_plan_not_found", saas_plan_key=saas_plan_key)
+        _logger.warning("saas_activation_plan_not_found", saas_plan_key=saas_plan_key)
         return False
 
-    activate_tenant_subscription(tenant, plan)
-    await db.flush()
-    _logger.info(
-        "fintoc_saas_tenant_activated",
-        tenant_id=tenant_id,
-        tenant_slug=tenant.slug,
-        saas_plan_key=saas_plan_key,
-    )
+    _meta = metadata or {}
+    if _meta.get("queue_after_payment") == "true":
+        queue_starts_raw = _meta.get("queue_starts_at", "")
+        try:
+            queue_starts_at = datetime.fromisoformat(queue_starts_raw) if queue_starts_raw else None
+        except ValueError:
+            queue_starts_at = None
+        tenant.next_plan_key = plan.key
+        tenant.next_plan_name = str(_meta.get("saas_plan_name") or plan.name)
+        tenant.next_plan_starts_at = queue_starts_at or tenant.license_expires_at
+        await db.flush()
+        _logger.info(
+            "saas_tenant_plan_queued",
+            tenant_id=tenant_id,
+            tenant_slug=tenant.slug,
+            saas_plan_key=saas_plan_key,
+            queue_starts_at=str(tenant.next_plan_starts_at),
+        )
+    else:
+        activate_tenant_subscription(tenant, plan)
+        await db.flush()
+        _logger.info(
+            "saas_tenant_activated",
+            tenant_id=tenant_id,
+            tenant_slug=tenant.slug,
+            saas_plan_key=saas_plan_key,
+        )
     return True
 
 
@@ -935,6 +1036,46 @@ def _merge_redirect_query(base_url: str, params: dict[str, str | None]) -> str:
 
 def _webpay_redirect_response(base_url: str, **params: str | None) -> RedirectResponse:
     return RedirectResponse(_merge_redirect_query(base_url, params), status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _tuu_form_html(action_url: str, payload: dict[str, str | int]) -> str:
+    input_fields = "\n".join(
+        f'        <input type="hidden" name="{escape(str(key), quote=True)}" value="{escape(str(value), quote=True)}" />'
+        for key, value in payload.items()
+    )
+    return f"""<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redirigiendo a TUU</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; background: #04131f; color: #e2e8f0; display: grid; min-height: 100vh; place-items: center; margin: 0; }}
+      .card {{ max-width: 30rem; padding: 2rem; border-radius: 1.5rem; background: linear-gradient(180deg, rgba(5, 23, 38, 0.96), rgba(3, 13, 25, 0.96)); border: 1px solid rgba(56, 189, 248, 0.18); text-align: center; box-shadow: 0 24px 60px rgba(2, 8, 23, 0.45); }}
+      .brand {{ display: inline-flex; align-items: center; justify-content: center; width: 3rem; height: 3rem; border-radius: 9999px; background: linear-gradient(135deg, #22d3ee, #0284c7); color: white; font-weight: 700; margin-bottom: 1rem; }}
+      h1 {{ margin: 0 0 0.75rem; font-size: 1.35rem; }}
+      p {{ margin: 0 0 1rem; color: #94a3b8; line-height: 1.5; }}
+      .spinner {{ width: 2.75rem; height: 2.75rem; border-radius: 9999px; border: 4px solid rgba(148, 163, 184, 0.18); border-top-color: #22d3ee; margin: 1.5rem auto 0; animation: spin 1s linear infinite; }}
+      .hint {{ margin-top: 1rem; font-size: 0.875rem; color: #cbd5f5; }}
+      button {{ margin-top: 1.5rem; border: 0; border-radius: 9999px; padding: 0.85rem 1.25rem; font-weight: 600; cursor: pointer; color: #082f49; background: linear-gradient(135deg, #67e8f9, #38bdf8); }}
+      @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="brand">T</div>
+      <h1>Te estamos redirigiendo a TUU</h1>
+      <p>Preparando el pago seguro de tu plan. Si la redirección no ocurre automáticamente, continúa manualmente.</p>
+      <form id="tuu-redirect-form" method="post" action="{escape(action_url, quote=True)}" accept-charset="utf-8">
+{input_fields}
+        <button type="submit">Continuar a TUU</button>
+      </form>
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="hint">Nexo Fitness firma esta solicitud desde backend antes de enviarla a la pasarela.</p>
+    </div>
+    <script>document.getElementById('tuu-redirect-form')?.submit();</script>
+  </body>
+</html>"""
 
 
 def _webpay_form_html(action_url: str, token: str) -> str:
@@ -972,6 +1113,115 @@ def _webpay_commit_succeeded(payload: dict) -> bool:
         response_code = -1
     status_value = str(payload.get("status") or "").upper()
     return response_code == 0 and status_value == "AUTHORIZED"
+
+
+async def _process_tuu_result(
+    db: AsyncSession,
+    *,
+    transaction: TuuTransaction,
+    payload: dict[str, str],
+) -> None:
+    amount = str(payload.get("x_amount") or "").strip()
+    currency = str(payload.get("x_currency") or transaction.currency or "").strip().upper()
+    if amount:
+        try:
+            if Decimal(amount) != transaction.amount:
+                raise HTTPException(status_code=400, detail="Monto TUU inválido para la transacción")
+        except ArithmeticError as exc:
+            raise HTTPException(status_code=400, detail="Monto TUU inválido") from exc
+
+    if currency and currency != (transaction.currency or "").upper():
+        raise HTTPException(status_code=400, detail="Moneda TUU inválida para la transacción")
+
+    transaction.external_id = str(payload.get("x_reference") or "").strip() or transaction.external_id or transaction.flow_reference
+    transaction.provider_response_json = json.dumps(payload)
+
+    result = str(payload.get("x_result") or "").strip().lower()
+    metadata = _loads_dict(transaction.metadata_json)
+
+    if result == "completed":
+        try:
+            await _activate_checkout_purchase(
+                db,
+                tenant_id=str(metadata.get("tenant_id") or ""),
+                plan_id=str(metadata.get("plan_id") or ""),
+                customer_email=str(metadata.get("customer_email") or ""),
+                customer_name=str(metadata.get("customer_name") or ""),
+                customer_phone=str(metadata.get("customer_phone") or "") or None,
+                customer_date_of_birth=_parse_optional_date(str(metadata.get("customer_date_of_birth") or "") or None),
+                external_payment_id=transaction.external_id or str(transaction.id),
+                session_reference=str(transaction.flow_reference or ""),
+                checkout_session_id=str(transaction.id),
+                amount=amount or transaction.amount,
+                currency=currency or transaction.currency,
+                payment_method=PaymentMethod.TUU,
+                metadata=metadata,
+                promo_code_id=str(metadata.get("promo_code_id") or "") or None,
+            )
+        except Exception as exc:
+            transaction.status = "activation_error"
+            transaction.provider_response_json = json.dumps(
+                {
+                    "callback": payload,
+                    "activation_error": str(exc),
+                }
+            )
+            await db.flush()
+            raise HTTPException(status_code=500, detail="No se pudo activar el checkout TUU") from exc
+
+        transaction.status = "completed"
+        transaction.committed_at = datetime.now(timezone.utc)
+        await db.flush()
+        return
+
+    if result == "failed":
+        transaction.status = "failed"
+    elif result == "pending":
+        transaction.status = "pending"
+    elif result == "cancelled":
+        transaction.status = "cancelled"
+    else:
+        transaction.status = result or transaction.status or "pending"
+    await db.flush()
+
+
+async def _resolve_tuu_transaction(
+    db: AsyncSession,
+    *,
+    transaction_id: str | None,
+    reference: str | None,
+) -> TuuTransaction | None:
+    if transaction_id:
+        try:
+            transaction = await db.get(TuuTransaction, UUID(transaction_id))
+        except ValueError:
+            transaction = None
+        if transaction:
+            return transaction
+
+    if reference:
+        return (
+            await db.execute(select(TuuTransaction).where(TuuTransaction.flow_reference == reference))
+        ).scalars().first()
+
+    return None
+
+
+async def _resolve_tuu_credentials(
+    db: AsyncSession,
+    transaction: TuuTransaction,
+):
+    if not transaction.payment_account_id:
+        raise ValueError("La transacción TUU no tiene una cuenta asociada.")
+
+    account = await db.get(TenantPaymentProviderAccount, transaction.payment_account_id)
+    if account is None:
+        raise ValueError("La cuenta TUU asociada ya no existe.")
+
+    credentials = tuu_service.credentials_from_metadata(_loads_dict(account.metadata_json))
+    if credentials is None:
+        raise ValueError("La cuenta TUU asociada no tiene credenciales válidas.")
+    return credentials
 
 
 async def _resolve_webpay_transaction(
@@ -1013,6 +1263,131 @@ async def _resolve_webpay_credentials(
     if credentials is None:
         raise ValueError("Webpay no está configurado para la plataforma.")
     return credentials
+
+
+@public_router.get("/tuu/redirect/{transaction_id}", include_in_schema=False)
+async def tuu_redirect(transaction_id: UUID, db: AsyncSession = Depends(get_db)):
+    transaction = await db.get(TuuTransaction, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transacción TUU no encontrada")
+
+    if transaction.status == "completed":
+        return _webpay_redirect_response(
+            transaction.success_url or settings.public_app_url,
+            provider="tuu",
+            status="success",
+            flow=transaction.flow_type,
+        )
+    if transaction.status in {"failed", "cancelled"}:
+        return _webpay_redirect_response(
+            transaction.cancel_url or settings.public_app_url,
+            provider="tuu",
+            status=transaction.status,
+            flow=transaction.flow_type,
+        )
+
+    metadata = _loads_dict(transaction.metadata_json)
+    credentials = await _resolve_tuu_credentials(db, transaction)
+    first_name, last_name = _split_customer_name(str(metadata.get("customer_name") or ""))
+
+    try:
+        payload = tuu_service.build_payment_payload(
+            credentials=credentials,
+            amount=int(transaction.amount),
+            currency=transaction.currency,
+            customer_email=str(metadata.get("customer_email") or "").strip(),
+            customer_first_name=first_name,
+            customer_last_name=last_name,
+            customer_phone=str(metadata.get("customer_phone") or "").strip(),
+            description=f"Plan {str(metadata.get('plan_name') or 'Nexo Fitness').strip()}",
+            reference=transaction.flow_reference,
+            shop_name=str(metadata.get("tenant_name") or metadata.get("tenant_slug") or "Nexo Fitness"),
+            callback_url=transaction.callback_url or settings.public_app_url,
+            cancel_url=build_tuu_cancel_url(str(transaction.id)),
+            complete_url=build_tuu_complete_url(str(transaction.id)),
+        )
+    except ValueError as exc:
+        transaction.status = "failed"
+        transaction.provider_response_json = json.dumps({"redirect_error": str(exc)})
+        await db.flush()
+        return _webpay_redirect_response(
+            transaction.cancel_url or settings.public_app_url,
+            provider="tuu",
+            status="failed",
+            flow=transaction.flow_type,
+            reason="invalid_request",
+        )
+
+    transaction.status = "pending"
+    transaction.provider_response_json = json.dumps({"request_payload": payload})
+    await db.flush()
+    return HTMLResponse(_tuu_form_html(credentials.payment_url, payload))
+
+
+@public_router.api_route("/tuu/{outcome}/{transaction_id}", methods=["GET", "POST"], include_in_schema=False)
+async def tuu_return(outcome: str, transaction_id: UUID, request: Request, db: AsyncSession = Depends(get_db)):
+    transaction = await db.get(TuuTransaction, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transacción TUU no encontrada")
+
+    payload = {key: str(value) for key, value in request.query_params.items()}
+    if request.method == "POST":
+        form = await request.form()
+        payload.update({key: str(value) for key, value in form.items()})
+
+    storefront_url = build_storefront_url(
+        settings.public_app_url,
+        str(_loads_dict(transaction.metadata_json).get("tenant_slug") or ""),
+    )
+    checkout_state = "success" if outcome == "complete" else "cancelled"
+
+    if payload:
+        reference = str(payload.get("x_reference") or "").strip() or None
+        if reference and reference != transaction.flow_reference:
+            return _webpay_redirect_response(
+                transaction.cancel_url or storefront_url,
+                checkout=checkout_state,
+                provider="tuu",
+                status="failed",
+                reason="invalid_reference",
+            )
+
+        credentials = await _resolve_tuu_credentials(db, transaction)
+        if tuu_service.verify_signature(payload, credentials.secret_key):
+            account_id = str(payload.get("x_account_id") or "").strip()
+            if account_id and account_id == transaction.account_id:
+                await _process_tuu_result(db, transaction=transaction, payload=payload)
+            else:
+                return _webpay_redirect_response(
+                    transaction.cancel_url or storefront_url,
+                    checkout=checkout_state,
+                    provider="tuu",
+                    status="failed",
+                    reason="invalid_account",
+                )
+
+        result = str(payload.get("x_result") or "").strip().lower() or ("cancelled" if outcome == "cancel" else "pending")
+        message = str(payload.get("x_message") or "").strip() or None
+        return _webpay_redirect_response(
+            storefront_url,
+            checkout="success" if result == "completed" else "cancelled",
+            provider="tuu",
+            status=result,
+            message=message,
+            reference=transaction.flow_reference,
+        )
+
+    if outcome == "cancel":
+        transaction.status = "cancelled"
+        await db.flush()
+
+    return _webpay_redirect_response(
+        storefront_url,
+        checkout=checkout_state,
+        provider="tuu",
+        status="cancelled" if outcome == "cancel" else "pending",
+        reference=transaction.flow_reference,
+    )
 
 
 @public_router.get("/webpay/redirect/{transaction_id}", include_in_schema=False)
@@ -1102,7 +1477,40 @@ async def webpay_return(request: Request, db: AsyncSession = Depends(get_db)):
                     db,
                     tenant_id=str(metadata.get("tenant_id") or ""),
                     saas_plan_key=str(metadata.get("saas_plan_key") or ""),
+                    metadata=metadata,
                 )
+                if metadata.get("total_amount"):
+                    pricing = await pricing_from_snapshot(
+                        db,
+                        plan_key=str(metadata.get("saas_plan_key") or ""),
+                        metadata=metadata,
+                        require_public_plan=False,
+                    )
+                    owner_user_id = str(metadata.get("owner_user_id") or "").strip()
+                    try:
+                        owner_uuid = UUID(owner_user_id) if owner_user_id else transaction.user_id
+                    except ValueError:
+                        owner_uuid = transaction.user_id
+                    tenant_id_raw = str(metadata.get("tenant_id") or "").strip()
+                    try:
+                        tenant_uuid = UUID(tenant_id_raw) if tenant_id_raw else None
+                    except ValueError:
+                        tenant_uuid = None
+                    tenant = await db.get(Tenant, tenant_uuid) if tenant_uuid else None
+                    if tenant is not None:
+                        _starts, _expires = await _payment_dates_from_metadata(db, metadata, tenant)
+                        await record_platform_billing_payment(
+                            db,
+                            tenant_id=tenant.id,
+                            user_id=owner_uuid,
+                            created_by=owner_uuid,
+                            pricing=pricing,
+                            payment_method=PaymentMethod.WEBPAY,
+                            external_reference=token_ws or str(transaction.id),
+                            starts_at=_starts,
+                            expires_at=_expires,
+                            metadata=metadata,
+                        )
             elif transaction.flow_type == "tenant_plan_checkout":
                 await _activate_checkout_purchase(
                     db,
@@ -1156,6 +1564,34 @@ async def webpay_return(request: Request, db: AsyncSession = Depends(get_db)):
     )
 
 
+@public_router.api_route("/webhooks/tuu/{transaction_id}", methods=["GET", "POST"], include_in_schema=False)
+async def tuu_webhook(transaction_id: UUID, request: Request, db: AsyncSession = Depends(get_db)):
+    form_data: dict[str, str] = {}
+    if request.method == "POST":
+        form = await request.form()
+        form_data = {key: str(value) for key, value in form.items()}
+
+    query_data = {key: str(value) for key, value in request.query_params.items()}
+    callback_payload = {**query_data, **form_data}
+    reference = str(callback_payload.get("x_reference") or "").strip() or None
+
+    transaction = await _resolve_tuu_transaction(db, transaction_id=str(transaction_id), reference=reference)
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transacción TUU no encontrada")
+    if reference and reference != transaction.flow_reference:
+        raise HTTPException(status_code=400, detail="Referencia TUU inválida para la transacción")
+
+    credentials = await _resolve_tuu_credentials(db, transaction)
+    if not tuu_service.verify_signature(callback_payload, credentials.secret_key):
+        raise HTTPException(status_code=400, detail="Firma TUU inválida")
+    account_id = str(callback_payload.get("x_account_id") or "").strip()
+    if account_id and account_id != transaction.account_id:
+        raise HTTPException(status_code=400, detail="Account ID TUU inválido para la transacción")
+
+    await _process_tuu_result(db, transaction=transaction, payload=callback_payload)
+    return {"received": True}
+
+
 @public_router.post("/webhooks/fintoc", include_in_schema=False)
 async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     """Recibe eventos de Fintoc y activa la compra del cliente cuando el pago se confirma."""
@@ -1184,14 +1620,47 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         payment_intent = event_data.get("payment_resource", {}).get("payment_intent", {})
         if payment_intent.get("status") == "succeeded":
             if is_saas_payment:
-                # Pago SaaS — activar tenant
+                # Pago SaaS — activar o encolar según metadata
                 try:
                     activated = await _activate_saas_tenant(
                         db,
                         tenant_id=str(metadata.get("tenant_id", "")),
                         saas_plan_key=saas_plan_key,
+                        metadata=metadata,
                     )
                     activation_result = {"saas_activated": activated, "saas_plan_key": saas_plan_key}
+                    if activated and metadata.get("total_amount"):
+                        pricing = await pricing_from_snapshot(
+                            db,
+                            plan_key=saas_plan_key,
+                            metadata=metadata,
+                            require_public_plan=False,
+                        )
+                        owner_user_id = str(metadata.get("owner_user_id") or "").strip()
+                        try:
+                            owner_uuid = UUID(owner_user_id) if owner_user_id else None
+                        except ValueError:
+                            owner_uuid = None
+                        tenant_id = str(metadata.get("tenant_id", "")).strip()
+                        try:
+                            tenant_uuid = UUID(tenant_id) if tenant_id else None
+                        except ValueError:
+                            tenant_uuid = None
+                        tenant = await db.get(Tenant, tenant_uuid) if tenant_uuid else None
+                        if tenant is not None:
+                            _starts, _expires = await _payment_dates_from_metadata(db, metadata, tenant)
+                            await record_platform_billing_payment(
+                                db,
+                                tenant_id=tenant.id,
+                                user_id=owner_uuid,
+                                created_by=owner_uuid,
+                                pricing=pricing,
+                                payment_method=PaymentMethod.FINTOC,
+                                external_reference=str(payment_intent.get("id") or event_data.get("id") or ""),
+                                starts_at=_starts,
+                                expires_at=_expires,
+                                metadata=metadata,
+                            )
                 except Exception as exc:
                     logger.error("fintoc_saas_activation_failed", metadata=metadata, error=str(exc))
             else:
@@ -1225,8 +1694,41 @@ async def fintoc_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                     db,
                     tenant_id=str(metadata.get("tenant_id", "")),
                     saas_plan_key=saas_plan_key,
+                    metadata=metadata,
                 )
                 activation_result = {"saas_activated": activated, "saas_plan_key": saas_plan_key}
+                if activated and metadata.get("total_amount"):
+                    pricing = await pricing_from_snapshot(
+                        db,
+                        plan_key=saas_plan_key,
+                        metadata=metadata,
+                        require_public_plan=False,
+                    )
+                    owner_user_id = str(metadata.get("owner_user_id") or "").strip()
+                    try:
+                        owner_uuid = UUID(owner_user_id) if owner_user_id else None
+                    except ValueError:
+                        owner_uuid = None
+                    tenant_id = str(metadata.get("tenant_id", "")).strip()
+                    try:
+                        tenant_uuid = UUID(tenant_id) if tenant_id else None
+                    except ValueError:
+                        tenant_uuid = None
+                    tenant = await db.get(Tenant, tenant_uuid) if tenant_uuid else None
+                    if tenant is not None:
+                        _starts, _expires = await _payment_dates_from_metadata(db, metadata, tenant)
+                        await record_platform_billing_payment(
+                            db,
+                            tenant_id=tenant.id,
+                            user_id=owner_uuid,
+                            created_by=owner_uuid,
+                            pricing=pricing,
+                            payment_method=PaymentMethod.FINTOC,
+                            external_reference=str(event_data.get("id") or ""),
+                            starts_at=_starts,
+                            expires_at=_expires,
+                            metadata=metadata,
+                        )
             except Exception as exc:
                 logger.error("fintoc_saas_activation_failed", metadata=metadata, error=str(exc))
         else:
@@ -1313,6 +1815,114 @@ async def list_platform_leads(
 
     return PaginatedResponse(
         items=[_lead_payload(lead) for lead in leads],
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=(total + per_page - 1) // per_page,
+    )
+
+
+@platform_router.get("/feedback", response_model=PaginatedResponse)
+async def list_platform_feedback(
+    request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None, max_length=200),
+    category: str | None = Query(None, pattern=r"^(suggestion|improvement|problem|other)$"),
+    tenant_id: UUID | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    has_image: bool | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="El rango de fechas es inválido")
+
+    author = aliased(User)
+    filters = []
+    search_term = (search or "").strip()
+
+    if category:
+        filters.append(FeedbackSubmission.category == FeedbackCategory(category))
+    if tenant_id:
+        filters.append(FeedbackSubmission.tenant_id == tenant_id)
+    if date_from:
+        filters.append(
+            FeedbackSubmission.created_at >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if date_to:
+        filters.append(
+            FeedbackSubmission.created_at
+            < datetime.combine(date_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if has_image is True:
+        filters.append(FeedbackSubmission.image_path.is_not(None))
+    elif has_image is False:
+        filters.append(FeedbackSubmission.image_path.is_(None))
+    if search_term:
+        like = f"%{search_term}%"
+        filters.append(
+            or_(
+                FeedbackSubmission.message.ilike(like),
+                Tenant.name.ilike(like),
+                Tenant.slug.ilike(like),
+                author.first_name.ilike(like),
+                author.last_name.ilike(like),
+                author.email.ilike(like),
+                func.concat(author.first_name, " ", author.last_name).ilike(like),
+            )
+        )
+
+    query = (
+        select(
+            FeedbackSubmission.id.label("id"),
+            FeedbackSubmission.tenant_id.label("tenant_id"),
+            Tenant.name.label("tenant_name"),
+            Tenant.slug.label("tenant_slug"),
+            FeedbackSubmission.category.label("category"),
+            FeedbackSubmission.message.label("message"),
+            FeedbackSubmission.image_path.label("image_path"),
+            FeedbackSubmission.created_at.label("created_at"),
+            FeedbackSubmission.created_by.label("created_by"),
+            author.first_name.label("created_by_first_name"),
+            author.last_name.label("created_by_last_name"),
+            author.email.label("created_by_email"),
+        )
+        .select_from(FeedbackSubmission)
+        .join(Tenant, Tenant.id == FeedbackSubmission.tenant_id)
+        .outerjoin(author, author.id == FeedbackSubmission.created_by)
+    )
+    count_query = (
+        select(func.count())
+        .select_from(FeedbackSubmission)
+        .join(Tenant, Tenant.id == FeedbackSubmission.tenant_id)
+        .outerjoin(author, author.id == FeedbackSubmission.created_by)
+    )
+    if filters:
+        query = query.where(*filters)
+        count_query = count_query.where(*filters)
+
+    try:
+        total = (await db.execute(count_query)).scalar() or 0
+        rows = (
+            await db.execute(
+                query
+                .order_by(FeedbackSubmission.created_at.desc())
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+            )
+        ).all()
+    except ProgrammingError as error:
+        if _is_missing_table(error, "feedback_submissions"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="El almacenamiento de feedback aún no está inicializado. Ejecuta las migraciones.",
+            ) from error
+        raise
+
+    return PaginatedResponse(
+        items=[_platform_feedback_payload(row, request) for row in rows],
         total=total,
         page=page,
         per_page=per_page,

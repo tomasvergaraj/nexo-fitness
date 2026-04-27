@@ -285,8 +285,8 @@ class POSTransaction(Base):
     branch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("branches.id", ondelete="SET NULL"), index=True
     )
-    cashier_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    cashier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))

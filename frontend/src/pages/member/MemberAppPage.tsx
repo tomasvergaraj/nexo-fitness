@@ -48,7 +48,7 @@ import WhatsAppIcon from '@/components/icons/WhatsAppIcon';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
 import { browserSupportsWebPush, ensureWebPushSubscription, subscriptionToApiPayload } from '@/lib/webPush';
-import { authApi, classesApi, mobileApi, notificationsApi, promoCodesApi, publicApi, reservationsApi } from '@/services/api';
+import { authApi, classesApi, mobileApi, notificationsApi, promoCodesApi, programBookingsApi, publicApi, reservationsApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import type {
@@ -56,6 +56,7 @@ import type {
   BodyMeasurement,
   GymClass,
   MobilePaymentHistoryItem,
+  ProgramBooking,
   TrainingProgram,
   MobileWallet,
   PaginatedResponse,
@@ -152,6 +153,7 @@ const TABS: Array<{
 // El backend actual guarda esta preferencia, pero todavía no procesa cobros
 // recurrentes para membresías de clientes.
 const MEMBER_AUTO_RENEW_AVAILABLE = false;
+const MEMBER_AGENDA_PAGE_SIZE = 100;
 
 export default function MemberAppPage() {
   const navigate = useNavigate();
@@ -215,8 +217,32 @@ export default function MemberAppPage() {
   const [photoNotes, setPhotoNotes] = useState('');
   const [photoRecordedAt, setPhotoRecordedAt] = useState(new Date().toISOString().slice(0, 10));
   const [progressSubTab, setProgressSubTab] = useState<'measurements' | 'photos' | 'records'>('measurements');
+  const [pendingBookingProgram, setPendingBookingProgram] = useState<TrainingProgram | null>(null);
+  const [bookingPreviewClasses, setBookingPreviewClasses] = useState<GymClass[] | null>(null);
+  const [bookingPreviewLoading, setBookingPreviewLoading] = useState(false);
+  const [pendingCancelBookingId, setPendingCancelBookingId] = useState<string | null>(null);
+  const [cancelBookingReason, setCancelBookingReason] = useState('');
   const memberSnapshot = useMemo(() => loadMemberSnapshot(user?.id), [user?.id]);
   const activeTab = getActiveTab(searchParams);
+  const agendaWeekDates = useMemo(() => {
+    const today = new Date();
+    const dayOfWeek = (today.getDay() + 6) % 7; // 0=Mon
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - dayOfWeek + agendaWeekOffset * 7);
+    monday.setHours(0, 0, 0, 0);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return d;
+    });
+  }, [agendaWeekOffset]);
+  const agendaRange = useMemo(() => {
+    const rangeStart = new Date(agendaWeekDates[0]);
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(agendaWeekDates[agendaWeekDates.length - 1]);
+    rangeEnd.setHours(23, 59, 59, 999);
+    return { rangeStart, rangeEnd };
+  }, [agendaWeekDates]);
 
   const walletQuery = useQuery<MobileWallet>({
     queryKey: ['member-wallet'],
@@ -256,19 +282,57 @@ export default function MemberAppPage() {
     initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
   });
 
-  const classesQuery = useQuery<PaginatedResponse<GymClass>>({
-    queryKey: ['member-classes'],
-    queryFn: async () =>
-      (
-        await classesApi.list({
-          status: 'scheduled',
-          per_page: 24,
-          date_from: new Date().toISOString(),
-        })
-      ).data,
+  const programBookingsQuery = useQuery<ProgramBooking[]>({
+    queryKey: ['member-program-bookings'],
+    queryFn: async () => (await programBookingsApi.list({ status: 'all' })).data,
     enabled: Boolean(user),
-    initialData: memberSnapshot?.classes,
-    initialDataUpdatedAt: memberSnapshot?.updatedAt ? Date.parse(memberSnapshot.updatedAt) : undefined,
+  });
+
+  const memberPlanId = walletQuery.data?.plan_id;
+  const classesQuery = useQuery<PaginatedResponse<GymClass>>({
+    queryKey: [
+      'member-classes',
+      memberPlanId,
+      agendaRange.rangeStart.toISOString(),
+      agendaRange.rangeEnd.toISOString(),
+    ],
+    queryFn: async () => {
+      const aggregatedItems: GymClass[] = [];
+      let page = 1;
+      let pages = 1;
+
+      do {
+        const response = await classesApi.list({
+          page,
+          per_page: MEMBER_AGENDA_PAGE_SIZE,
+          date_from: agendaRange.rangeStart.toISOString(),
+          date_to: agendaRange.rangeEnd.toISOString(),
+          sort_order: 'asc',
+          ...(memberPlanId ? { member_plan_id: memberPlanId } : {}),
+        });
+        const payload = response.data as PaginatedResponse<GymClass>;
+        const visibleItems = (payload.items ?? []).filter(
+          (gymClass) => gymClass.status === 'scheduled' || gymClass.status === 'in_progress',
+        );
+
+        aggregatedItems.push(...visibleItems);
+        pages = Math.max(payload.pages || 1, 1);
+        page += 1;
+      } while (page <= pages);
+
+      return {
+        items: aggregatedItems,
+        total: aggregatedItems.length,
+        page: 1,
+        per_page: aggregatedItems.length || MEMBER_AGENDA_PAGE_SIZE,
+        pages: 1,
+      };
+    },
+    enabled: Boolean(user),
+    initialData: agendaWeekOffset === 0 ? memberSnapshot?.classes : undefined,
+    initialDataUpdatedAt: agendaWeekOffset === 0 && memberSnapshot?.updatedAt
+      ? Date.parse(memberSnapshot.updatedAt)
+      : undefined,
   });
 
   const reservationsQuery = useQuery<PaginatedResponse<Reservation>>({
@@ -545,6 +609,50 @@ export default function MemberAppPage() {
     },
     onError: (error: any) => toast.error(getApiError(error, 'No se pudo quitar la inscripción.')),
   });
+
+  const createProgramBookingMutation = useMutation({
+    mutationFn: async (data: { program_id: string; recurrence_group_id: string }) =>
+      (await programBookingsApi.create(data)).data,
+    onSuccess: async () => {
+      toast.success('Programa reservado.');
+      setPendingBookingProgram(null);
+      setBookingPreviewClasses(null);
+      await queryClient.invalidateQueries({ queryKey: ['member-program-bookings'] });
+      await queryClient.invalidateQueries({ queryKey: ['member-reservations'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo reservar el programa.')),
+  });
+
+  const cancelProgramBookingMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason?: string }) =>
+      programBookingsApi.cancel(id, reason ? { cancel_reason: reason } : undefined),
+    onSuccess: async () => {
+      toast.success('Reserva de programa cancelada.');
+      setPendingCancelBookingId(null);
+      setCancelBookingReason('');
+      await queryClient.invalidateQueries({ queryKey: ['member-program-bookings'] });
+      await queryClient.invalidateQueries({ queryKey: ['member-reservations'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo cancelar la reserva.')),
+  });
+
+  async function openProgramBookingModal(program: TrainingProgram) {
+    setPendingBookingProgram(program);
+    setBookingPreviewClasses(null);
+    setBookingPreviewLoading(true);
+    try {
+      const response = await classesApi.list({ program_id: program.id, per_page: 100, sort_order: 'asc' });
+      const allClasses = (response.data as PaginatedResponse<GymClass>).items ?? [];
+      const now = new Date();
+      const futureClasses = allClasses.filter((c) => new Date(c.start_time) > now && c.status !== 'cancelled');
+      setBookingPreviewClasses(futureClasses);
+    } catch {
+      toast.error('No se pudieron cargar las clases del programa.');
+      setPendingBookingProgram(null);
+    } finally {
+      setBookingPreviewLoading(false);
+    }
+  }
 
   const registerPushSubscriptionMutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => (await mobileApi.registerPushSubscription(payload)).data,
@@ -847,6 +955,16 @@ export default function MemberAppPage() {
   }, [selectedSupportInteractionId, supportInteractions]);
 
   useEffect(() => {
+    if (agendaSelectedDay === null) {
+      return;
+    }
+    const visibleWeekDayKeys = new Set(agendaWeekDates.map((date) => getAgendaDateKey(date)));
+    if (!visibleWeekDayKeys.has(agendaSelectedDay)) {
+      setAgendaSelectedDay(null);
+    }
+  }, [agendaSelectedDay, agendaWeekDates]);
+
+  useEffect(() => {
     if (activeTab !== 'progress') {
       if (showAddMeasurement) setShowAddMeasurement(false);
       if (showAddPR) setShowAddPR(false);
@@ -874,20 +992,6 @@ export default function MemberAppPage() {
 
     return Array.from(groups.values());
   }, [filteredClasses]);
-
-  // Week strip: 7 days starting from Monday of (today + agendaWeekOffset weeks)
-  const agendaWeekDates = useMemo(() => {
-    const today = new Date();
-    const dayOfWeek = (today.getDay() + 6) % 7; // 0=Mon
-    const monday = new Date(today);
-    monday.setDate(today.getDate() - dayOfWeek + agendaWeekOffset * 7);
-    monday.setHours(0, 0, 0, 0);
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return d;
-    });
-  }, [agendaWeekOffset]);
 
   // Count classes (with modality/branch/program filters but without date filter) per day key
   const classesByDayKey = useMemo(() => {
@@ -1034,7 +1138,7 @@ export default function MemberAppPage() {
     if (profileQuery.data) nextSnapshot.profile = profileQuery.data;
     if (plansQuery.data) nextSnapshot.plans = plansQuery.data;
     if (programsQuery.data) nextSnapshot.programs = programsQuery.data;
-    if (classesQuery.data) nextSnapshot.classes = classesQuery.data;
+    if (classesQuery.data && agendaWeekOffset === 0) nextSnapshot.classes = classesQuery.data;
     if (reservationsQuery.data) nextSnapshot.reservations = reservationsQuery.data;
     if (paymentsQuery.data) nextSnapshot.payments = paymentsQuery.data;
     if (supportInteractionsQuery.data) nextSnapshot.supportInteractions = supportInteractionsQuery.data;
@@ -1044,6 +1148,7 @@ export default function MemberAppPage() {
       saveMemberSnapshot(user.id, nextSnapshot, lastSyncedAt?.toISOString());
     }
   }, [
+    agendaWeekOffset,
     classesQuery.data,
     isDefaultNotificationDateRange,
     lastSyncedAt,
@@ -2142,138 +2247,305 @@ export default function MemberAppPage() {
             </div>
           ) : null}
 
-          {activeTab === 'programs' ? (
-            <div className="space-y-4">
-              {programsQuery.isLoading && !programsQuery.data ? <SkeletonListItems count={4} /> : null}
-              <Panel title="Programas de entrenamiento">
-                <p className="text-sm leading-6 text-surface-600 dark:text-surface-300">
-                  Únete a los programas activos del gimnasio para seguir una estructura semanal, conocer al trainer responsable y mantener tus objetivos claros.
-                </p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <DeviceStatusItem label="Disponibles" value={String(programs.length)} tone={programs.length ? 'info' : 'neutral'} />
-                  <DeviceStatusItem label="Inscrito" value={String(enrolledPrograms.length)} tone={enrolledPrograms.length ? 'success' : 'neutral'} />
-                  <DeviceStatusItem label="Activos" value={String(programs.filter((program) => program.is_active).length)} tone={programs.some((program) => program.is_active) ? 'warning' : 'neutral'} />
-                </div>
-              </Panel>
+          {activeTab === 'programs' ? (() => {
+            const programBookings = programBookingsQuery.data ?? [];
+            const activeBookings = programBookings.filter((b) => b.status === 'active');
+            const activeBookingByProgram = new Map(activeBookings.map((b) => [b.program_id ?? '', b]));
+            return (
+              <div className="space-y-4">
+                {programsQuery.isLoading && !programsQuery.data ? <SkeletonListItems count={4} /> : null}
+                <Panel title="Programas de entrenamiento">
+                  <p className="text-sm leading-6 text-surface-600 dark:text-surface-300">
+                    Únete a los programas activos del gimnasio para seguir una estructura semanal, conocer al trainer responsable y mantener tus objetivos claros.
+                  </p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <DeviceStatusItem label="Disponibles" value={String(programs.length)} tone={programs.length ? 'info' : 'neutral'} />
+                    <DeviceStatusItem label="Inscrito" value={String(enrolledPrograms.length)} tone={enrolledPrograms.length ? 'success' : 'neutral'} />
+                    <DeviceStatusItem label="Reservas activas" value={String(activeBookings.length)} tone={activeBookings.length ? 'success' : 'neutral'} />
+                  </div>
+                </Panel>
 
-              {programs.length ? (
-                <div className="grid gap-4 lg:grid-cols-2">
-                  {programs.map((program) => (
-                    <Panel key={program.id} title={program.name}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={cn('badge', program.is_enrolled ? 'badge-success' : 'badge-neutral')}>
-                          {program.is_enrolled ? 'Ya estás inscrito' : 'Disponible'}
-                        </span>
-                        <span className="badge badge-neutral">
-                          {program.duration_weeks ? `${program.duration_weeks} semanas` : 'Duración flexible'}
-                        </span>
-                        <span className="badge badge-info">
-                          {program.enrolled_count} {program.enrolled_count === 1 ? 'inscrito' : 'inscritos'}
-                        </span>
-                      </div>
-
-                      <p className="mt-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
-                        {program.description || 'Programa activo del gimnasio para acompañar tu entrenamiento.'}
-                      </p>
-
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        <ProfileDetailItem label="Trainer" value={program.trainer_name || 'Sin asignar'} />
-                        <ProfileDetailItem label="Tipo" value={program.program_type || 'General'} />
-                      </div>
-
-                      <div className="mt-4 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
-                        <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Horario semanal</p>
-                        <div className="mt-3 grid gap-3">
-                          {program.schedule.length ? program.schedule.map((entry, index) => {
-                            const day = typeof entry.day === 'string' && entry.day.trim() ? entry.day : `Día ${index + 1}`;
-                            const focus = typeof entry.focus === 'string' && entry.focus.trim() ? entry.focus : 'Trabajo general';
-                            const exercises = Array.isArray(entry.exercises)
-                              ? entry.exercises.filter((exercise) => typeof exercise.name === 'string' && exercise.name.trim().length > 0)
-                              : [];
-
-                            return (
-                              <div
-                                key={`${program.id}-${day}-${index}`}
-                                className="rounded-2xl border border-surface-200 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/5"
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <p className="text-sm font-semibold text-surface-900 dark:text-white">{day}</p>
-                                  {exercises.length ? (
-                                    <span className="badge badge-neutral">
-                                      {exercises.length} ejercicio{exercises.length !== 1 ? 's' : ''}
-                                    </span>
-                                  ) : null}
+                {activeBookings.length ? (
+                  <Panel title="Mis reservas de programa">
+                    <div className="grid gap-3">
+                      {activeBookings.map((booking) => {
+                        const prog = programs.find((p) => p.id === booking.program_id);
+                        const pct = booking.total_classes > 0 ? Math.round((booking.reserved_classes / booking.total_classes) * 100) : 0;
+                        return (
+                          <div key={booking.id} className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-white/10 dark:bg-surface-950/40">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-surface-900 dark:text-white truncate">{prog?.name ?? 'Programa'}</p>
+                                <p className="mt-1 text-xs text-surface-500">
+                                  {booking.reserved_classes} confirmadas · {booking.waitlisted_classes} en espera · {booking.total_classes} totales
+                                </p>
+                                <div className="mt-2 h-1.5 w-full rounded-full bg-surface-200 dark:bg-surface-700">
+                                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
                                 </div>
-                                <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">{focus}</p>
-                                {exercises.length ? (
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    {exercises.map((exercise, exerciseIndex) => (
-                                      <span
-                                        key={`${program.id}-${day}-${exercise.name}-${exerciseIndex}`}
-                                        className="rounded-full border border-surface-200 bg-surface-50 px-3 py-1 text-xs font-medium text-surface-600 dark:border-white/10 dark:bg-surface-950/60 dark:text-surface-300"
-                                      >
-                                        {exercise.name}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : null}
                               </div>
-                            );
-                          }) : (
-                            <span className="text-sm text-surface-500">El gimnasio aún no definió una rutina semanal visible.</span>
-                          )}
-                        </div>
-                      </div>
+                              <button
+                                type="button"
+                                className="btn-secondary shrink-0 text-xs px-3 py-1.5"
+                                onClick={() => setPendingCancelBookingId(booking.id)}
+                              >
+                                <XCircle size={13} />
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Panel>
+                ) : null}
 
-                      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                        {program.is_enrolled ? (
-                          <>
-                            <button
-                              type="button"
-                              className="btn-primary w-full justify-center sm:w-auto"
-                              style={{ backgroundImage: brandGradient }}
-                              onClick={() => {
-                                setAgendaProgramFilter(program.id);
-                                setTab(searchParams, setSearchParams, 'agenda');
-                              }}
-                            >
-                              <CalendarDays size={16} />
-                              Ver en agenda
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-secondary w-full justify-center sm:w-auto"
-                              onClick={() => leaveProgramMutation.mutate(program.id)}
-                              disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
-                            >
-                              <XCircle size={16} />
-                              Salir del programa
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn-primary w-full justify-center sm:w-auto"
-                            style={{ backgroundImage: brandGradient }}
-                            onClick={() => enrollProgramMutation.mutate(program.id)}
-                            disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
-                          >
-                            <Dumbbell size={16} />
-                            Inscribirme
-                          </button>
-                        )}
-                      </div>
-                    </Panel>
-                  ))}
+                {programs.length ? (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {programs.map((program) => {
+                      const activeBooking = activeBookingByProgram.get(program.id);
+                      const hasLinkedClasses = (program.linked_class_count ?? 0) > 0;
+                      return (
+                        <Panel key={program.id} title={program.name}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={cn('badge', program.is_enrolled ? 'badge-success' : 'badge-neutral')}>
+                              {program.is_enrolled ? 'Ya estás inscrito' : 'Disponible'}
+                            </span>
+                            <span className="badge badge-neutral">
+                              {program.duration_weeks ? `${program.duration_weeks} semanas` : 'Duración flexible'}
+                            </span>
+                            {activeBooking ? (
+                              <span className="badge badge-success">Programa reservado</span>
+                            ) : null}
+                          </div>
+
+                          <p className="mt-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
+                            {program.description || 'Programa activo del gimnasio para acompañar tu entrenamiento.'}
+                          </p>
+
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <ProfileDetailItem label="Trainer" value={program.trainer_name || 'Sin asignar'} />
+                            <ProfileDetailItem label="Tipo" value={program.program_type || 'General'} />
+                          </div>
+
+                          <div className="mt-4 rounded-2xl border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Horario semanal</p>
+                            <div className="mt-3 grid gap-3">
+                              {program.schedule.length ? program.schedule.map((entry, index) => {
+                                const day = typeof entry.day === 'string' && entry.day.trim() ? entry.day : `Día ${index + 1}`;
+                                const focus = typeof entry.focus === 'string' && entry.focus.trim() ? entry.focus : 'Trabajo general';
+                                const exercises = Array.isArray(entry.exercises)
+                                  ? entry.exercises.filter((exercise) => typeof exercise.name === 'string' && exercise.name.trim().length > 0)
+                                  : [];
+
+                                return (
+                                  <div
+                                    key={`${program.id}-${day}-${index}`}
+                                    className="rounded-2xl border border-surface-200 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/5"
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <p className="text-sm font-semibold text-surface-900 dark:text-white">{day}</p>
+                                      {exercises.length ? (
+                                        <span className="badge badge-neutral">
+                                          {exercises.length} ejercicio{exercises.length !== 1 ? 's' : ''}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">{focus}</p>
+                                    {exercises.length ? (
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {exercises.map((exercise, exerciseIndex) => (
+                                          <span
+                                            key={`${program.id}-${day}-${exercise.name}-${exerciseIndex}`}
+                                            className="rounded-full border border-surface-200 bg-surface-50 px-3 py-1 text-xs font-medium text-surface-600 dark:border-white/10 dark:bg-surface-950/60 dark:text-surface-300"
+                                          >
+                                            {exercise.name}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              }) : (
+                                <span className="text-sm text-surface-500">El gimnasio aún no definió una rutina semanal visible.</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                            {program.is_enrolled ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-primary w-full justify-center sm:w-auto"
+                                  style={{ backgroundImage: brandGradient }}
+                                  onClick={() => {
+                                    setAgendaProgramFilter(program.id);
+                                    setTab(searchParams, setSearchParams, 'agenda');
+                                  }}
+                                >
+                                  <CalendarDays size={16} />
+                                  Ver en agenda
+                                </button>
+                                {hasLinkedClasses && !activeBooking ? (
+                                  <button
+                                    type="button"
+                                    className="btn-secondary w-full justify-center sm:w-auto"
+                                    onClick={() => openProgramBookingModal(program)}
+                                  >
+                                    <Plus size={16} />
+                                    Reservar programa
+                                  </button>
+                                ) : null}
+                                {activeBooking ? (
+                                  <button
+                                    type="button"
+                                    className="btn-secondary w-full justify-center sm:w-auto"
+                                    onClick={() => setPendingCancelBookingId(activeBooking.id)}
+                                  >
+                                    <XCircle size={16} />
+                                    Cancelar reserva
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="btn-secondary w-full justify-center sm:w-auto"
+                                  onClick={() => leaveProgramMutation.mutate(program.id)}
+                                  disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
+                                >
+                                  <XCircle size={16} />
+                                  Salir del programa
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn-primary w-full justify-center sm:w-auto"
+                                style={{ backgroundImage: brandGradient }}
+                                onClick={() => enrollProgramMutation.mutate(program.id)}
+                                disabled={leaveProgramMutation.isPending || enrollProgramMutation.isPending}
+                              >
+                                <Dumbbell size={16} />
+                                Inscribirme
+                              </button>
+                            )}
+                          </div>
+                        </Panel>
+                      );
+                    })}
+                  </div>
+                ) : !programsQuery.isLoading ? (
+                  <EmptyState
+                    title="Todavía no hay programas publicados"
+                    description="Cuando el gimnasio active programas de entrenamiento aparecerán aquí para que puedas sumarte."
+                  />
+                ) : null}
+              </div>
+            );
+          })() : null}
+
+          {/* Modal: Reservar programa */}
+          <Modal
+            open={Boolean(pendingBookingProgram)}
+            onClose={() => { setPendingBookingProgram(null); setBookingPreviewClasses(null); }}
+            title={`Reservar: ${pendingBookingProgram?.name ?? ''}`}
+          >
+            {bookingPreviewLoading ? (
+              <SkeletonListItems count={3} />
+            ) : bookingPreviewClasses !== null ? (
+              <div className="space-y-4">
+                {bookingPreviewClasses.length ? (
+                  <>
+                    <p className="text-sm text-surface-600 dark:text-surface-300">
+                      Se reservarán <strong>{bookingPreviewClasses.length}</strong> clases futuras. Las clases llenas quedan en lista de espera automáticamente.
+                    </p>
+                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                      {bookingPreviewClasses.map((gymClass) => {
+                        const isFull = gymClass.current_bookings >= gymClass.max_capacity;
+                        return (
+                          <div key={gymClass.id} className="flex items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-50 px-3 py-2 dark:border-white/10 dark:bg-surface-950/40 text-sm">
+                            <span className="text-surface-800 dark:text-surface-200">{formatDateTime(gymClass.start_time)}</span>
+                            <span className={cn('badge shrink-0', isFull ? 'badge-warning' : 'badge-success')}>
+                              {isFull ? 'Lista de espera' : `${gymClass.max_capacity - gymClass.current_bookings} cupos`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-surface-500">No hay clases futuras en este programa para reservar.</p>
+                )}
+                <div className="flex gap-3 justify-end pt-2">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => { setPendingBookingProgram(null); setBookingPreviewClasses(null); }}
+                  >
+                    Cancelar
+                  </button>
+                  {bookingPreviewClasses.length ? (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      style={{ backgroundImage: brandGradient }}
+                      disabled={createProgramBookingMutation.isPending}
+                      onClick={() => {
+                        const groupId = bookingPreviewClasses[0]?.recurrence_group_id;
+                        if (!groupId || !pendingBookingProgram) return;
+                        createProgramBookingMutation.mutate({ program_id: pendingBookingProgram.id, recurrence_group_id: groupId });
+                      }}
+                    >
+                      {createProgramBookingMutation.isPending ? 'Reservando…' : 'Confirmar reserva'}
+                    </button>
+                  ) : null}
                 </div>
-              ) : !programsQuery.isLoading ? (
-                <EmptyState
-                  title="Todavía no hay programas publicados"
-                  description="Cuando el gimnasio active programas de entrenamiento aparecerán aquí para que puedas sumarte."
+              </div>
+            ) : null}
+          </Modal>
+
+          {/* Modal: Cancelar reserva de programa */}
+          <Modal
+            open={Boolean(pendingCancelBookingId)}
+            onClose={() => { setPendingCancelBookingId(null); setCancelBookingReason(''); }}
+            title="Cancelar reserva de programa"
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-surface-600 dark:text-surface-300">
+                Se cancelarán todas las clases futuras de este programa que no hayan superado el plazo de cancelación.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-surface-500 mb-1">Motivo (opcional)</label>
+                <input
+                  type="text"
+                  className="w-full rounded-xl border border-surface-200 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 px-3 py-2 text-sm text-surface-800 dark:text-surface-100 placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="Ej: cambio de horario"
+                  value={cancelBookingReason}
+                  onChange={(e) => setCancelBookingReason(e.target.value)}
+                  maxLength={500}
                 />
-              ) : null}
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => { setPendingCancelBookingId(null); setCancelBookingReason(''); }}
+                >
+                  Volver
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger"
+                  disabled={cancelProgramBookingMutation.isPending}
+                  onClick={() => {
+                    if (!pendingCancelBookingId) return;
+                    cancelProgramBookingMutation.mutate({ id: pendingCancelBookingId, reason: cancelBookingReason || undefined });
+                  }}
+                >
+                  {cancelProgramBookingMutation.isPending ? 'Cancelando…' : 'Cancelar programa'}
+                </button>
+              </div>
             </div>
-          ) : null}
+          </Modal>
 
           {activeTab === 'plans' ? (
             <div className="grid gap-4 lg:grid-cols-2">
@@ -2825,7 +3097,7 @@ export default function MemberAppPage() {
             <div className="space-y-4">
               {paymentsQuery.isLoading && !paymentsQuery.data ? <SkeletonListItems count={3} /> : null}
               {payments.length ? payments.map((payment) => (
-                <Panel key={payment.id} title={payment.plan_name || payment.description || 'Pago del miembro'}>
+                <Panel key={payment.id} title={payment.plan_name_snapshot || payment.plan_name || payment.description || 'Pago del miembro'}>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={cn('badge', paymentStatusColor(payment.status))}>{payment.status}</span>
                     <span className="badge badge-neutral">{payment.method}</span>
@@ -2834,6 +3106,12 @@ export default function MemberAppPage() {
                   <p className="mt-2 text-sm text-surface-600 dark:text-surface-300">
                     {payment.paid_at ? `Pagado ${formatDateTime(payment.paid_at)}` : `Creado ${formatDateTime(payment.created_at)}`}
                   </p>
+                  {payment.membership_starts_at_snapshot ? (
+                    <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
+                      Período comprado: {formatDate(payment.membership_starts_at_snapshot)}
+                      {payment.membership_expires_at_snapshot ? ` · ${formatDate(payment.membership_expires_at_snapshot)}` : ' · Sin vencimiento'}
+                    </p>
+                  ) : null}
                   {payment.receipt_url ? <a href={payment.receipt_url} target="_blank" rel="noreferrer" className="btn-secondary mt-4"><ExternalLink size={16} />Ver comprobante</a> : null}
                 </Panel>
               )) : <EmptyState title="Aún no hay pagos" description="El historial aparecerá aquí apenas existan pagos para este miembro." />}
@@ -3109,6 +3387,10 @@ export default function MemberAppPage() {
                       value={formatMembershipStatusLabel(walletQuery.data?.membership_status)}
                     />
                     <ProfileDetailItem
+                      label="Inicio"
+                      value={walletQuery.data?.starts_at ? formatDate(walletQuery.data.starts_at) : 'No informado'}
+                    />
+                    <ProfileDetailItem
                       label="Vencimiento"
                       value={walletQuery.data?.expires_at ? formatDate(walletQuery.data.expires_at) : 'No informado'}
                     />
@@ -3170,6 +3452,23 @@ export default function MemberAppPage() {
                       </div>
                     </div>
                   </div>
+
+                  {walletQuery.data?.next_membership ? (
+                    <div className="mt-4 rounded-[1.35rem] border border-surface-200 bg-surface-50 p-4 dark:border-white/10 dark:bg-surface-950/35">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Próxima renovación programada</p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <ProfileDetailItem label="Plan" value={walletQuery.data.next_membership.plan_name || 'Plan programado'} />
+                        <ProfileDetailItem label="Inicio" value={formatDate(walletQuery.data.next_membership.starts_at)} />
+                        <ProfileDetailItem
+                          label="Vencimiento"
+                          value={walletQuery.data.next_membership.expires_at ? formatDate(walletQuery.data.next_membership.expires_at) : 'Sin vencimiento'}
+                        />
+                      </div>
+                      <p className="mt-3 text-sm text-surface-600 dark:text-surface-300">
+                        Esta compra ya quedó registrada y comenzará automáticamente cuando termine el período vigente.
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div className="mt-4 rounded-[1.35rem] border border-surface-200 bg-surface-50 p-4 dark:border-white/10 dark:bg-surface-950/35">
                     <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Próxima actividad</p>

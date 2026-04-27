@@ -2,7 +2,7 @@
 // Scope registrado: / (ver frontend/src/lib/pwa.ts)
 // Controla el shell SPA completo para que owners y miembros puedan instalar la app.
 
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = '20260421-4';
 const ICON_VERSION = '20260414-1';
 const MANIFEST_PATH = `/manifest.webmanifest?v=${ICON_VERSION}`;
 const SYSTEM_ICON_PATH = `/icon.png?v=${ICON_VERSION}`;

@@ -1,15 +1,26 @@
 """Models package - import all models for Alembic discovery."""
 
 from app.models.tenant import Tenant, TenantStatus, LicenseType
-from app.models.platform import SaaSPlan, PlatformLead, TenantPaymentProviderAccount, WebpayTransaction, PushSubscription, PushDelivery
+from app.models.platform import (
+    SaaSPlan,
+    PlatformLead,
+    TenantPaymentProviderAccount,
+    TuuTransaction,
+    WebpayTransaction,
+    PushSubscription,
+    PushDelivery,
+    PlatformPromoCode,
+    PlatformBillingPayment,
+)
 from app.models.user import User, UserRole
 from app.models.business import (
     Branch, Plan, PlanDuration, Membership, MembershipStatus,
     GymClass, ClassModality, ClassStatus,
     Reservation, ReservationStatus,
-    CheckIn, Payment, PaymentStatus, PaymentMethod,
+    CheckIn, CheckInInvestigationCase, Payment, PaymentStatus, PaymentMethod,
     Campaign, CampaignStatus, CampaignChannel,
     SupportInteraction, InteractionChannel,
+    FeedbackSubmission, FeedbackCategory,
     AuditLog, Notification, TrainingProgram, TrainingProgramEnrollment,
 )
 from app.models.pos import (
@@ -22,14 +33,16 @@ from app.models.pos import (
 
 __all__ = [
     "Tenant", "TenantStatus", "LicenseType",
-    "SaaSPlan", "PlatformLead", "TenantPaymentProviderAccount", "WebpayTransaction", "PushSubscription", "PushDelivery",
+    "SaaSPlan", "PlatformLead", "TenantPaymentProviderAccount", "TuuTransaction", "WebpayTransaction", "PushSubscription", "PushDelivery",
+    "PlatformPromoCode", "PlatformBillingPayment",
     "User", "UserRole",
     "Branch", "Plan", "PlanDuration", "Membership", "MembershipStatus",
     "GymClass", "ClassModality", "ClassStatus",
     "Reservation", "ReservationStatus",
-    "CheckIn", "Payment", "PaymentStatus", "PaymentMethod",
+    "CheckIn", "CheckInInvestigationCase", "Payment", "PaymentStatus", "PaymentMethod",
     "Campaign", "CampaignStatus", "CampaignChannel",
     "SupportInteraction", "InteractionChannel",
+    "FeedbackSubmission", "FeedbackCategory",
     "AuditLog", "Notification", "TrainingProgram", "TrainingProgramEnrollment",
     # POS
     "ProductCategory", "Product", "ProductUnit",

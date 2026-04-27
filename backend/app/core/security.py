@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Optional
+from uuid import uuid4
 
 import bcrypt as bcrypt_module
 from jose import JWTError, jwt
@@ -103,3 +104,40 @@ def decode_email_verified_token(token: str) -> str:
         return email
     except JWTError:
         raise ValueError("Token de verificación inválido o vencido")
+
+
+def create_staff_invitation_token(
+    email: str,
+    tenant_id: str,
+    role: str,
+    first_name: str,
+    last_name: str,
+    invited_by: str,
+) -> str:
+    """72-hour invitation token for new staff members."""
+    expires = datetime.now(timezone.utc) + timedelta(hours=72)
+    payload = {
+        "sub": email.lower().strip(),
+        "exp": expires,
+        "jti": uuid4().hex,
+        "type": "staff_invitation",
+        "tenant_id": tenant_id,
+        "role": role,
+        "first_name": first_name,
+        "last_name": last_name,
+        "invited_by": invited_by,
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_staff_invitation_token(token: str) -> dict:
+    """Returns invitation payload or raises ValueError."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "staff_invitation":
+            raise ValueError("Tipo de token incorrecto")
+        if not payload.get("sub") or not payload.get("tenant_id") or not payload.get("role"):
+            raise ValueError("Token de invitación incompleto")
+        return payload
+    except JWTError:
+        raise ValueError("Invitación inválida o vencida")
