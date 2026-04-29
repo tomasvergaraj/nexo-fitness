@@ -67,6 +67,14 @@ class Tenant(Base):
     next_plan_name: Mapped[Optional[str]] = mapped_column(String(200))
     next_plan_starts_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+    # Billing / SII (facturación electrónica)
+    tax_id: Mapped[Optional[str]] = mapped_column(String(20))       # RUT receptor (ej. 12345678-9)
+    legal_name: Mapped[Optional[str]] = mapped_column(String(200))  # Razón social
+    business_activity: Mapped[Optional[str]] = mapped_column(String(500))  # Giro
+    billing_address: Mapped[Optional[str]] = mapped_column(String(500))
+    billing_commune: Mapped[Optional[str]] = mapped_column(String(100))
+    billing_city: Mapped[Optional[str]] = mapped_column(String(100))
+
     # Stripe
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(255))
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255))

@@ -60,12 +60,14 @@ export default function ProblemSolution() {
             <ScrollReveal key={title} delay={i * 0.1}>
               <article className="card problem-card">
                 <div className={`problem-icon ${color}`}>{icon}</div>
-                <h3>{title}</h3>
-                <p>{body}</p>
-                <span className="problem-arrow">
-                  {solution}
-                  <ArrowIcon />
-                </span>
+                <div className="problem-content">
+                  <h3>{title}</h3>
+                  <p>{body}</p>
+                  <span className="problem-arrow">
+                    {solution}
+                    <ArrowIcon />
+                  </span>
+                </div>
               </article>
             </ScrollReveal>
           ))}

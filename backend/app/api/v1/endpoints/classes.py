@@ -1290,7 +1290,8 @@ async def list_reservations(
         query = query.where(Reservation.status == status)
         count_query = count_query.where(Reservation.status == status)
     if upcoming_only:
-        upcoming_filter = GymClass.start_time >= datetime.now(timezone.utc)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        upcoming_filter = GymClass.end_time >= today_start
         query = query.join(GymClass, Reservation.gym_class_id == GymClass.id).where(upcoming_filter)
         count_query = count_query.join(GymClass, Reservation.gym_class_id == GymClass.id).where(upcoming_filter)
 

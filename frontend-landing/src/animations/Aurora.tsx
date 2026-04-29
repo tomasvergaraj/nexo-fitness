@@ -1,43 +1,54 @@
-import { motion } from 'framer-motion';
+import { useEffect, useRef } from 'react';
 
 const BLOBS = [
-  {
-    cls: 'aurora-blob-1',
-    x: [0, 50, -25, 0], y: [0, -40, 25, 0],
-    scale: [1, 1.1, 0.95, 1], opacity: [1, 1, 0.85, 1],
-    duration: 9, delay: 0,
-  },
-  {
-    cls: 'aurora-blob-2',
-    x: [0, -40, 25, 0], y: [0, 30, -20, 0],
-    scale: [1, 1.12, 0.94, 1], opacity: [1, 1, 0.8, 1],
-    duration: 11, delay: 0,
-  },
-  {
-    cls: 'aurora-blob-3',
-    x: [0, 25, -10, 0], y: [0, 35, -10, 0],
-    scale: [1, 1.08, 0.97, 1], opacity: [1, 1, 0.75, 1],
-    duration: 13, delay: 0,
-  },
-  {
-    cls: 'aurora-blob-4',
-    x: [0, 45, -20, 0], y: [0, -25, 30, 0],
-    scale: [1, 1.09, 0.96, 1], opacity: [1, 1, 0.82, 1],
-    duration: 10, delay: 2,
-  },
+  { kx: [0, 220, -110, 0], ky: [0, -160, 110, 0], dur: 7000,  delay:    0 },
+  { kx: [0, -180, 110, 0], ky: [0,  140,  -90, 0], dur: 8500,  delay:    0 },
+  { kx: [0,  150,  -75, 0], ky: [0,  180,  -55, 0], dur: 6500,  delay:    0 },
+  { kx: [0,  190,  -90, 0], ky: [0, -120,  150, 0], dur: 7800,  delay: 1000 },
 ];
 
+function easeInOut(t: number) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
 export default function Aurora() {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    const items = Array.from(wrapper.querySelectorAll<HTMLDivElement>('[data-aurora-item]'));
+    if (!items.length) return;
+
+    let id: number;
+    const tick = (time: number) => {
+      items.forEach((el, i) => {
+        const { kx, ky, dur, delay } = BLOBS[i];
+        const t = ((time - delay + dur * 1000) % dur) / dur;
+        const raw = t * 3;
+        const seg = Math.min(Math.floor(raw), 2);
+        const f = easeInOut(raw - seg);
+        const x = lerp(kx[seg], kx[seg + 1], f);
+        const y = lerp(ky[seg], ky[seg + 1], f);
+        el.style.transform = `translate(${x}px,${y}px)`;
+      });
+      id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   return (
-    <div className="aurora-wrapper" aria-hidden="true">
-      {BLOBS.map(({ cls, x, y, scale, opacity, duration, delay }) => (
-        <motion.div
-          key={cls}
-          className={`aurora-blob ${cls}`}
-          animate={{ x, y, scale, opacity }}
-          transition={{ duration, ease: 'easeInOut', repeat: Infinity, repeatType: 'loop', delay }}
-        />
-      ))}
+    <div ref={wrapperRef} className="aurora-wrapper" aria-hidden="true">
+      <div data-aurora-item className="aurora-item aurora-item-1"><div className="aurora-blob aurora-blob-1" /></div>
+      <div data-aurora-item className="aurora-item aurora-item-2"><div className="aurora-blob aurora-blob-2" /></div>
+      <div data-aurora-item className="aurora-item aurora-item-3"><div className="aurora-blob aurora-blob-3" /></div>
+      <div data-aurora-item className="aurora-item aurora-item-4"><div className="aurora-blob aurora-blob-4" /></div>
     </div>
   );
 }

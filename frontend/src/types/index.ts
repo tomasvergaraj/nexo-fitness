@@ -287,6 +287,9 @@ export interface PlatformBillingPayment {
   expires_at?: string | null;
   created_by?: string | null;
   created_at: string;
+  folio_number?: number | null;
+  invoice_status?: string | null;
+  invoice_date?: string | null;
 }
 
 export interface AdminTenantManualPaymentRequest {

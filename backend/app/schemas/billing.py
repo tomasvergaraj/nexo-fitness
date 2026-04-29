@@ -263,6 +263,14 @@ class PlatformBillingPaymentResponse(BaseModel):
     expires_at: Optional[date] = None
     created_by: Optional[UUID] = None
     created_at: datetime
+    folio_number: Optional[int] = None
+    invoice_status: Optional[str] = None
+    invoice_date: Optional[date] = None
+
+
+class InvoiceRecordRequest(BaseModel):
+    folio_number: int = Field(ge=1)
+    invoice_date: date
 
 
 class AdminTenantManualPaymentResponse(BaseModel):

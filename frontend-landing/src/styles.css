@@ -834,6 +834,14 @@ textarea.form-input { resize: vertical; }
 [data-theme="light"] .problem-icon.amber { color: #d97706; }
 [data-theme="light"] .problem-icon.purple{ color: #7c3aed; }
 
+.problem-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  flex: 1;
+  min-width: 0;
+}
+
 .problem-card h3 { font-size: 1.05rem; }
 
 .problem-card p {
@@ -1141,6 +1149,14 @@ textarea.form-input { resize: vertical; }
   flex-shrink: 0;
 }
 
+.timeline-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
 .timeline-card h3 { font-size: 1.1rem; }
 
 .timeline-card p {
@@ -1148,7 +1164,6 @@ textarea.form-input { resize: vertical; }
   font-size: 0.92rem;
   line-height: 1.65;
   margin: 0;
-  flex: 1;
 }
 
 /* ─── Signal strip ───────────────────────────────────────── */

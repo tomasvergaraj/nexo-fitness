@@ -22,7 +22,9 @@ from app.schemas.billing import (
     AdminTenantBillingResponse,
     BillingQuoteRequest,
     BillingQuoteResponse,
+    InvoiceRecordRequest,
     OwnerPaymentItem,
+    PlatformBillingPaymentResponse,
     PlatformPromoCodeCreateRequest,
     PlatformPromoCodeResponse,
     PlatformPromoCodeUpdateRequest,
@@ -195,6 +197,29 @@ async def quote_platform_plan(
     if current_user.is_superadmin or not current_user.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No aplica")
     return await BillingService.quote_plan(db, data)
+
+
+@router.get("/admin/tenants/{tenant_id}/payments", response_model=dict)
+async def list_admin_tenant_payments(
+    tenant_id: UUID,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    return await BillingService.list_admin_tenant_payments(db, tenant_id, page=page, per_page=per_page)
+
+
+@router.patch("/admin/payments/{payment_id}/invoice", response_model=PlatformBillingPaymentResponse)
+async def record_payment_invoice(
+    payment_id: UUID,
+    data: InvoiceRecordRequest,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    return await BillingService.record_payment_invoice(
+        db, payment_id, folio_number=data.folio_number, invoice_date=data.invoice_date
+    )
 
 
 @router.post("/admin/tenants/{tenant_id}/manual-payment", response_model=AdminTenantManualPaymentResponse, status_code=201)

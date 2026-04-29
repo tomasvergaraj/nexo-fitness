@@ -22,8 +22,10 @@ export default function HowItWorks() {
             <ScrollReveal key={n} delay={i * 0.1}>
               <article className="card timeline-card">
                 <span className="timeline-step">{n}</span>
-                <h3>{title}</h3>
-                <p>{body}</p>
+                <div className="timeline-content">
+                  <h3>{title}</h3>
+                  <p>{body}</p>
+                </div>
               </article>
             </ScrollReveal>
           ))}

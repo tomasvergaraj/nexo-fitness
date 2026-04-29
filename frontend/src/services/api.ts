@@ -10,6 +10,10 @@ const api = axios.create({
   timeout: 30000,
 });
 
+// Mutex: prevents concurrent refresh requests from using the same (soon-to-be-invalidated) refresh token.
+// All 401s that arrive while a refresh is in flight queue here and reuse the result.
+let activeRefresh: Promise<{ access_token: string; refresh_token: string }> | null = null;
+
 // Request interceptor: attach token
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = useAuthStore.getState().accessToken;
@@ -48,13 +52,20 @@ api.interceptors.response.use(
 
       if (refreshToken) {
         try {
-          const { data } = await axios.post(`${API_URL}/auth/refresh`, { refresh_token: refreshToken });
+          if (!activeRefresh) {
+            activeRefresh = axios
+              .post(`${API_URL}/auth/refresh`, { refresh_token: refreshToken })
+              .then((res) => res.data as { access_token: string; refresh_token: string })
+              .finally(() => { activeRefresh = null; });
+          }
+          const data = await activeRefresh;
           useAuthStore.getState().setTokens(data.access_token, data.refresh_token);
           if (originalRequest.headers) {
             originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
           }
           return api(originalRequest);
         } catch {
+          activeRefresh = null;
           useAuthStore.getState().logout();
           window.location.href = '/login';
         }
@@ -115,6 +126,10 @@ export const billingApi = {
   updateAdminPromoCode: (promoId: string, data: unknown) => api.patch(`/billing/admin/promo-codes/${promoId}`, data),
   deleteAdminPromoCode: (promoId: string) => api.delete(`/billing/admin/promo-codes/${promoId}`),
   registerTenantManualPayment: (tenantId: string, data: unknown) => api.post(`/billing/admin/tenants/${tenantId}/manual-payment`, data),
+  listAdminTenantPayments: (tenantId: string, params?: { page?: number; per_page?: number }) =>
+    api.get(`/billing/admin/tenants/${tenantId}/payments`, { params }),
+  recordPaymentInvoice: (paymentId: string, data: { folio_number: number; invoice_date: string }) =>
+    api.patch(`/billing/admin/payments/${paymentId}/invoice`, data),
 };
 
 export const dashboardApi = {

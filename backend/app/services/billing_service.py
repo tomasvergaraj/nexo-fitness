@@ -135,6 +135,9 @@ def _platform_payment_to_response(payment) -> PlatformBillingPaymentResponse:
         expires_at=payment.expires_at,
         created_by=payment.created_by,
         created_at=payment.created_at,
+        folio_number=payment.folio_number,
+        invoice_status=payment.invoice_status,
+        invoice_date=payment.invoice_date,
     )
 
 
@@ -952,6 +955,60 @@ class BillingService:
             "per_page": per_page,
             "pages": (total + per_page - 1) // per_page,
         }
+
+    @staticmethod
+    async def list_admin_tenant_payments(
+        db: AsyncSession,
+        tenant_id: UUID,
+        *,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> dict[str, Any]:
+        from sqlalchemy import desc
+        count_q = select(func.count()).select_from(PlatformBillingPayment).where(
+            PlatformBillingPayment.tenant_id == tenant_id
+        )
+        total = (await db.execute(count_q)).scalar() or 0
+
+        rows_q = (
+            select(PlatformBillingPayment)
+            .where(PlatformBillingPayment.tenant_id == tenant_id)
+            .order_by(desc(PlatformBillingPayment.created_at))
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+        rows = (await db.execute(rows_q)).scalars().all()
+
+        items = [_platform_payment_to_response(row) for row in rows]
+        return {
+            "items": [i.model_dump() for i in items],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page,
+        }
+
+    @staticmethod
+    async def record_payment_invoice(
+        db: AsyncSession,
+        payment_id: UUID,
+        folio_number: int,
+        invoice_date: "date",
+    ) -> PlatformBillingPaymentResponse:
+        result = await db.execute(
+            select(PlatformBillingPayment).where(PlatformBillingPayment.id == payment_id)
+        )
+        payment = result.scalar_one_or_none()
+        if payment is None:
+            from fastapi import HTTPException, status as http_status
+            raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Pago no encontrado")
+
+        payment.folio_number = folio_number
+        payment.invoice_date = invoice_date
+        payment.invoice_status = "manual"
+        await db.commit()
+        await db.refresh(payment)
+        return _platform_payment_to_response(payment)
 
     @staticmethod
     async def schedule_next_plan(

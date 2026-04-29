@@ -445,16 +445,16 @@ export default function RegisterPage() {
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-lg flex-col px-4 pb-16 pt-8 sm:px-6 sm:pt-10">
         {/* Brand + login link */}
-        <div className="mb-10 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+        <div className="mb-10 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 shrink-0">
             <NexoBrandIcon size={36} className="shadow-lg shadow-brand-500/25" />
             <span className="text-base font-bold tracking-tight text-white">NexoFitness</span>
           </div>
           <Link
             to="/login"
-            className="text-sm text-surface-500 transition-colors hover:text-surface-200"
+            className="text-sm text-surface-500 transition-colors hover:text-surface-200 whitespace-nowrap"
           >
-            ¿Ya tienes cuenta?{' '}
+            <span className="hidden sm:inline">¿Ya tienes cuenta? </span>
             <span className="font-medium text-brand-400 hover:text-brand-300">Inicia sesión</span>
           </Link>
         </div>

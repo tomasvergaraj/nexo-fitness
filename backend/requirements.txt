@@ -44,6 +44,9 @@ Pillow>=10.4,<11.0
 openpyxl==3.1.5
 reportlab==4.2.2
 
+# SII DTE (facturación electrónica)
+lxml==5.2.2
+
 # Testing
 pytest==8.2.2
 pytest-asyncio==0.23.7

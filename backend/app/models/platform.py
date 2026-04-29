@@ -282,6 +282,15 @@ class PlatformBillingPayment(Base):
         index=True,
     )
     metadata_json: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Factura SII (emisión manual)
+    folio_number: Mapped[Optional[int]] = mapped_column(nullable=True)
+    invoice_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    invoice_status: Mapped[Optional[str]] = mapped_column(String(30))  # manual / pending / sent
+    sii_track_id: Mapped[Optional[str]] = mapped_column(String(100))
+    invoice_xml: Mapped[Optional[str]] = mapped_column(Text)
+    invoice_pdf_path: Mapped[Optional[str]] = mapped_column(String(500))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

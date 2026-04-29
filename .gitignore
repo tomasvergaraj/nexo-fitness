@@ -53,8 +53,11 @@ yarn-error.log*
 # Docker
 docker-compose.override.yml
 
+# Landing page build output (hashed assets rebuilt on deploy)
+/landing/assets/
+
 # Production server local-only files
 /.codex
 /backend/uploads/
-/backend/scripts/bootstrap_platform.py
+/backend/scripts/
 /nginx/nexofitness.host.conf

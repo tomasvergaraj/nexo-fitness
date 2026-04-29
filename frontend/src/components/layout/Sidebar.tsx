@@ -229,7 +229,8 @@ function NavGroup({
 function getInitialOpenGroups(pathname: string, role?: UserRole | null): Record<string, boolean> {
   const result: Record<string, boolean> = {};
   tenantNavGroups.forEach((group) => {
-    result[group.key] = group.items.some((item) => isPathActive(item.path, pathname, role));
+    const hasActive = group.items.some((item) => isPathActive(item.path, pathname, role));
+    result[group.key] = group.key === 'operacion' ? true : hasActive;
   });
   return result;
 }

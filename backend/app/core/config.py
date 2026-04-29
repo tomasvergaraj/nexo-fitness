@@ -116,6 +116,18 @@ class Settings(BaseSettings):
     STRIPE_SAAS_SEMI_ANNUAL_PRICE_ID: str = ""
     STRIPE_SAAS_ANNUAL_PRICE_ID: str = ""
 
+    # SII Facturación Electrónica
+    SII_ENV: str = "certificacion"                 # "certificacion" | "produccion"
+    SII_RUT_EMISOR: str = "78397017-1"             # RUT empresa emisora
+    SII_RUT_ENVIA: str = "19726539-6"              # RUT representante (titular del certificado)
+    SII_PFX_PATH: str = "/etc/nexofitness/sii/cert.pfx"
+    SII_PFX_PASSWORD: str = ""
+    SII_CAF_PATH: str = "/etc/nexofitness/sii/caf_33.xml"
+    SII_ACTECO: str = "620100"                     # Código actividad económica SII
+    SII_NRO_RESOL: int = 0                         # 0 en certificación; nro real en producción
+    SII_FCH_RESOL: str = "2026-04-28"              # Fecha resolución SII
+    SII_INVOICE_PDF_DIR: str = "/var/www/nexofitness/backend/uploads/invoices"
+
     # Observability
     SENTRY_DSN: str = ""
 

@@ -8,6 +8,8 @@ import {
   Building2,
   CheckCircle2,
   Clock3,
+  FileText,
+  Receipt,
   Search,
   ShieldCheck,
   Store,
@@ -25,6 +27,7 @@ import type {
   AdminTenantBilling,
   AdminTenantManualPaymentRequest,
   PaginatedResponse,
+  PlatformBillingPayment,
   PlatformPromoCode,
 } from '@/types';
 
@@ -189,6 +192,9 @@ function getPromoPreview(plan: AdminSaaSPlan | null, promo: PlatformPromoCode | 
 export default function PlatformTenantsPage() {
   const [search, setSearch] = useState('');
   const [manualPaymentTenant, setManualPaymentTenant] = useState<AdminTenantBilling | null>(null);
+  const [paymentsTenant, setPaymentsTenant] = useState<AdminTenantBilling | null>(null);
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [folioForm, setFolioForm] = useState({ folio_number: '', invoice_date: todayDateValue() });
   const [manualPaymentForm, setManualPaymentForm] = useState<ManualPaymentFormState>({
     plan_key: '',
     starts_at: todayDateValue(),
@@ -213,6 +219,30 @@ export default function PlatformTenantsPage() {
   const promoCodesQuery = useQuery<PlatformPromoCode[]>({
     queryKey: ['platform-promo-codes'],
     queryFn: async () => (await billingApi.listAdminPromoCodes()).data,
+  });
+
+  const paymentsQuery = useQuery<PaginatedResponse<PlatformBillingPayment>>({
+    queryKey: ['admin-tenant-payments', paymentsTenant?.tenant_id],
+    queryFn: async () => {
+      const response = await billingApi.listAdminTenantPayments(paymentsTenant!.tenant_id);
+      return response.data;
+    },
+    enabled: Boolean(paymentsTenant),
+  });
+
+  const recordInvoice = useMutation({
+    mutationFn: async ({ paymentId, data }: { paymentId: string; data: { folio_number: number; invoice_date: string } }) => {
+      const response = await billingApi.recordPaymentInvoice(paymentId, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      toast.success('Folio registrado correctamente.');
+      setEditingPaymentId(null);
+      paymentsQuery.refetch();
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo registrar el folio.'));
+    },
   });
 
   const registerManualPayment = useMutation({
@@ -475,6 +505,14 @@ export default function PlatformTenantsPage() {
                   >
                     Registrar transferencia
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPaymentsTenant(tenant); setEditingPaymentId(null); }}
+                    className="btn-secondary w-full flex items-center justify-center gap-2"
+                  >
+                    <Receipt className="h-4 w-4" />
+                    Facturas
+                  </button>
                 </div>
 
                 {tenant.features.length ? (
@@ -496,6 +534,118 @@ export default function PlatformTenantsPage() {
           </div>
         )}
       </motion.div>
+
+      {/* ── Modal: Historial de facturas ── */}
+      <Modal
+        open={Boolean(paymentsTenant)}
+        title={paymentsTenant ? `Facturas — ${paymentsTenant.tenant_name}` : 'Facturas'}
+        onClose={() => { setPaymentsTenant(null); setEditingPaymentId(null); }}
+        size="lg"
+      >
+        {paymentsQuery.isLoading && (
+          <p className="py-6 text-center text-sm text-surface-500">Cargando pagos...</p>
+        )}
+        {paymentsQuery.isSuccess && (paymentsQuery.data?.items ?? []).length === 0 && (
+          <p className="py-6 text-center text-sm text-surface-500">Sin pagos registrados.</p>
+        )}
+        {paymentsQuery.isSuccess && (paymentsQuery.data?.items ?? []).length > 0 && (
+          <div className="space-y-3">
+            {(paymentsQuery.data?.items ?? []).map((payment) => (
+              <div key={payment.id} className="rounded-2xl border border-surface-200 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-900">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-semibold text-surface-900 dark:text-white">{payment.plan_name}</p>
+                    <p className="text-xs text-surface-500">
+                      {formatDate(payment.starts_at)}{payment.expires_at ? ` → ${formatDate(payment.expires_at)}` : ''}
+                    </p>
+                    <p className="text-xs text-surface-500">
+                      {formatCurrency(payment.total_amount, payment.currency)} · {payment.payment_method}
+                      {payment.external_reference ? ` · Ref: ${payment.external_reference}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {payment.invoice_status === 'manual' ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
+                        <FileText className="h-3 w-3" />
+                        Folio {payment.folio_number} · {payment.invoice_date ? formatDate(payment.invoice_date) : ''}
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-surface-200 bg-surface-100 px-2.5 py-1 text-xs text-surface-500 dark:border-surface-700 dark:bg-surface-800">
+                        Sin factura
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs py-1 px-3"
+                      onClick={() => {
+                        setEditingPaymentId(payment.id);
+                        setFolioForm({
+                          folio_number: payment.folio_number ? String(payment.folio_number) : '',
+                          invoice_date: payment.invoice_date ?? todayDateValue(),
+                        });
+                      }}
+                    >
+                      {payment.invoice_status === 'manual' ? 'Editar folio' : 'Registrar folio'}
+                    </button>
+                  </div>
+                </div>
+
+                {editingPaymentId === payment.id && (
+                  <form
+                    className="mt-4 flex flex-wrap items-end gap-3 border-t border-surface-200 pt-4 dark:border-surface-700"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const folio = parseInt(folioForm.folio_number, 10);
+                      if (!folio || folio < 1) { toast.error('Folio inválido'); return; }
+                      if (!folioForm.invoice_date) { toast.error('Ingresa la fecha de la factura'); return; }
+                      recordInvoice.mutate({ paymentId: payment.id, data: { folio_number: folio, invoice_date: folioForm.invoice_date } });
+                    }}
+                  >
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-surface-700 dark:text-surface-300">Folio SII</label>
+                      <input
+                        type="number"
+                        min={1}
+                        className="input w-32"
+                        placeholder="12345"
+                        value={folioForm.folio_number}
+                        onChange={(e) => setFolioForm((f) => ({ ...f, folio_number: e.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-surface-700 dark:text-surface-300">Fecha emisión</label>
+                      <input
+                        type="date"
+                        className="input w-40"
+                        value={folioForm.invoice_date}
+                        onChange={(e) => setFolioForm((f) => ({ ...f, invoice_date: e.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        onClick={() => setEditingPaymentId(null)}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn-primary text-xs"
+                        disabled={recordInvoice.isPending}
+                      >
+                        {recordInvoice.isPending ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={Boolean(manualPaymentTenant)}

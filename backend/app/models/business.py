@@ -210,7 +210,7 @@ class GymClass(Base):
     current_bookings: Mapped[int] = mapped_column(Integer, default=0)
     waitlist_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     online_link: Mapped[Optional[str]] = mapped_column(String(500))
-    cancellation_deadline_hours: Mapped[int] = mapped_column(Integer, default=2)
+    cancellation_deadline_hours: Mapped[int] = mapped_column(Integer, default=1)
     is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
     recurrence_rule: Mapped[Optional[str]] = mapped_column(String(255))  # RRULE string
     color: Mapped[Optional[str]] = mapped_column(String(7))

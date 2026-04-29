@@ -954,6 +954,63 @@ async def _payment_dates_from_metadata(
     return starts_at, expires_at
 
 
+async def _generate_sii_invoice(
+    db: AsyncSession,
+    payment: "PlatformBillingPayment",
+    tenant: Tenant,
+    pricing: "PlatformSaaSPricingResult",
+) -> None:
+    """Generate and upload SII Factura Electrónica after a successful SaaS payment.
+    Errors are logged but do not interrupt the payment confirmation flow.
+    """
+    from sqlalchemy import func as sa_func
+    from app.models.platform import PlatformBillingPayment as _PBP
+    from app.integrations.invoicing.invoice_service import generate_invoice
+
+    if not tenant.tax_id or not tenant.legal_name:
+        import structlog as _sl
+        _sl.get_logger(__name__).warning(
+            "sii_invoice_skipped_missing_billing_data",
+            tenant_id=str(tenant.id),
+        )
+        return
+
+    try:
+        max_folio_row = await db.execute(
+            select(sa_func.max(_PBP.folio_number)).where(_PBP.folio_number.isnot(None))
+        )
+        current_max_folio = max_folio_row.scalar()
+
+        result = await generate_invoice(
+            payment_id=str(payment.id),
+            tenant_tax_id=tenant.tax_id,
+            tenant_legal_name=tenant.legal_name,
+            tenant_giro=tenant.business_activity or "",
+            tenant_address=tenant.billing_address or tenant.address or "",
+            tenant_commune=tenant.billing_commune or tenant.city or "",
+            tenant_city=tenant.billing_city or tenant.city or "",
+            plan_name=payment.plan_name,
+            base_amount=payment.base_amount,
+            current_max_folio=current_max_folio,
+        )
+
+        payment.folio_number = result["folio_number"]
+        payment.sii_track_id = result["sii_track_id"]
+        payment.invoice_status = result["invoice_status"]
+        payment.invoice_xml = result["invoice_xml"]
+        payment.invoice_pdf_path = result["invoice_pdf_path"]
+        await db.flush()
+
+    except Exception as exc:
+        import structlog as _sl
+        _sl.get_logger(__name__).error(
+            "sii_invoice_generation_failed",
+            tenant_id=str(tenant.id),
+            payment_id=str(payment.id),
+            error=str(exc),
+        )
+
+
 async def _activate_saas_tenant(
     db: AsyncSession,
     tenant_id: str,
@@ -1499,7 +1556,7 @@ async def webpay_return(request: Request, db: AsyncSession = Depends(get_db)):
                     tenant = await db.get(Tenant, tenant_uuid) if tenant_uuid else None
                     if tenant is not None:
                         _starts, _expires = await _payment_dates_from_metadata(db, metadata, tenant)
-                        await record_platform_billing_payment(
+                        billing_payment = await record_platform_billing_payment(
                             db,
                             tenant_id=tenant.id,
                             user_id=owner_uuid,
@@ -1511,6 +1568,7 @@ async def webpay_return(request: Request, db: AsyncSession = Depends(get_db)):
                             expires_at=_expires,
                             metadata=metadata,
                         )
+                        await _generate_sii_invoice(db, billing_payment, tenant, pricing)
             elif transaction.flow_type == "tenant_plan_checkout":
                 await _activate_checkout_purchase(
                     db,

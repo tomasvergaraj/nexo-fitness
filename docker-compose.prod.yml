@@ -66,6 +66,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./backend/uploads:/app/uploads
+      - /etc/nexofitness/sii:/etc/nexofitness/sii:ro
     depends_on:
       db:
         condition: service_healthy
@@ -88,6 +89,7 @@ services:
       UPLOADS_DIR:  /app/uploads
     volumes:
       - ./backend/uploads:/app/uploads
+      - /etc/nexofitness/sii:/etc/nexofitness/sii:ro
     depends_on:
       db:
         condition: service_healthy
@@ -109,6 +111,7 @@ services:
       UPLOADS_DIR:  /app/uploads
     volumes:
       - ./backend/uploads:/app/uploads
+      - /etc/nexofitness/sii:/etc/nexofitness/sii:ro
     depends_on:
       db:
         condition: service_healthy
