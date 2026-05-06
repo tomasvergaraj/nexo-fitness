@@ -83,7 +83,7 @@ export function canAccessDashboard(role?: UserRole | null): boolean {
 
 export function getDefaultRouteForRole(role?: UserRole | null): string {
   if (role === 'client') return '/member';
-  if (role === 'superadmin') return '/platform/tenants';
+  if (role === 'superadmin') return '/platform/dashboard';
   if (canAccessDashboard(role)) return '/dashboard';
   if (role === 'reception') return '/reception/checkin';
   if (role === 'trainer') return '/classes';

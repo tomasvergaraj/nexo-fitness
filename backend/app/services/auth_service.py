@@ -1,6 +1,7 @@
 """Authentication and tenant onboarding service."""
 
 import json
+import secrets as _secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -182,6 +183,115 @@ class AuthService:
 
         return tenant, owner
 
+    # ── 2FA helpers ──────────────────────────────────────────────────────────
+
+    _STAFF_ROLES_ENFORCED = {UserRole.OWNER, UserRole.ADMIN, UserRole.RECEPTION, UserRole.TRAINER, UserRole.MARKETING}
+    _MFA_TOKEN_TTL_VERIFY = 300   # 5 minutes
+    _MFA_TOKEN_TTL_SETUP = 900    # 15 minutes
+    _MFA_MAX_ATTEMPTS = 5
+
+    @staticmethod
+    async def _get_redis_client():
+        import redis.asyncio as aioredis
+        return aioredis.from_url(get_settings().REDIS_URL, decode_responses=True)
+
+    @staticmethod
+    def _tenant_features(tenant: Optional[Tenant]) -> dict:
+        if not tenant or not tenant.features:
+            return {}
+        try:
+            return json.loads(tenant.features) if isinstance(tenant.features, str) else dict(tenant.features)
+        except (TypeError, ValueError):
+            return {}
+
+    @staticmethod
+    def _user_role_value(user: User) -> Optional[UserRole]:
+        if isinstance(user.role, UserRole):
+            return user.role
+        try:
+            return UserRole(user.role)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _requires_2fa(user: User, tenant: Optional[Tenant]) -> tuple[bool, bool]:
+        """Returns (requires_verify, requires_setup).
+
+        - requires_verify: user already has 2FA enabled → must enter TOTP/backup code.
+        - requires_setup: tenant forces 2FA, user is staff, but has not enrolled yet.
+        """
+        if user.is_superadmin:
+            return (bool(user.two_factor_enabled), False)
+        if user.two_factor_enabled:
+            return (True, False)
+        role = AuthService._user_role_value(user)
+        if role and role in AuthService._STAFF_ROLES_ENFORCED:
+            features = AuthService._tenant_features(tenant)
+            if bool(features.get("two_factor_required", False)):
+                return (False, True)
+        return (False, False)
+
+    @staticmethod
+    async def _store_mfa_token(*, user_id: str, tenant_id: Optional[str], purpose: str) -> str:
+        token = _secrets.token_urlsafe(32)
+        ttl = (
+            AuthService._MFA_TOKEN_TTL_SETUP
+            if purpose == "setup"
+            else AuthService._MFA_TOKEN_TTL_VERIFY
+        )
+        payload = json.dumps({
+            "user_id": str(user_id),
+            "tenant_id": str(tenant_id) if tenant_id else None,
+            "purpose": purpose,
+            "attempts": 0,
+        })
+        redis = await AuthService._get_redis_client()
+        try:
+            await redis.set(f"mfa_token:{token}", payload, ex=ttl)
+        finally:
+            await redis.aclose()
+        return token
+
+    @staticmethod
+    async def _consume_mfa_token(token: str, *, expected_purpose: Optional[str] = None) -> dict:
+        redis = await AuthService._get_redis_client()
+        try:
+            raw = await redis.get(f"mfa_token:{token}")
+            if not raw:
+                raise ValueError("Sesión MFA expirada. Inicia sesión de nuevo.")
+            data = json.loads(raw)
+            if expected_purpose and data.get("purpose") != expected_purpose:
+                raise ValueError("Token MFA inválido para esta operación.")
+            return data
+        finally:
+            await redis.aclose()
+
+    @staticmethod
+    async def _delete_mfa_token(token: str) -> None:
+        redis = await AuthService._get_redis_client()
+        try:
+            await redis.delete(f"mfa_token:{token}")
+        finally:
+            await redis.aclose()
+
+    @staticmethod
+    async def _bump_mfa_attempts(token: str, data: dict) -> int:
+        """Increment attempts, invalidate if over limit. Returns remaining."""
+        redis = await AuthService._get_redis_client()
+        try:
+            ttl = await redis.ttl(f"mfa_token:{token}")
+            data["attempts"] = int(data.get("attempts", 0)) + 1
+            remaining = AuthService._MFA_MAX_ATTEMPTS - data["attempts"]
+            if remaining < 0:
+                await redis.delete(f"mfa_token:{token}")
+                raise ValueError("Demasiados intentos. Inicia sesión nuevamente.")
+            await redis.set(f"mfa_token:{token}", json.dumps(data), ex=max(ttl, 30))
+            return remaining
+        finally:
+            await redis.aclose()
+
+    # ── Login ────────────────────────────────────────────────────────────────
+
     @staticmethod
     async def login(db: AsyncSession, data: LoginRequest) -> LoginResponse:
         result = await db.execute(select(User).where(User.email == data.email, User.is_active == True))
@@ -191,11 +301,44 @@ class AuthService:
             _auth_logger.warning("login_failed", email=data.email)
             raise ValueError("Correo o contraseña incorrectos")
 
-        # Build tokens unconditionally — credentials are valid
+        tenant: Optional[Tenant] = None
+        if not user.is_superadmin and user.tenant_id:
+            tenant = await db.get(Tenant, user.tenant_id)
+            if not tenant:
+                raise ValueError("La cuenta no existe o está suspendida")
+
+        # Decide if 2FA gates the response
+        requires_verify, requires_setup = AuthService._requires_2fa(user, tenant)
+
+        # If a trusted device token bypasses verify, skip the gate
+        if requires_verify and data.device_token:
+            from app.services.trusted_device_service import find_active_device, touch_device
+            device = await find_active_device(db, user_id=user.id, token=data.device_token)
+            if device:
+                await touch_device(db, device)
+                return await AuthService._finalize_login(db, user, tenant)
+
+        if requires_verify or requires_setup:
+            purpose = "verify" if requires_verify else "setup"
+            mfa_token = await AuthService._store_mfa_token(
+                user_id=str(user.id),
+                tenant_id=str(user.tenant_id) if user.tenant_id else None,
+                purpose=purpose,
+            )
+            return LoginResponse(
+                next_action="mfa_required" if requires_verify else "2fa_setup_required",
+                mfa_token=mfa_token,
+                mfa_attempts_remaining=AuthService._MFA_MAX_ATTEMPTS if requires_verify else None,
+            )
+
+        # No 2FA gate — issue tokens directly
+        return await AuthService._finalize_login(db, user, tenant)
+
+    @staticmethod
+    async def _finalize_login(db: AsyncSession, user: User, tenant: Optional[Tenant]) -> LoginResponse:
         tokens = AuthService._build_auth_payload(user)
         user.last_login_at = datetime.now(timezone.utc)
 
-        # Check tenant billing status without blocking the login
         billing_status: Optional[str] = None
         next_action: Optional[str] = None
         checkout_url: Optional[str] = None
@@ -203,20 +346,13 @@ class AuthService:
         checkout_provider: Optional[str] = None
         billing_detail: Optional[str] = None
 
-        if not user.is_superadmin and user.tenant_id:
-            tenant = await db.get(Tenant, user.tenant_id)
-            if not tenant:
-                raise ValueError("La cuenta no existe o está suspendida")
-
+        if tenant is not None:
             access_state = evaluate_tenant_access(tenant, now=datetime.now(timezone.utc))
-
             if not access_state.allow_access:
-                # Apply status change without raising
                 if access_state.status_to_apply:
                     tenant.status = access_state.status_to_apply
                 if access_state.deactivate:
                     tenant.is_active = False
-
                 billing_status = tenant.status.value if isinstance(tenant.status, TenantStatus) else str(tenant.status)
                 billing_detail = access_state.detail
                 next_action = "billing_required"
@@ -234,6 +370,153 @@ class AuthService:
             checkout_provider=checkout_provider,
             billing_detail=billing_detail,
         )
+
+    @staticmethod
+    async def start_2fa_setup_with_token(db: AsyncSession, mfa_token: str) -> dict:
+        """Used during forced enrollment after login. Returns secret + URI."""
+        from app.services import totp_service
+
+        data = await AuthService._consume_mfa_token(mfa_token, expected_purpose="setup")
+        user = await db.get(User, uuid.UUID(data["user_id"]))
+        if not user or not user.is_active:
+            raise ValueError("Usuario no encontrado o inactivo")
+        if user.two_factor_enabled:
+            raise ValueError("2FA ya está activado")
+
+        secret = totp_service.generate_secret()
+        # Stash the in-progress secret alongside the mfa_token (do not modify the token itself)
+        redis = await AuthService._get_redis_client()
+        try:
+            await redis.set(
+                f"mfa_setup_pending:{mfa_token}",
+                secret,
+                ex=AuthService._MFA_TOKEN_TTL_SETUP,
+            )
+        finally:
+            await redis.aclose()
+
+        issuer = "NexoFitness"
+        if user.tenant_id:
+            tenant = await db.get(Tenant, user.tenant_id)
+            if tenant and tenant.name:
+                issuer = tenant.name
+        uri = totp_service.provisioning_uri(secret, account_name=user.email, issuer_name=issuer)
+        return {"secret": secret, "provisioning_uri": uri, "issuer": issuer, "account": user.email}
+
+    @staticmethod
+    async def complete_2fa_setup_with_token(db: AsyncSession, mfa_token: str, code: str) -> tuple[LoginResponse, list[str]]:
+        from app.services import totp_service
+
+        data = await AuthService._consume_mfa_token(mfa_token, expected_purpose="setup")
+        user = await db.get(User, uuid.UUID(data["user_id"]))
+        if not user or not user.is_active:
+            raise ValueError("Usuario no encontrado o inactivo")
+        if user.two_factor_enabled:
+            raise ValueError("2FA ya está activado")
+
+        redis = await AuthService._get_redis_client()
+        try:
+            pending_secret = await redis.get(f"mfa_setup_pending:{mfa_token}")
+        finally:
+            await redis.aclose()
+        if not pending_secret:
+            raise ValueError("La configuración expiró. Inicia sesión de nuevo.")
+
+        if not totp_service.verify_code(pending_secret, code):
+            await AuthService._bump_mfa_attempts(mfa_token, data)
+            raise ValueError("Código incorrecto. Intenta nuevamente.")
+
+        plaintext_codes, hashes_json = totp_service.generate_backup_codes()
+        now_utc = datetime.now(timezone.utc)
+        user.two_factor_secret = totp_service.encrypt_secret(pending_secret)
+        user.two_factor_enabled = True
+        user.two_factor_verified_at = now_utc
+        user.backup_codes = hashes_json
+        await db.flush()
+
+        await AuthService._delete_mfa_token(mfa_token)
+        redis = await AuthService._get_redis_client()
+        try:
+            await redis.delete(f"mfa_setup_pending:{mfa_token}")
+        finally:
+            await redis.aclose()
+
+        try:
+            from app.integrations.email.email_service import email_service as _email
+            await _email.send_2fa_changed(
+                to_email=user.email,
+                first_name=user.first_name,
+                action="enabled",
+                when=now_utc,
+            )
+        except Exception as exc:
+            _auth_logger.warning("2fa_email_failed", action="enabled", exc_info=exc)
+
+        tenant: Optional[Tenant] = None
+        if user.tenant_id:
+            tenant = await db.get(Tenant, user.tenant_id)
+        login_response = await AuthService._finalize_login(db, user, tenant)
+        return login_response, plaintext_codes
+
+    @staticmethod
+    async def complete_mfa_login(
+        db: AsyncSession,
+        *,
+        mfa_token: str,
+        code: str,
+        is_backup_code: bool,
+        remember_device: bool = False,
+        device_label: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> LoginResponse:
+        from app.services import totp_service
+
+        data = await AuthService._consume_mfa_token(mfa_token, expected_purpose="verify")
+        remaining = await AuthService._bump_mfa_attempts(mfa_token, data)
+
+        user = await db.get(User, uuid.UUID(data["user_id"]))
+        if not user or not user.is_active:
+            raise ValueError("Usuario no encontrado o inactivo")
+        if not user.two_factor_enabled:
+            raise ValueError("2FA no está activado para este usuario")
+
+        ok = False
+        if is_backup_code:
+            new_storage = totp_service.consume_backup_code(user.backup_codes, code)
+            if new_storage is not None:
+                user.backup_codes = new_storage
+                ok = True
+        else:
+            secret = totp_service.decrypt_secret(user.two_factor_secret) if user.two_factor_secret else None
+            ok = bool(secret and totp_service.verify_code(secret, code))
+
+        if not ok:
+            _auth_logger.warning("mfa_verify_failed", user_id=str(user.id), remaining=remaining)
+            err = ValueError(f"Código incorrecto. Intentos restantes: {remaining}.")
+            raise err
+
+        await AuthService._delete_mfa_token(mfa_token)
+        tenant: Optional[Tenant] = None
+        if user.tenant_id:
+            tenant = await db.get(Tenant, user.tenant_id)
+
+        device_token: Optional[str] = None
+        if remember_device:
+            from app.services.trusted_device_service import issue_trusted_device
+            device_token = await issue_trusted_device(
+                db,
+                user_id=user.id,
+                tenant_id=user.tenant_id,
+                label=device_label,
+                user_agent=user_agent,
+                ip_address=ip_address,
+            )
+
+        login_response = await AuthService._finalize_login(db, user, tenant)
+        if device_token:
+            login_response.trusted_device_token = device_token
+        return login_response
 
     @staticmethod
     async def refresh(db: AsyncSession, refresh_token: str) -> dict:

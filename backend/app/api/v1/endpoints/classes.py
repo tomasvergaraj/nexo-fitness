@@ -63,6 +63,32 @@ def _role_value(user: User) -> str:
     return user.role.value if hasattr(user.role, "value") else str(user.role)
 
 
+def _ensure_class_bookable(gym_class: GymClass, *, is_staff: bool, now_utc: datetime) -> None:
+    """Validate that a class is open for new reservations.
+
+    Staff (owner/admin/reception) bypass time checks to allow retroactive entry.
+    Raises HTTPException(400) on past or in-window classes.
+    """
+    if is_staff:
+        return
+    class_start = gym_class.start_time
+    if class_start.tzinfo is None:
+        class_start = class_start.replace(tzinfo=timezone.utc)
+    if class_start <= now_utc:
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede reservar una clase que ya comenzó o finalizó",
+        )
+    close_minutes = getattr(gym_class, "reservation_closes_minutes_before", 0) or 0
+    if close_minutes > 0:
+        cutoff = class_start - timedelta(minutes=close_minutes)
+        if now_utc >= cutoff:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Las reservas para esta clase cerraron {close_minutes} minutos antes del inicio",
+            )
+
+
 def _build_checkin_response(
     checkin: CheckIn,
     user_name: Optional[str] = None,
@@ -1150,6 +1176,8 @@ async def create_reservation(
     if requested_user_id != current_user.id and not is_staff:
         raise HTTPException(status_code=403, detail="Los clientes solo pueden reservar para sí mismos")
 
+    _ensure_class_bookable(gym_class, is_staff=is_staff, now_utc=datetime.now(timezone.utc))
+
     if requested_user_id != current_user.id:
         requested_user = await db.get(User, requested_user_id)
         if not requested_user or requested_user.tenant_id != ctx.tenant_id:
@@ -1376,7 +1404,12 @@ async def cancel_reservation(
                 # Notify the promoted member
                 try:
                     from app.services.push_notification_service import create_and_dispatch_notification
-                    class_time = gym_class.start_time.strftime("%H:%M") if gym_class.start_time else ""
+                    class_time = ""
+                    if gym_class.start_time:
+                        start_utc = gym_class.start_time
+                        if start_utc.tzinfo is None:
+                            start_utc = start_utc.replace(tzinfo=timezone.utc)
+                        class_time = start_utc.astimezone(_tenant_zone(ctx)).strftime("%H:%M")
                     await create_and_dispatch_notification(
                         db,
                         tenant_id=gym_class.tenant_id,
@@ -1743,6 +1776,7 @@ async def replicate_classes(
                     waitlist_enabled=cls.waitlist_enabled,
                     online_link=cls.online_link,
                     cancellation_deadline_hours=cls.cancellation_deadline_hours,
+                    reservation_closes_minutes_before=cls.reservation_closes_minutes_before,
                     color=cls.color,
                     program_id=cls.program_id,
                     repeat_type="none",
@@ -1785,6 +1819,7 @@ async def replicate_classes(
                     waitlist_enabled=cls.waitlist_enabled,
                     online_link=cls.online_link,
                     cancellation_deadline_hours=cls.cancellation_deadline_hours,
+                    reservation_closes_minutes_before=cls.reservation_closes_minutes_before,
                     color=cls.color,
                     program_id=cls.program_id,
                     repeat_type="none",
@@ -1837,6 +1872,7 @@ async def replicate_classes(
                     waitlist_enabled=cls.waitlist_enabled,
                     online_link=cls.online_link,
                     cancellation_deadline_hours=cls.cancellation_deadline_hours,
+                    reservation_closes_minutes_before=cls.reservation_closes_minutes_before,
                     color=cls.color,
                     program_id=cls.program_id,
                     repeat_type="none",
@@ -1987,7 +2023,7 @@ async def create_program_booking(
         )
     )
     if existing_result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Ya tenés una reserva activa para este programa")
+        raise HTTPException(status_code=400, detail="Ya tienes una reserva activa para este programa")
 
     # Get future classes in this recurrence group
     now = datetime.now(timezone.utc)

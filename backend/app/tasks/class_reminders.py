@@ -11,6 +11,7 @@ recibió una notificación de tipo "class_reminder" para esa clase en las
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 
@@ -27,10 +28,11 @@ def send_class_reminders(self) -> dict:
 
 async def _run_class_reminders() -> dict:
     from sqlalchemy import select, and_
-    from app.core.database import AsyncSessionLocal
+    from app.tasks._db import task_session
     from app.models.business import (
         Reservation, ReservationStatus, GymClass, ClassStatus, Notification,
     )
+    from app.models.tenant import Tenant
     from app.models.user import User
     from app.services.push_notification_service import create_and_dispatch_notification
 
@@ -44,8 +46,22 @@ async def _run_class_reminders() -> dict:
     sent = 0
     skipped = 0
     errors = 0
+    tenant_tz_cache: dict = {}
 
-    async with AsyncSessionLocal() as db:
+    async def _tenant_zone(tenant_id) -> ZoneInfo:
+        cached = tenant_tz_cache.get(tenant_id)
+        if cached is not None:
+            return cached
+        tenant = await db.get(Tenant, tenant_id)
+        tz_name = tenant.timezone if tenant and tenant.timezone else "UTC"
+        try:
+            zone = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            zone = ZoneInfo("UTC")
+        tenant_tz_cache[tenant_id] = zone
+        return zone
+
+    async with task_session() as db:
         # Reservas confirmadas para clases en la ventana de 90–125 min
         reservations = (
             await db.execute(
@@ -89,7 +105,13 @@ async def _run_class_reminders() -> dict:
                     skipped += 1
                     continue
 
-                class_time = gym_class.start_time.strftime("%H:%M") if gym_class.start_time else ""
+                class_time = ""
+                if gym_class.start_time:
+                    start_utc = gym_class.start_time
+                    if start_utc.tzinfo is None:
+                        start_utc = start_utc.replace(tzinfo=timezone.utc)
+                    zone = await _tenant_zone(reservation.tenant_id)
+                    class_time = start_utc.astimezone(zone).strftime("%H:%M")
 
                 await create_and_dispatch_notification(
                     db,

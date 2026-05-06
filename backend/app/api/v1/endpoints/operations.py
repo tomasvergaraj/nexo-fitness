@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
@@ -52,7 +53,7 @@ from app.models.business import (
     TrainingProgram,
     TrainingProgramEnrollment,
 )
-from app.models.platform import PushDelivery, PushSubscription, TenantPaymentProviderAccount
+from app.models.platform import PushDelivery, PushSubscription, TenantPaymentProviderAccount, WebpayTransaction
 from app.models.pos import Expense, POSTransaction, POSTransactionItem, POSTransactionStatus
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
@@ -153,7 +154,17 @@ from app.services.user_account_service import purge_user_account
 from app.services.promo_code_service import resolve_tenant_promo_pricing
 from app.services.support_contact_service import resolve_tenant_support_contacts
 from app.services.tenant_quota_service import assert_can_create_branch
+from app.integrations.payments.webpay_service import (
+    WEBPAY_DEFAULT_INTEGRATION_API_KEY,
+    WEBPAY_DEFAULT_INTEGRATION_COMMERCE_CODE,
+    WebpayCredentials,
+    webpay_service,
+)
 from app.services.webpay_checkout_service import (
+    build_webpay_redirect_url,
+    build_webpay_return_url,
+    generate_webpay_buy_order,
+    generate_webpay_session_id,
     normalize_payment_account_metadata,
     sanitize_payment_account_metadata,
 )
@@ -1635,7 +1646,15 @@ async def list_staff(
     )
     users = result.scalars().all()
     return [
-        {"id": str(u.id), "full_name": u.full_name, "role": u.role.value, "email": u.email, "is_active": u.is_active}
+        {
+            "id": str(u.id),
+            "full_name": u.full_name,
+            "role": u.role.value,
+            "email": u.email,
+            "is_active": u.is_active,
+            "two_factor_enabled": bool(u.two_factor_enabled),
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+        }
         for u in users
     ]
 
@@ -2358,8 +2377,19 @@ async def generate_program_classes(
         )
     ).scalars().all()
     if existing_classes:
-        first_existing = existing_classes[0].start_time.strftime("%d/%m/%Y %H:%M")
-        last_existing = existing_classes[-1].start_time.strftime("%d/%m/%Y %H:%M")
+        tz_name = ctx.tenant.timezone if ctx.tenant and ctx.tenant.timezone else "UTC"
+        try:
+            zone = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            zone = ZoneInfo("UTC")
+
+        def _local(dt: datetime) -> str:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(zone).strftime("%d/%m/%Y %H:%M")
+
+        first_existing = _local(existing_classes[0].start_time)
+        last_existing = _local(existing_classes[-1].start_time)
         if len(existing_classes) == len(planned_instances):
             detail = (
                 f"Ya existe una tanda activa de clases para este programa entre {first_existing} y {last_existing}. "
@@ -3139,6 +3169,69 @@ async def delete_payment_account(
             await db.flush()
 
     return Response(status_code=204)
+
+
+@payment_accounts_router.post("/{account_id}/webpay/test-transaction", status_code=201)
+async def create_webpay_test_transaction(
+    account_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    current_user: User = Depends(require_roles("owner", "admin")),
+):
+    account = await db.get(TenantPaymentProviderAccount, account_id)
+    if not account or account.tenant_id != ctx.tenant_id:
+        raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
+    if account.provider != "webpay":
+        raise HTTPException(status_code=400, detail="Esta cuenta no es de tipo Webpay")
+
+    credentials = WebpayCredentials(
+        commerce_code=WEBPAY_DEFAULT_INTEGRATION_COMMERCE_CODE,
+        api_key=WEBPAY_DEFAULT_INTEGRATION_API_KEY,
+        environment="integration",
+    )
+
+    success_url = f"{settings.public_app_url.rstrip('/')}/settings?webpay_test=success"
+    cancel_url = f"{settings.public_app_url.rstrip('/')}/settings?webpay_test=cancelled"
+
+    transaction = WebpayTransaction(
+        tenant_id=ctx.tenant_id,
+        user_id=current_user.id,
+        payment_account_id=account.id,
+        flow_type="webpay_connectivity_test",
+        flow_reference=str(account_id),
+        status="creating",
+        buy_order=generate_webpay_buy_order("wbtest"),
+        session_id=generate_webpay_session_id("wbtest"),
+        amount=Decimal("100"),
+        currency="CLP",
+        commerce_code=credentials.commerce_code,
+        environment=credentials.environment,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata_json=json.dumps({"account_id": str(account_id), "test": True}),
+    )
+    db.add(transaction)
+    await db.flush()
+
+    return_url = build_webpay_return_url(str(transaction.id))
+    provider_response = await webpay_service.create_transaction(
+        buy_order=transaction.buy_order,
+        session_id=transaction.session_id,
+        amount=100,
+        return_url=return_url,
+        credentials=credentials,
+    )
+
+    transaction.token = provider_response["token"]
+    transaction.provider_url = provider_response["url"]
+    transaction.return_url = return_url
+    transaction.checkout_url = build_webpay_redirect_url(str(transaction.id))
+    transaction.status = "pending"
+    transaction.provider_response_json = json.dumps(provider_response)
+    transaction.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    return {"checkout_url": transaction.checkout_url, "transaction_id": str(transaction.id)}
 
 
 @mobile_router.get("/wallet", response_model=MobileMembershipWalletResponse)

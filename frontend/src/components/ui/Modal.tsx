@@ -9,10 +9,11 @@ interface ModalProps {
   description?: string;
   onClose: () => void;
   children: ReactNode;
-  size?: 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
 }
 
 const sizeMap = {
+  sm: 'max-w-md',
   md: 'max-w-2xl',
   lg: 'max-w-4xl',
 };

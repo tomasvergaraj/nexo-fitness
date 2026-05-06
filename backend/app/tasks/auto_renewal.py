@@ -25,7 +25,7 @@ def process_saas_scheduled_plans(self) -> dict:
 
 async def _run_auto_renewals() -> dict:
     from sqlalchemy import select
-    from app.core.database import AsyncSessionLocal
+    from app.tasks._db import task_session
     from app.models.business import (
         Membership, MembershipStatus, PaymentMethod, Plan,
     )
@@ -42,7 +42,7 @@ async def _run_auto_renewals() -> dict:
     skipped = 0
     errors = 0
 
-    async with AsyncSessionLocal() as db:
+    async with task_session() as db:
         memberships = (
             await db.execute(
                 select(Membership).where(
@@ -140,7 +140,7 @@ async def _run_auto_renewals() -> dict:
 
 async def _run_saas_scheduled_plans() -> dict:
     from sqlalchemy import select
-    from app.core.database import AsyncSessionLocal
+    from app.tasks._db import task_session
     from app.models.tenant import Tenant, TenantStatus
     from app.services.billing_service import activate_tenant_subscription
     from app.services.saas_plan_service import get_public_saas_plan_definition
@@ -150,7 +150,7 @@ async def _run_saas_scheduled_plans() -> dict:
     skipped = 0
     errors = 0
 
-    async with AsyncSessionLocal() as db:
+    async with task_session() as db:
         tenants = (
             await db.execute(
                 select(Tenant).where(

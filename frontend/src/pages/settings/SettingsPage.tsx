@@ -2,9 +2,10 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Bell, ChevronDown, Clock, CreditCard, Globe, Lock, Mail, MapPin, Palette, Pencil, Plus, Shield, ShieldCheck, Store, Trash2, UserCog, UserMinus, UserPlus, Users } from 'lucide-react';
+import { Bell, CheckCircle2, ChevronDown, Clock, Copy, CreditCard, FlaskConical, Globe, Lock, Mail, MapPin, Palette, Pencil, Plus, Shield, ShieldCheck, Store, Trash2, UserCog, UserMinus, UserPlus, Users, XCircle } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import LogoUploader from '@/components/ui/LogoUploader';
+import PersonalTwoFactorCard from '@/pages/settings/PersonalTwoFactorCard';
 import { branchesApi, paymentProviderApi, settingsApi, staffApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
@@ -257,6 +258,8 @@ interface StaffMember {
   email: string;
   role: string;
   is_active: boolean;
+  two_factor_enabled?: boolean;
+  last_login_at?: string | null;
 }
 
 interface InviteForm {
@@ -338,6 +341,8 @@ export default function SettingsPage() {
   const [editingAccount, setEditingAccount] = useState<PaymentProviderAccount | null>(null);
   const [accountToDelete, setAccountToDelete] = useState<PaymentProviderAccount | null>(null);
   const isEditingAccount = Boolean(editingAccount);
+  const [webpayTestAccount, setWebpayTestAccount] = useState<PaymentProviderAccount | null>(null);
+  const [webpayTestResult, setWebpayTestResult] = useState<{ status: 'success' | 'cancelled' | 'failed'; token?: string } | null>(null);
 
   // ── Branch state ─────────────────────────────────────────────────────────
   const [branchForm, setBranchForm] = useState<BranchForm>(emptyBranch);
@@ -530,6 +535,24 @@ export default function SettingsPage() {
   }, [settings]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const testStatus = params.get('webpay_test');
+    if (!testStatus) return;
+    const token = params.get('webpay_token') ?? undefined;
+    setWebpayTestResult({
+      status: testStatus === 'success' ? 'success' : testStatus === 'cancelled' ? 'cancelled' : 'failed',
+      token,
+    });
+    const url = new URL(window.location.href);
+    url.searchParams.delete('webpay_test');
+    url.searchParams.delete('webpay_token');
+    url.searchParams.delete('provider');
+    url.searchParams.delete('status');
+    url.searchParams.delete('flow');
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
+  useEffect(() => {
     if (!openStaffMenuId) return undefined;
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -626,6 +649,19 @@ export default function SettingsPage() {
     },
     onError: (error: any) => {
       toast.error(getApiError(error, 'No se pudo eliminar la cuenta de pago'));
+    },
+  });
+
+  const webpayTestMutation = useMutation({
+    mutationFn: async (accountId: string) => {
+      const res = await paymentProviderApi.createWebpayTestTransaction(accountId);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      window.open(data.checkout_url, '_blank', 'noopener,noreferrer');
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo iniciar la prueba de Webpay'));
     },
   });
 
@@ -1061,10 +1097,7 @@ export default function SettingsPage() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-surface-900 dark:text-white">2FA obligatorio</p>
-                    <p className="mt-0.5 text-xs text-surface-500">Exige verificación en dos pasos para todos los usuarios del staff al iniciar sesión.</p>
-                    <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-surface-100 px-2 py-0.5 text-xs font-medium text-surface-500 dark:bg-surface-800 dark:text-surface-400">
-                      Cumplimiento guardado — Aplicación en login próximamente
-                    </span>
+                    <p className="mt-0.5 text-xs text-surface-500">Exige verificación en dos pasos para todos los usuarios del staff al iniciar sesión. Quien aún no lo tenga configurado, será forzado a hacerlo en su próximo login.</p>
                   </div>
                 </div>
                 <button
@@ -1077,6 +1110,30 @@ export default function SettingsPage() {
                   <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition-transform ${form.two_factor_required ? 'translate-x-5' : 'translate-x-0'}`} />
                 </button>
               </div>
+
+              {form.two_factor_required && staffList.some((m) => m.is_active && !m.two_factor_enabled) ? (
+                <div className="rounded-2xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-950/30">
+                  <p className="font-medium text-amber-800 dark:text-amber-200">
+                    {staffList.filter((m) => m.is_active && !m.two_factor_enabled).length} miembro(s) del staff aún sin 2FA
+                  </p>
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                    Se les pedirá configurarlo automáticamente en su próximo inicio de sesión.
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-amber-800 dark:text-amber-200">
+                    {staffList
+                      .filter((m) => m.is_active && !m.two_factor_enabled)
+                      .map((m) => (
+                        <li key={m.id} className="flex justify-between gap-2">
+                          <span className="truncate">{m.full_name} <span className="text-amber-600 dark:text-amber-400">· {m.email}</span></span>
+                          <span className="shrink-0 capitalize">{m.role}</span>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <PersonalTwoFactorCard />
+
 
               {/* Pago público */}
               <div className={`flex items-start justify-between gap-4 rounded-2xl border px-4 py-4 ${form.public_checkout_enabled && !paymentAccounts.some(a => a.status === 'connected') ? 'border-amber-200 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/10' : 'border-surface-200 dark:border-surface-800'}`}>
@@ -1176,6 +1233,16 @@ export default function SettingsPage() {
                     <p>{account.is_default ? 'Cuenta predeterminada de la cuenta' : 'Cuenta secundaria'}</p>
                   </div>
                   <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-surface-200/70 pt-3 dark:border-surface-800/70">
+                    {account.provider === 'webpay' && (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-xl border border-violet-200 px-3 py-2 text-sm font-medium text-violet-600 transition-colors hover:border-violet-300 hover:bg-violet-50 dark:border-violet-900/30 dark:text-violet-300 dark:hover:border-violet-800/40 dark:hover:bg-violet-950/20"
+                        onClick={() => setWebpayTestAccount(account)}
+                      >
+                        <FlaskConical size={15} />
+                        Probar integración
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="inline-flex items-center gap-2 rounded-xl border border-surface-200 px-3 py-2 text-sm font-medium text-surface-600 transition-colors hover:border-surface-300 hover:bg-surface-50 hover:text-surface-900 dark:border-surface-800 dark:text-surface-300 dark:hover:border-surface-700 dark:hover:bg-surface-800/60 dark:hover:text-white"
@@ -1796,28 +1863,46 @@ export default function SettingsPage() {
           ) : null}
           <input className="input" value={accountForm.account_label} onChange={(event) => setAccountForm((current) => ({ ...current, account_label: event.target.value }))} placeholder="Etiqueta comercial" />
           {accountForm.provider === 'webpay' ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <input
-                className="input"
-                value={accountForm.webpay_commerce_code}
-                onChange={(event) => setAccountForm((current) => ({ ...current, webpay_commerce_code: event.target.value }))}
-                placeholder="Commerce code"
-              />
-              <select
-                className="input"
-                value={accountForm.webpay_environment}
-                onChange={(event) => setAccountForm((current) => ({ ...current, webpay_environment: event.target.value as AccountForm['webpay_environment'] }))}
-              >
-                <option value="integration">integration</option>
-                <option value="production">production</option>
-              </select>
-              <input
-                className="input sm:col-span-2"
-                type="password"
-                value={accountForm.webpay_api_key}
-                onChange={(event) => setAccountForm((current) => ({ ...current, webpay_api_key: event.target.value }))}
-                placeholder="API key secreta"
-              />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-surface-500">Credenciales Webpay (Transbank)</p>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-300 dark:hover:bg-violet-950/50"
+                  onClick={() => setAccountForm((current) => ({
+                    ...current,
+                    webpay_commerce_code: '597055555532',
+                    webpay_api_key: '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C',
+                    webpay_environment: 'integration',
+                  }))}
+                >
+                  <FlaskConical size={12} />
+                  Usar datos de prueba
+                </button>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input
+                  className="input"
+                  value={accountForm.webpay_commerce_code}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, webpay_commerce_code: event.target.value }))}
+                  placeholder="Commerce code"
+                />
+                <select
+                  className="input"
+                  value={accountForm.webpay_environment}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, webpay_environment: event.target.value as AccountForm['webpay_environment'] }))}
+                >
+                  <option value="integration">integration</option>
+                  <option value="production">production</option>
+                </select>
+                <input
+                  className="input sm:col-span-2"
+                  type="password"
+                  value={accountForm.webpay_api_key}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, webpay_api_key: event.target.value }))}
+                  placeholder="API key secreta"
+                />
+              </div>
             </div>
           ) : accountForm.provider === 'tuu' ? (
             <div className="space-y-4">
@@ -1952,6 +2037,125 @@ export default function SettingsPage() {
           </div>
         ) : null}
       </Modal>
+
+      {/* ── Webpay integration test modal ─────────────────────────────────── */}
+      <Modal
+        open={!!webpayTestAccount}
+        title="Probar integración Webpay"
+        description="Se realizará una transacción de prueba de $100 CLP en el ambiente de integración de Transbank. No se cobran fondos reales."
+        onClose={() => {
+          if (!webpayTestMutation.isPending) setWebpayTestAccount(null);
+        }}
+      >
+        {webpayTestAccount ? (
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4 dark:border-violet-900/40 dark:bg-violet-950/20">
+              <p className="mb-3 text-sm font-semibold text-violet-800 dark:text-violet-200">Tarjetas de prueba Transbank</p>
+              <div className="space-y-3 text-xs text-violet-700 dark:text-violet-300">
+                {[
+                  { label: 'Pago exitoso (Visa crédito)', labelClass: 'text-green-700 dark:text-green-400', number: '4051 8856 0044 6623' },
+                  { label: 'Pago rechazado (Mastercard)', labelClass: 'text-rose-700 dark:text-rose-400', number: '5186 0595 5959 0568' },
+                ].map((card) => (
+                  <div key={card.number} className="rounded-xl border border-violet-200/60 bg-white/60 px-3 py-2.5 dark:border-violet-800/40 dark:bg-violet-950/30">
+                    <p className={`font-semibold ${card.labelClass}`}>{card.label}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="font-mono">{card.number}</span>
+                      <button
+                        type="button"
+                        className="rounded p-0.5 text-violet-500 hover:bg-violet-100 dark:text-violet-400 dark:hover:bg-violet-900/40"
+                        title="Copiar número"
+                        onClick={() => { navigator.clipboard.writeText(card.number.replace(/\s/g, '')); toast.success('Número copiado'); }}
+                      >
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                    <p className="mt-0.5">CVV: 123 · Fecha: cualquier futura · RUT: 11.111.111-1 · Contraseña: 123</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="text-sm text-surface-500">
+              Al hacer clic en <strong>Iniciar prueba</strong> serás redirigido a la página de pago de Transbank. Completa el formulario con una de las tarjetas de arriba y vuelve aquí para ver el resultado.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setWebpayTestAccount(null)}
+                disabled={webpayTestMutation.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={webpayTestMutation.isPending}
+                onClick={() => webpayTestMutation.mutate(webpayTestAccount.id)}
+              >
+                {webpayTestMutation.isPending ? 'Iniciando...' : 'Iniciar prueba →'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* ── Webpay test result banner ──────────────────────────────────────── */}
+      {webpayTestResult && (
+        <div className={`fixed bottom-6 left-1/2 z-50 w-full max-w-xl -translate-x-1/2 rounded-2xl border px-5 py-4 shadow-xl ${
+          webpayTestResult.status === 'success'
+            ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/90'
+            : 'border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/90'
+        }`}>
+          <div className="flex items-start gap-3">
+            {webpayTestResult.status === 'success'
+              ? <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              : <XCircle size={20} className="mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" />}
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className={`text-sm font-semibold ${webpayTestResult.status === 'success' ? 'text-emerald-800 dark:text-emerald-200' : 'text-rose-800 dark:text-rose-200'}`}>
+                {webpayTestResult.status === 'success'
+                  ? 'Integración Webpay verificada correctamente'
+                  : webpayTestResult.status === 'cancelled'
+                    ? 'Prueba cancelada'
+                    : 'La transacción de prueba fue rechazada'}
+              </p>
+              {webpayTestResult.status === 'success' && webpayTestResult.token && (
+                <div className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 dark:border-emerald-800/40 dark:bg-emerald-950/40">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Token Transbank</span>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-emerald-600 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/40"
+                      onClick={() => { navigator.clipboard.writeText(webpayTestResult.token ?? ''); toast.success('Token copiado'); }}
+                    >
+                      <Copy size={11} /> Copiar
+                    </button>
+                  </div>
+                  <p className="break-all font-mono text-xs text-emerald-800 dark:text-emerald-200">{webpayTestResult.token}</p>
+                </div>
+              )}
+              {webpayTestResult.status === 'success' && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                  El flujo create → redirect → commit funciona correctamente en ambiente de integración.
+                </p>
+              )}
+              {webpayTestResult.status !== 'success' && (
+                <p className="text-xs text-rose-600 dark:text-rose-400">
+                  {webpayTestResult.status === 'cancelled'
+                    ? 'El usuario canceló el pago en Transbank.'
+                    : 'Verifica las credenciales o usa la tarjeta de prueba correcta.'}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded p-1 text-surface-400 hover:text-surface-600"
+              onClick={() => setWebpayTestResult(null)}
+            >
+              <XCircle size={16} />
+            </button>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }

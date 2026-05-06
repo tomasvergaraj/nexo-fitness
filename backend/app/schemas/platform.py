@@ -562,12 +562,12 @@ class NotificationBroadcastResponse(BaseModel):
 
 class ReportSeriesPoint(BaseModel):
     label: str
-    value: Decimal | int | float
+    value: float
 
 
 class PlanRevenueShare(BaseModel):
     name: str
-    value: Decimal | int | float
+    value: float
     color: str
 
 
@@ -578,14 +578,14 @@ class ClassOccupancyPoint(BaseModel):
 
 class TopProductPoint(BaseModel):
     name: str
-    revenue: Decimal
+    revenue: float
     units_sold: int
 
 
 class ExpenseCategoryPoint(BaseModel):
     category: str
     label: str
-    amount: Decimal
+    amount: float
 
 
 class ReportsOverviewResponse(BaseModel):

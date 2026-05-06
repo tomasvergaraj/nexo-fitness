@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Nav from './components/Nav';
 import Hero from './components/Hero';
+import ValueShowcase from './components/ValueShowcase';
 import TrustBar from './components/TrustBar';
 import SignalStrip from './components/SignalStrip';
 import ProblemSolution from './components/ProblemSolution';
@@ -38,6 +39,7 @@ export default function App() {
       <Nav theme={theme} onToggleTheme={toggleTheme} />
       <main>
         <Hero />
+        <ValueShowcase />
         <TrustBar />
         <SignalStrip />
         <ProblemSolution />

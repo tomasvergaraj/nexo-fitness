@@ -25,7 +25,7 @@ def send_membership_expiry_alerts(self) -> dict:
 async def _run_membership_alerts() -> dict:
     from datetime import date
     from sqlalchemy import select, and_
-    from app.core.database import AsyncSessionLocal
+    from app.tasks._db import task_session
     from app.models.business import Membership, MembershipStatus
     from app.models.user import User
     from app.services.push_notification_service import create_and_dispatch_notification
@@ -40,7 +40,7 @@ async def _run_membership_alerts() -> dict:
     skipped = 0
     errors = 0
 
-    async with AsyncSessionLocal() as db:
+    async with task_session() as db:
         memberships = (
             await db.execute(
                 select(Membership).where(

@@ -112,6 +112,108 @@ async def cancel_next_plan(
     await db.commit()
 
 
+@router.get("/admin/platform-stats")
+async def get_platform_stats(
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    """Aggregated SaaS metrics for the superadmin dashboard."""
+    return await BillingService.get_platform_stats(db)
+
+
+@router.get("/admin/audit-logs")
+async def list_audit_logs(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    action: Optional[str] = Query(None, max_length=80),
+    target_type: Optional[str] = Query(None, max_length=60),
+    target_id: Optional[str] = Query(None, max_length=80),
+    severity: Optional[str] = Query(None, max_length=20),
+    search: Optional[str] = Query(None, max_length=200),
+    since_days: Optional[int] = Query(None, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    """Paginated platform audit log with filters by action / target / severity / actor."""
+    from app.services.platform_audit_service import PlatformAuditService
+    return await PlatformAuditService.list(
+        db,
+        page=page,
+        per_page=per_page,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        severity=severity,
+        search=search,
+        since_days=since_days,
+    )
+
+
+@router.post("/admin/tenants/{tenant_id}/impersonate")
+async def admin_impersonate_tenant_owner(
+    tenant_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    """Mint a short-lived owner token for the given tenant.
+
+    The token carries `impersonated_by_user_id` + `impersonated_by_email` so the
+    frontend can render the impersonation banner and the action is recorded in
+    the audit log."""
+    from app.core.security import create_access_token
+    from app.models.user import User as _User, UserRole as _UserRole
+    from app.services.platform_audit_service import PlatformAuditService
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    owner = (
+        await db.execute(
+            select(_User).where(
+                _User.tenant_id == tenant_id,
+                _User.role == _UserRole.OWNER,
+                _User.is_active == True,  # noqa: E712
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Esta cuenta no tiene propietario activo")
+
+    token = create_access_token(
+        subject=str(owner.id),
+        tenant_id=str(tenant_id),
+        role=owner.role.value if hasattr(owner.role, "value") else str(owner.role),
+        extra={
+            "impersonated_by_user_id": str(superadmin.id) if superadmin else None,
+            "impersonated_by_email": superadmin.email if superadmin else None,
+            "impersonation_reason": "superadmin_debug",
+        },
+    )
+
+    await PlatformAuditService.record(
+        db,
+        actor=superadmin,
+        action="tenant.impersonate",
+        target_type="tenant",
+        target_id=str(tenant_id),
+        target_label=tenant.name,
+        payload={"owner_user_id": str(owner.id), "owner_email": owner.email},
+        severity="critical",
+        request=request,
+    )
+
+    return {
+        "access_token": token,
+        "owner_user_id": str(owner.id),
+        "owner_email": owner.email,
+        "tenant_id": str(tenant_id),
+        "tenant_name": tenant.name,
+        "expires_in_minutes": 30,
+    }
+
+
 @router.get("/admin/tenants", response_model=PaginatedResponse)
 async def list_platform_tenants(
     page: int = Query(1, ge=1),
@@ -123,6 +225,91 @@ async def list_platform_tenants(
     result = await BillingService.list_tenants_for_admin(db, page=page, per_page=per_page, search=search)
     result["items"] = [AdminTenantBillingResponse(**item) for item in result["items"]]
     return result
+
+
+class TenantAccessUpdateRequest(BaseModel):
+    is_active: bool
+    reason: Optional[str] = None
+
+
+@router.patch("/admin/tenants/{tenant_id}/access")
+async def admin_set_tenant_access(
+    tenant_id: UUID,
+    data: TenantAccessUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    """Bloquear o desbloquear el acceso de una cuenta SaaS sin tocar billing."""
+    from app.services.platform_audit_service import PlatformAuditService
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    tenant.is_active = bool(data.is_active)
+    await db.flush()
+    await PlatformAuditService.record(
+        db,
+        actor=superadmin,
+        action="tenant.access.set",
+        target_type="tenant",
+        target_id=str(tenant_id),
+        target_label=tenant.name,
+        payload={"is_active": tenant.is_active, "reason": data.reason},
+        severity="warn" if not tenant.is_active else "info",
+        request=request,
+        commit=False,
+    )
+    await db.commit()
+    import structlog as _sl
+    _sl.get_logger().warning(
+        "tenant_access_changed_by_superadmin",
+        tenant_id=str(tenant_id),
+        is_active=tenant.is_active,
+        reason=data.reason,
+        actor_user_id=str(superadmin.id) if superadmin else None,
+    )
+    return {"tenant_id": str(tenant_id), "is_active": tenant.is_active}
+
+
+@router.post("/admin/tenants/{tenant_id}/owner-password-reset")
+async def admin_send_owner_password_reset(
+    tenant_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    """Dispara un email de reset de contraseña al propietario de la cuenta."""
+    from app.models.user import User as _User, UserRole as _UserRole
+    from app.services.auth_service import AuthService
+    from app.integrations.email.email_service import email_service
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    owner = (
+        await db.execute(
+            select(_User).where(
+                _User.tenant_id == tenant_id,
+                _User.role == _UserRole.OWNER,
+                _User.is_active == True,  # noqa: E712
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Esta cuenta no tiene propietario activo")
+
+    reset_url = await AuthService.request_password_reset(db, owner.email)
+    if not reset_url:
+        raise HTTPException(status_code=500, detail="No se pudo generar el enlace")
+    sent = await email_service.send_password_reset(to_email=owner.email, reset_url=reset_url)
+    import structlog as _sl
+    _sl.get_logger().info(
+        "tenant_owner_password_reset_dispatched",
+        tenant_id=str(tenant_id),
+        owner_email=owner.email,
+        actor_user_id=str(superadmin.id) if superadmin else None,
+    )
+    return {"detail": "Correo enviado al propietario.", "owner_email": owner.email, "delivered": bool(sent)}
 
 
 @router.get("/admin/plans", response_model=list[AdminSaaSPlanResponse])
@@ -220,6 +407,195 @@ async def record_payment_invoice(
     return await BillingService.record_payment_invoice(
         db, payment_id, folio_number=data.folio_number, invoice_date=data.invoice_date
     )
+
+
+class TenantFeatureFlagsUpdate(BaseModel):
+    flags: dict
+
+
+class EmailTemplateUpsert(BaseModel):
+    name: str
+    subject: str
+    body_html: str
+    body_text: Optional[str] = None
+    description: Optional[str] = None
+    variables: Optional[dict] = None
+    is_active: bool = True
+
+
+class EmailTemplatePreviewRequest(BaseModel):
+    context: Optional[dict] = None
+
+
+@router.get("/admin/email-templates")
+async def list_email_templates(
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    from app.services.platform_email_template_service import PlatformEmailTemplateService
+    return await PlatformEmailTemplateService.list(db)
+
+
+@router.get("/admin/email-templates/{key}")
+async def get_email_template(
+    key: str,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    from app.services.platform_email_template_service import PlatformEmailTemplateService
+    template = await PlatformEmailTemplateService.get_by_key(db, key)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template no encontrado")
+    return template
+
+
+@router.put("/admin/email-templates/{key}")
+async def upsert_email_template(
+    key: str,
+    data: EmailTemplateUpsert,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    from app.services.platform_email_template_service import PlatformEmailTemplateService
+    from app.services.platform_audit_service import PlatformAuditService
+
+    previous = await PlatformEmailTemplateService.get_by_key(db, key)
+    template = await PlatformEmailTemplateService.upsert(
+        db,
+        key=key,
+        name=data.name,
+        subject=data.subject,
+        body_html=data.body_html,
+        body_text=data.body_text,
+        description=data.description,
+        variables=data.variables,
+        is_active=data.is_active,
+        updated_by_user_id=superadmin.id if superadmin else None,
+    )
+    await PlatformAuditService.record(
+        db,
+        actor=superadmin,
+        action="email_template.upsert",
+        target_type="email_template",
+        target_id=key,
+        target_label=data.name,
+        payload={
+            "before_subject": previous.get("subject") if previous else None,
+            "after_subject": data.subject,
+            "is_active": data.is_active,
+        },
+        severity="warn",
+        request=request,
+        commit=False,
+    )
+    await db.commit()
+    return template
+
+
+@router.post("/admin/email-templates/{key}/preview")
+async def preview_email_template(
+    key: str,
+    data: EmailTemplatePreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_superadmin()),
+):
+    from app.services.platform_email_template_service import PlatformEmailTemplateService
+    template = await PlatformEmailTemplateService.get_by_key(db, key)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template no encontrado")
+    rendered = PlatformEmailTemplateService.render_template(template, data.context or {})
+    return {"key": key, **rendered}
+
+
+@router.patch("/admin/tenants/{tenant_id}/feature-flags")
+async def admin_update_tenant_feature_flags(
+    tenant_id: UUID,
+    data: TenantFeatureFlagsUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    """Reemplaza el blob de feature flags del tenant. Audit logged."""
+    from app.services.billing_service import get_tenant_feature_flags, set_tenant_feature_flags
+    from app.services.platform_audit_service import PlatformAuditService
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    previous = get_tenant_feature_flags(tenant)
+    if not isinstance(data.flags, dict):
+        raise HTTPException(status_code=400, detail="flags debe ser un objeto")
+
+    set_tenant_feature_flags(tenant, data.flags)
+    await db.flush()
+    await PlatformAuditService.record(
+        db,
+        actor=superadmin,
+        action="tenant.feature_flags",
+        target_type="tenant",
+        target_id=str(tenant_id),
+        target_label=tenant.name,
+        payload={"before": previous, "after": data.flags},
+        severity="warn",
+        request=request,
+        commit=False,
+    )
+    await db.commit()
+    return {"tenant_id": str(tenant_id), "flags": data.flags}
+
+
+class PaymentRefundRequest(BaseModel):
+    amount: Optional[float] = None
+    reason: Optional[str] = None
+
+
+@router.post("/admin/payments/{payment_id}/refund")
+async def admin_refund_platform_payment(
+    payment_id: UUID,
+    data: PaymentRefundRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    """Reembolsar un pago SaaS — Webpay vía provider, transferencia / cash marcado manual."""
+    from decimal import Decimal as _D
+    from app.services.platform_audit_service import PlatformAuditService
+    from app.models.platform import PlatformBillingPayment as _Payment
+
+    payment_pre = await db.get(_Payment, payment_id)
+    if not payment_pre:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+
+    try:
+        result = await BillingService.refund_platform_payment(
+            db,
+            payment_id=payment_id,
+            amount=_D(str(data.amount)) if data.amount is not None else None,
+            reason=(data.reason or None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await PlatformAuditService.record(
+        db,
+        actor=superadmin,
+        action="tenant.refund",
+        target_type="payment",
+        target_id=str(payment_id),
+        target_label=f"{payment_pre.plan_name} · {payment_pre.currency} {payment_pre.total_amount}",
+        payload={
+            "tenant_id": str(payment_pre.tenant_id),
+            "amount": str(result["refunded_amount"]),
+            "reason": data.reason,
+            "method": result["method"],
+            "status": result["refund_status"],
+        },
+        severity="critical",
+        request=request,
+    )
+    return result
 
 
 @router.post("/admin/tenants/{tenant_id}/manual-payment", response_model=AdminTenantManualPaymentResponse, status_code=201)

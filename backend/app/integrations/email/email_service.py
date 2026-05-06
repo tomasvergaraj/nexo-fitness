@@ -1,6 +1,7 @@
 """Email service for transactional and marketing emails via Resend."""
 
 import asyncio
+from datetime import datetime
 from typing import Optional, List
 
 import structlog
@@ -153,6 +154,59 @@ class EmailService:
             if days_remaining <= 1
             else f"Tu prueba de Nexo Fitness vence en {days_label} — activa tu plan"
         )
+        return await self.send(to_email, subject, html)
+
+    async def send_license_expiring(
+        self,
+        to_email: str,
+        first_name: str,
+        gym_name: str,
+        plan_name: str,
+        days_remaining: int,
+        checkout_url: str,
+    ) -> bool:
+        urgency_color = "#dc2626" if days_remaining <= 1 else ("#d97706" if days_remaining <= 3 else "#0891b2")
+        if days_remaining < 1:
+            days_label = "menos de 1 día"
+        elif days_remaining == 1:
+            days_label = "1 día"
+        else:
+            days_label = f"{days_remaining} días"
+        html = f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+            <div style="background:{urgency_color};padding:40px;text-align:center;border-radius:12px 12px 0 0;">
+                <h1 style="color:white;margin:0;font-size:26px;font-weight:700;">Tu plan vence en {days_label}</h1>
+            </div>
+            <div style="padding:40px;background:#f9fafb;">
+                <p style="font-size:16px;color:#374151;">Hola <strong>{first_name}</strong>,</p>
+                <p style="color:#4b5563;line-height:1.6;">
+                    El plan <strong>{plan_name}</strong> de <strong>{gym_name}</strong> vence en {days_label}.
+                    Renueva ahora para evitar la suspensión del servicio. Si pagas antes del vencimiento,
+                    el nuevo período comienza apenas termine el actual — sin perder días.
+                </p>
+                <div style="text-align:center;margin:32px 0;">
+                    <a href="{checkout_url}"
+                       style="display:inline-block;background:{urgency_color};color:white;
+                              padding:16px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;">
+                        Renovar plan ahora →
+                    </a>
+                </div>
+                <p style="color:#6b7280;font-size:14px;line-height:1.6;">
+                    Tus datos (clientes, clases, pagos, configuración) se conservan intactos al renovar.
+                </p>
+                <p style="color:#9ca3af;font-size:13px;margin-top:32px;text-align:center;">
+                    Si ya programaste la renovación, puedes ignorar este correo.<br>
+                    — El equipo de Nexo Fitness
+                </p>
+            </div>
+        </div>
+        """
+        if days_remaining <= 1:
+            subject = f"⚠️ Tu plan de Nexo Fitness vence mañana — renueva {gym_name}"
+        elif days_remaining <= 3:
+            subject = f"Tu plan de Nexo Fitness vence en {days_label} — renueva {gym_name}"
+        else:
+            subject = f"Recordatorio: tu plan de Nexo Fitness vence en {days_label}"
         return await self.send(to_email, subject, html)
 
     async def send_password_reset(self, to_email: str, reset_url: str) -> bool:
@@ -445,6 +499,57 @@ class EmailService:
             f"Feedback {category_label.lower()} — {gym_name}",
             html,
         )
+
+    async def send_2fa_changed(
+        self,
+        *,
+        to_email: str,
+        first_name: str,
+        action: str,  # "enabled" | "disabled" | "backup_regenerated"
+        when: datetime,
+    ) -> bool:
+        """Security alert when 2FA state changes on a user account."""
+        action_label = {
+            "enabled": "Verificación en dos pasos activada",
+            "disabled": "Verificación en dos pasos desactivada",
+            "backup_regenerated": "Códigos de respaldo regenerados",
+        }.get(action, "Cambio en 2FA")
+
+        action_body = {
+            "enabled": "Acabas de activar la verificación en dos pasos. A partir de ahora necesitarás el código del autenticador (o un código de respaldo) para iniciar sesión.",
+            "disabled": "Acabas de desactivar la verificación en dos pasos. Tu cuenta ya no requiere el segundo factor para iniciar sesión.",
+            "backup_regenerated": "Acabas de regenerar tus códigos de respaldo de 2FA. Los códigos anteriores ya no funcionan — usa los nuevos que descargaste.",
+        }.get(action, "")
+
+        accent = "#dc2626" if action in ("disabled", "backup_regenerated") else "#0f766e"
+        when_str = when.strftime("%d/%m/%Y %H:%M UTC") if when else ""
+
+        html = f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+            <div style="background:linear-gradient(135deg,{accent},#0891b2);padding:36px 40px;text-align:center;border-radius:12px 12px 0 0;">
+                <h1 style="color:white;margin:0;font-size:24px;font-weight:700;">{action_label}</h1>
+                <p style="color:rgba(255,255,255,0.85);margin:10px 0 0;font-size:14px;">Nexo Fitness · Aviso de seguridad</p>
+            </div>
+            <div style="padding:36px 40px;background:#f9fafb;">
+                <p style="font-size:16px;color:#374151;">Hola <strong>{first_name}</strong>,</p>
+                <p style="color:#4b5563;line-height:1.6;">{action_body}</p>
+                <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 22px;margin:22px 0;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Cuenta</p>
+                    <p style="margin:4px 0 12px;font-size:15px;font-weight:600;color:#111827;">{to_email}</p>
+                    <p style="margin:0;font-size:13px;color:#6b7280;">Fecha</p>
+                    <p style="margin:4px 0 0;font-size:15px;color:#111827;">{when_str}</p>
+                </div>
+                <p style="color:#6b7280;font-size:14px;line-height:1.6;">
+                    <strong>¿No fuiste tú?</strong> Cambia tu contraseña de inmediato y contacta al
+                    administrador de tu gimnasio.
+                </p>
+                <p style="color:#9ca3af;font-size:12px;margin-top:24px;text-align:center;">
+                    Este es un aviso automático. No respondas a este correo.
+                </p>
+            </div>
+        </div>
+        """
+        return await self.send(to_email, f"{action_label} — Nexo Fitness", html)
 
 
 email_service = EmailService()

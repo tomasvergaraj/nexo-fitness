@@ -466,22 +466,15 @@ function ExerciseLibraryManager({
   const groupedExercises = useMemo(() => groupExerciseLibrary(exercises), [exercises]);
 
   return (
-    <motion.section variants={fadeInUp} className="rounded-3xl border border-surface-200/70 bg-white p-6 dark:border-surface-800 dark:bg-surface-900">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="max-w-2xl">
-          <div className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-brand-700 dark:border-brand-900/50 dark:bg-brand-950/30 dark:text-brand-300">
-            <LibraryBig size={14} />
-            Biblioteca de ejercicios
-          </div>
-          <h2 className="mt-3 text-xl font-semibold font-display text-surface-900 dark:text-white">
-            Catálogo reutilizable para planificar cada programa
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-surface-500 dark:text-surface-400">
-            Tienes una base predefinida de ejercicios agrupados por zona. Puedes sumar ejercicios propios y eliminar los que no usas para que el planificador quede limpio.
-          </p>
-        </div>
+    <div className="space-y-5">
+      <div>
+        <p className="text-sm leading-6 text-surface-500 dark:text-surface-400">
+          Tienes una base predefinida de ejercicios agrupados por zona. Puedes sumar ejercicios propios y eliminar los que no usas para que el planificador quede limpio.
+        </p>
+      </div>
 
-        <div className="grid w-full gap-3 sm:grid-cols-[minmax(0,1fr)_220px_auto] xl:max-w-3xl">
+      <div>
+        <div className="grid w-full gap-3 sm:grid-cols-[minmax(0,1fr)_220px_auto]">
           <input
             className="input"
             placeholder="Nuevo ejercicio, por ejemplo Press con barra T"
@@ -511,7 +504,7 @@ function ExerciseLibraryManager({
         </div>
       </div>
 
-      <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative w-full lg:max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" size={16} />
           <input
@@ -527,19 +520,19 @@ function ExerciseLibraryManager({
       </div>
 
       {isError ? (
-        <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
           No pudimos cargar la biblioteca de ejercicios.
         </div>
       ) : null}
 
       {isLoading ? (
-        <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2">
           {Array.from({ length: 6 }).map((_, index) => (
             <div key={index} className="shimmer h-44 rounded-3xl" />
           ))}
         </div>
       ) : groupedExercises.length ? (
-        <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2">
           {groupedExercises.map(([group, groupExercises]) => (
             <div key={group} className="rounded-3xl border border-surface-200 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-950/40">
               <div className="flex items-center justify-between gap-3">
@@ -575,11 +568,11 @@ function ExerciseLibraryManager({
           ))}
         </div>
       ) : (
-        <div className="mt-5 rounded-3xl border border-dashed border-surface-300 px-5 py-8 text-center text-sm text-surface-500 dark:border-surface-700 dark:text-surface-400">
+        <div className="rounded-3xl border border-dashed border-surface-300 px-5 py-8 text-center text-sm text-surface-500 dark:border-surface-700 dark:text-surface-400">
           No encontramos ejercicios con ese filtro.
         </div>
       )}
-    </motion.section>
+    </div>
   );
 }
 
@@ -1122,6 +1115,7 @@ export default function ProgramsPage() {
   const [showEnrollmentsModal, setShowEnrollmentsModal] = useState(false);
   const [showBookingsModal, setShowBookingsModal] = useState(false);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [showExerciseLibraryModal, setShowExerciseLibraryModal] = useState(false);
   const [generateForm, setGenerateForm] = useState<GenerateForm>(createEmptyGenerateForm());
 
   const { data, isLoading, isError } = useQuery<PaginatedResponse<TrainingProgram>>({
@@ -1619,14 +1613,24 @@ export default function ProgramsPage() {
             Diseña programas persistentes con días, foco semanal y una biblioteca propia de ejercicios para la planificación.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreateProgramModal}
-          className="btn-primary"
-        >
-          <Plus size={16} />
-          Nuevo programa
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowExerciseLibraryModal(true)}
+            className="btn-secondary"
+          >
+            <LibraryBig size={16} />
+            Biblioteca de ejercicios
+          </button>
+          <button
+            type="button"
+            onClick={openCreateProgramModal}
+            className="btn-primary"
+          >
+            <Plus size={16} />
+            Nuevo programa
+          </button>
+        </div>
       </motion.div>
 
       {isError ? (
@@ -1680,20 +1684,6 @@ export default function ProgramsPage() {
         </div>
       </motion.div>
 
-      <ExerciseLibraryManager
-        exercises={filteredExerciseLibrary}
-        search={exerciseLibrarySearch}
-        onSearchChange={setExerciseLibrarySearch}
-        form={exerciseLibraryForm}
-        onFormChange={setExerciseLibraryForm}
-        onCreate={() => createExerciseMutation.mutate()}
-        onDelete={(exerciseId) => deleteExerciseMutation.mutate(exerciseId)}
-        isLoading={isExerciseLibraryLoading}
-        isError={isExerciseLibraryError}
-        isCreating={createExerciseMutation.isPending}
-        deletingId={deleteExerciseMutation.isPending ? deleteExerciseMutation.variables : undefined}
-        groupOptions={groupedLibraryOptions}
-      />
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
         {isLoading ? (
@@ -1853,7 +1843,7 @@ export default function ProgramsPage() {
       <Modal
         open={showModal}
         title={form.id ? 'Editar programa' : 'Nuevo programa'}
-        description={modalStep === 1 ? 'Información básica del programa' : modalStep === 2 ? 'Días de entrenamiento y enfoque de cada sesión' : 'Ejercicios por sesión (opcional — podés completar después)'}
+        description={modalStep === 1 ? 'Información básica del programa' : modalStep === 2 ? 'Días de entrenamiento y enfoque de cada sesión' : 'Ejercicios por sesión (opcional — puedes completar después)'}
         onClose={() => {
           if (!saveMutation.isPending) {
             setShowModal(false);
@@ -2013,7 +2003,7 @@ export default function ProgramsPage() {
             <div className="space-y-4">
               {form.schedule.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-8 text-center text-sm text-surface-500 dark:border-surface-700 dark:text-surface-400">
-                  No hay días en el horario. Volvé al paso anterior para agregar días.
+                  No hay días en el horario. Vuelve al paso anterior para agregar días.
                 </div>
               ) : (
                 <>
@@ -2655,6 +2645,29 @@ export default function ProgramsPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={showExerciseLibraryModal}
+        onClose={() => setShowExerciseLibraryModal(false)}
+        title="Biblioteca de ejercicios"
+        description="Catálogo reutilizable para planificar cada programa."
+        size="lg"
+      >
+        <ExerciseLibraryManager
+          exercises={filteredExerciseLibrary}
+          search={exerciseLibrarySearch}
+          onSearchChange={setExerciseLibrarySearch}
+          form={exerciseLibraryForm}
+          onFormChange={setExerciseLibraryForm}
+          onCreate={() => createExerciseMutation.mutate()}
+          onDelete={(exerciseId) => deleteExerciseMutation.mutate(exerciseId)}
+          isLoading={isExerciseLibraryLoading}
+          isError={isExerciseLibraryError}
+          isCreating={createExerciseMutation.isPending}
+          deletingId={deleteExerciseMutation.isPending ? deleteExerciseMutation.variables : undefined}
+          groupOptions={groupedLibraryOptions}
+        />
       </Modal>
     </motion.div>
   );

@@ -1,206 +1,317 @@
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import ScrollReveal from '../animations/ScrollReveal';
 
-const CheckIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12" />
+const CartIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/>
+  </svg>
+);
+const CalIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+  </svg>
+);
+const PhoneIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="5" y="2" width="14" height="20" rx="2.5"/><line x1="12" y1="18" x2="12" y2="18"/>
+  </svg>
+);
+const ChartIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+  </svg>
+);
+const PinIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
   </svg>
 );
 
-const TABS = [
-  {
-    key: 'venta',
-    label: 'Venta y cobranza',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>,
-    chip: 'Venta y cobranza',
-    heading: 'Convierte interés en membresías activas.',
-    body: 'Landing, tienda online, links de pago, checkout público y cupones conectados al mismo panel. Tu gimnasio vende aunque no esté el equipo presente.',
-    features: [
-      { title: 'Planes visibles y actualizados', desc: 'Publica precios desde el panel — el checkout se actualiza automáticamente.' },
-      { title: 'Checkout online integrado', desc: 'Medios de pago conectados vía Webpay con flujo de pago seguro y trazable.' },
-      { title: 'Cupones y promociones', desc: 'Crea descuentos para campañas de Instagram, referidos o temporada.' },
-      { title: 'Links de pago directos', desc: 'Genera un link para un plan específico y compártelo donde quieras.' },
-    ],
-    mockUrl: 'app.nexofitness.cl / ventas',
-    mockContent: (
-      <div>
-        <div className="mock-stat-row">
-          <div className="mock-stat"><div className="mock-stat-num">$842K</div><div className="mock-stat-label">Este mes</div></div>
-          <div className="mock-stat"><div className="mock-stat-num">34</div><div className="mock-stat-label">Ventas hoy</div></div>
-          <div className="mock-stat"><div className="mock-stat-num">92%</div><div className="mock-stat-label">Renovación</div></div>
+/* ─── Card visuals ─────────────────────────────────────── */
+
+const VentaVisual = () => (
+  <div className="bento-venta">
+    <div className="bento-venta-card">
+      <div className="bento-venta-card-head">
+        <div>
+          <span className="bento-eyebrow-mini">Plan Trimestral · CrossFit Norte</span>
+          <strong className="bento-venta-price">$94.990</strong>
         </div>
-        {[['w70','w40','Pagado','chip-brand'],['w55','w40','Pagado','chip-brand'],['w80','w40','Pendiente','chip-accent']].map(([w1,w2,label,chip],i) => (
-          <div key={i} className="mock-row" style={{ marginTop: '.5rem' }}>
-            <div className="mock-avatar" />
-            <div style={{ flex:1, display:'grid', gap:'6px' }}>
-              <div className={`mock-bar ${w1}`} /><div className={`mock-bar ${w2}`} />
+        <span className="hero-mockup-chip mock-chip-ok">Activo</span>
+      </div>
+      <div className="bento-venta-row"><span>Subtotal</span><span>$79.823</span></div>
+      <div className="bento-venta-row"><span>IVA 19%</span><span>$15.167</span></div>
+      <div className="bento-venta-row total"><span>Total</span><span>$94.990</span></div>
+      <button className="bento-venta-cta">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Pagar con Webpay
+      </button>
+    </div>
+    <div className="bento-venta-chips">
+      <span className="bento-chip">Cupones</span>
+      <span className="bento-chip">Links de pago</span>
+      <span className="bento-chip">Checkout 24/7</span>
+      <span className="bento-chip">Webpay</span>
+    </div>
+  </div>
+);
+
+const ClasesVisual = () => {
+  const days = [
+    { d: 'LUN', n: '4' }, { d: 'MAR', n: '5' }, { d: 'MIÉ', n: '6' },
+    { d: 'JUE', n: '7' }, { d: 'VIE', n: '8' }, { d: 'SÁB', n: '9' }, { d: 'DOM', n: '10' },
+  ];
+  type Slot = { day: number; row: number; name: string; meta: string; color: 'violet' | 'pink' | 'amber' | 'orange' | 'cyan' };
+  const slots: Slot[] = [
+    { day: 0, row: 0, name: 'Pilates Reformer', meta: '07:00 · 9/10', color: 'pink' },
+    { day: 1, row: 0, name: 'Yoga Flow', meta: '06:00 · 14/15', color: 'violet' },
+    { day: 1, row: 1, name: 'Funcional', meta: '08:00 · 12/16', color: 'amber' },
+    { day: 2, row: 0, name: 'Pilates Reformer', meta: '07:00 · 4/10', color: 'pink' },
+    { day: 2, row: 1, name: 'HIIT', meta: '14:00 · LLENA', color: 'orange' },
+    { day: 3, row: 0, name: 'Yoga Flow', meta: '06:00 · 13/15', color: 'violet' },
+    { day: 3, row: 1, name: 'Spinning', meta: '14:00 · 10/12', color: 'cyan' },
+    { day: 4, row: 0, name: 'Pilates Reformer', meta: '07:00 · 5/10', color: 'pink' },
+    { day: 4, row: 1, name: 'Funcional', meta: '08:00 · 11/16', color: 'amber' },
+    { day: 5, row: 0, name: 'Yoga Flow', meta: '06:00 · 12/15', color: 'violet' },
+  ];
+  return (
+    <div className="bento-clases">
+      <div className="bento-clases-toolbar">
+        <span className="bento-clases-range">4 may – 10 may</span>
+        <div className="bento-clases-nav">
+          <span>‹</span><span className="active">Hoy</span><span>›</span>
+        </div>
+      </div>
+      <div className="bento-clases-grid">
+        {days.map((d, i) => (
+          <div key={d.d} className="bento-clases-col">
+            <div className="bento-clases-dayhead">
+              <span className="bento-clases-day">{d.d}</span>
+              <span className="bento-clases-num">{d.n}</span>
             </div>
-            <span className={`chip ${chip}`} style={{ fontSize:'.72rem' }}>{label}</span>
+            {[0, 1].map((row) => {
+              const s = slots.find(x => x.day === i && x.row === row);
+              return (
+                <div key={row} className={`bento-clases-slot${s ? ` slot-${s.color}` : ' empty'}`}>
+                  {s && <><strong>{s.name}</strong><span>{s.meta}</span></>}
+                </div>
+              );
+            })}
           </div>
         ))}
-        <div style={{ marginTop:'.5rem' }}><div className="mock-bar brand" style={{ height:'6px', borderRadius:'999px' }} /></div>
       </div>
-    ),
+    </div>
+  );
+};
+
+const MiembroVisual = () => (
+  <div className="bento-miembro">
+    <div className="bento-phone">
+      <div className="bento-phone-notch" />
+      <div className="bento-phone-screen">
+        <div className="bento-phone-topbar">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          <div className="bento-phone-brand">
+            <span className="bento-phone-brand-icon">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17l5-8 4 6 4-9 5 11"/></svg>
+            </span>
+            <div>
+              <strong>Nexo Fitness</strong>
+              <span>Agenda</span>
+            </div>
+          </div>
+        </div>
+        <div className="bento-phone-agenda">
+          <strong>Tu agenda</strong>
+          <div className="bento-phone-stats">
+            <div><span>Clases visibles</span><strong>18</strong></div>
+            <div><span>Tus reservas</span><strong className="ok">0</strong></div>
+            <div><span>Con cupos</span><strong className="warn">17</strong></div>
+          </div>
+        </div>
+        <div className="bento-phone-pills">
+          <span className="active">Todas</span>
+          <span>LUN</span><span>MAR</span><span className="dot">MIÉ</span><span>JUE</span><span>VIE</span>
+        </div>
+        <div className="bento-phone-cards">
+          <div className="bento-phone-classcard">
+            <div className="bento-phone-classcard-time">
+              <strong>14:00</strong><span>p.m.</span>
+            </div>
+            <div className="bento-phone-classcard-info">
+              <strong>HIIT</strong>
+              <span>Providencia</span>
+            </div>
+            <span className="bento-phone-classchip">Libre</span>
+          </div>
+          <div className="bento-phone-classcard">
+            <div className="bento-phone-classcard-time accent2">
+              <strong>14:00</strong><span>p.m.</span>
+            </div>
+            <div className="bento-phone-classcard-info">
+              <strong>Spinning</strong>
+              <span>Ñuñoa</span>
+            </div>
+            <span className="bento-phone-classchip">Libre</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+const ReportesVisual = () => {
+  const segments = [
+    { color: 'var(--brand)', dash: '32 100', offset: 0, label: 'Anual' },
+    { color: '#10b981', dash: '24 100', offset: -32, label: 'Trimestral' },
+    { color: '#a78bfa', dash: '18 100', offset: -56, label: 'Mensual' },
+    { color: '#f97316', dash: '14 100', offset: -74, label: 'Semestral' },
+    { color: '#9ca3af', dash: '12 100', offset: -88, label: 'Solo Clases' },
+  ];
+  return (
+    <div className="bento-reportes">
+      <div className="bento-rep-row">
+        <div className="bento-rep-card">
+          <span className="bento-rep-label">Ingresos membresías</span>
+          <strong className="bento-rep-num">$12.838.690</strong>
+        </div>
+        <div className="bento-rep-card">
+          <span className="bento-rep-label">Renovación</span>
+          <strong className="bento-rep-num up">+18 pts</strong>
+        </div>
+      </div>
+      <div className="bento-rep-donut-card">
+        <div className="bento-rep-donut">
+          <svg viewBox="0 0 36 36" width="76" height="76">
+            <circle cx="18" cy="18" r="15.915" fill="transparent" stroke="rgba(255,255,255,0.06)" strokeWidth="4" />
+            {segments.map((s, i) => (
+              <circle
+                key={i}
+                cx="18" cy="18" r="15.915"
+                fill="transparent"
+                stroke={s.color}
+                strokeWidth="4"
+                strokeDasharray={s.dash}
+                strokeDashoffset={s.offset}
+                transform="rotate(-90 18 18)"
+              />
+            ))}
+          </svg>
+          <div className="bento-rep-donut-center">
+            <strong>Mix</strong>
+            <span>actual</span>
+          </div>
+        </div>
+        <div className="bento-rep-legend">
+          {segments.map((s) => (
+            <div key={s.label}>
+              <span className="bento-rep-legend-dot" style={{ background: s.color }} />
+              {s.label}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SedesVisual = () => (
+  <div className="bento-sedes">
+    {[
+      { name: 'Nexo Las Condes', n: '142 miembros', state: 'Activa', cls: 'ok' },
+      { name: 'Nexo Providencia', n: '98 miembros', state: 'Activa', cls: 'ok' },
+      { name: 'Nexo Ñuñoa', n: '64 miembros', state: 'Inactiva', cls: 'off' },
+    ].map((s) => (
+      <div key={s.name} className="bento-sedes-row">
+        <span className="bento-sedes-pin">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        </span>
+        <div>
+          <strong>{s.name}</strong>
+          <span>{s.n}</span>
+        </div>
+        <span className={`bento-sedes-chip ${s.cls}`}>{s.state}</span>
+      </div>
+    ))}
+  </div>
+);
+
+/* ─── Cards config ─────────────────────────────────────── */
+
+const CARDS = [
+  {
+    key: 'venta',
+    span: 'span-7',
+    icon: <CartIcon />,
+    chip: 'Venta y cobranza',
+    title: 'Tu gimnasio vende cuando no estás.',
+    body: 'Tienda online, links de pago y checkout integrado con Webpay. Cupones, planes y campañas conectadas al mismo panel.',
+    visual: <VentaVisual />,
   },
   {
     key: 'clases',
-    label: 'Agenda y clases',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
-    chip: 'Agenda y clases',
-    heading: 'Programa tu operación sin desordenar al staff.',
-    body: 'Gestiona aforos, sucursales, instructores, programas y reservas desde un calendario coherente. Sin grupos de WhatsApp, sin planillas paralelas.',
-    features: [
-      { title: 'Calendario unificado', desc: 'Clases presenciales, online o híbridas con instructor asignado y aforo definido.' },
-      { title: 'Reservas + lista de espera', desc: 'Los miembros reservan desde la app. Si la clase se llena, entran a lista de espera automática.' },
-      { title: 'Programas con seguimiento', desc: 'Crea programas estructurados con clases asignadas y rastrea el progreso del alumno.' },
-      { title: 'Multi-sede coordinada', desc: 'Clases en distintas ubicaciones con aforos y staff separados por sede.' },
-    ],
-    mockUrl: 'app.nexofitness.cl / clases',
-    mockContent: (
-      <div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:'4px', marginBottom:'.5rem' }}>
-          {['L','M','X','J','V','S','D'].map(d => <div key={d} style={{ textAlign:'center', fontSize:'.72rem', color:'var(--muted)', fontWeight:700 }}>{d}</div>)}
-        </div>
-        <div style={{ display:'grid', gap:'6px' }}>
-          {[['CrossFit 7:00','18/20','var(--brand)'],['Yoga 9:00','8/15','var(--success)'],['HIIT 18:30','20/20','var(--accent)'],['Pilates 20:00','11/12','var(--brand)']].map(([name,cap,color]) => (
-            <div key={name} style={{ padding:'.6rem .75rem', borderRadius:'10px', background:'var(--surface)', border:'1px solid var(--surface-border)', display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'.82rem' }}>
-              <span style={{ fontWeight:700 }}>{name}</span>
-              <span style={{ color, fontWeight:700 }}>{cap}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    ),
+    span: 'span-5',
+    icon: <CalIcon />,
+    chip: 'Clases y agenda',
+    title: 'Calendario que se respeta solo.',
+    body: 'Aforos, instructores y reservas en un calendario único. Lista de espera automática cuando se llena.',
+    visual: <ClasesVisual />,
   },
   {
     key: 'miembro',
-    label: 'App del miembro',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+    span: 'span-5',
+    icon: <PhoneIcon />,
     chip: 'App del miembro',
-    heading: 'Haz que el cliente resuelva todo sin depender del mesón.',
-    body: 'La app del miembro concentra reservas, pagos, QR de acceso, programas y notificaciones. Sin llamadas, sin mensajes al staff.',
-    features: [
-      { title: 'Check-in con QR', desc: 'El miembro abre la app y escanea en la entrada. Sin tarjetas, sin papeles.' },
-      { title: 'Pagos y wallet', desc: 'Renueva planes, paga cuotas y descarga comprobantes desde el celular.' },
-      { title: 'Reservas en 2 taps', desc: 'Ve el calendario, reserva la clase y recibe confirmación inmediata.' },
-      { title: 'Notificaciones y recordatorios', desc: 'Recordatorio de clase, vencimiento de plan y novedades del gimnasio.' },
-    ],
-    mockUrl: 'Mi membresía',
-    mockContent: (
-      <div>
-        <div style={{ textAlign:'center', padding:'1rem', background:'var(--brand-ghost)', borderRadius:'16px', border:'1px solid var(--surface-border)', marginBottom:'.75rem' }}>
-          <div style={{ fontSize:'.75rem', color:'var(--muted)', fontWeight:700, letterSpacing:'.08em', textTransform:'uppercase' }}>QR Check-in</div>
-          <div style={{ width:'72px', height:'72px', margin:'.6rem auto', background:'linear-gradient(135deg,var(--brand-ghost),var(--surface-border))', borderRadius:'10px', display:'grid', placeItems:'center' }}>
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".6" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-              <rect x="14" y="14" width="3" height="3"/><rect x="18" y="14" width="3" height="3"/><rect x="14" y="18" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/>
-            </svg>
-          </div>
-          <div style={{ fontSize:'.8rem', color:'var(--brand)', fontWeight:700 }}>Plan Mensual · Activo</div>
-        </div>
-        <div style={{ display:'grid', gap:'6px' }}>
-          {[['CrossFit mañana 7:00','Reservado','var(--brand)'],['Vence en 8 días','Renovar','var(--accent)']].map(([l,r,c]) => (
-            <div key={l} style={{ padding:'.55rem .75rem', borderRadius:'10px', background:'var(--surface)', border:'1px solid var(--surface-border)', display:'flex', justifyContent:'space-between', fontSize:'.8rem' }}>
-              <span>{l}</span><span style={{ color:c, fontWeight:700 }}>{r}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    ),
+    title: 'Reservas, pagos y QR desde el celular.',
+    body: 'El cliente resuelve todo solo. Sin llamadas al mesón, sin mensajes a las 11 PM.',
+    visual: <MiembroVisual />,
   },
   {
-    key: 'gestion',
-    label: 'Gestión y reportes',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
-    chip: 'Gestión y reportes',
-    heading: 'Decide con datos, no con intuición.',
-    body: 'Revisa ingresos, asistencia, ocupación, campañas y tareas críticas desde el mismo lugar. Visibilidad completa, sin exportar a Excel.',
-    features: [
-      { title: 'Reportes operativos y comerciales', desc: 'Ingresos, ocupación de clases, planes más vendidos y tendencias.' },
-      { title: 'Control de inventario y gastos', desc: 'Registra productos, equipamiento y gastos operativos en el mismo panel.' },
-      { title: 'Permisos por rol', desc: 'Define qué puede ver y hacer cada miembro del equipo: admin, instructor, recepción.' },
-      { title: 'Dashboard en tiempo real', desc: 'Ingreso del día, clases activas y miembros venciendo, todo en la pantalla de inicio.' },
-    ],
-    mockUrl: 'app.nexofitness.cl / dashboard',
-    mockContent: (
-      <div>
-        <div className="mock-stat-row">
-          <div className="mock-stat"><div className="mock-stat-num" style={{ color:'var(--success)' }}>+18%</div><div className="mock-stat-label">Ingresos vs mes anterior</div></div>
-          <div className="mock-stat"><div className="mock-stat-num">247</div><div className="mock-stat-label">Miembros activos</div></div>
-          <div className="mock-stat"><div className="mock-stat-num" style={{ color:'var(--accent)' }}>12</div><div className="mock-stat-label">Vencen esta semana</div></div>
-        </div>
-        <div style={{ display:'grid', gap:'5px', marginTop:'.25rem' }}>
-          {[['Clases hoy','6 / 6','var(--text)'],['Ocupación promedio','84%','var(--brand)'],['Plan más vendido','Trimestral','var(--text)']].map(([l,v,c]) => (
-            <div key={l} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:'.82rem', padding:'.4rem 0', borderBottom:'1px solid var(--surface-border)' }}>
-              <span style={{ color:'var(--muted)' }}>{l}</span><strong style={{ color:c }}>{v}</strong>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginTop:'.5rem' }}><div className="mock-bar brand" style={{ height:'6px' }} /></div>
-      </div>
-    ),
+    key: 'reportes',
+    span: 'span-4',
+    icon: <ChartIcon />,
+    chip: 'Reportes',
+    title: 'Decide con datos, no con intuición.',
+    body: 'Ingresos, ocupación, planes top y vencimientos en un dashboard en vivo.',
+    visual: <ReportesVisual />,
+  },
+  {
+    key: 'sedes',
+    span: 'span-3',
+    icon: <PinIcon />,
+    chip: 'Multi-sede',
+    title: 'Hasta 10 sedes coordinadas.',
+    body: 'Aforos, staff y reportes separados por sucursal en un mismo panel.',
+    visual: <SedesVisual />,
   },
 ];
 
 export default function Features() {
-  const [active, setActive] = useState('venta');
-  const tab = TABS.find(t => t.key === active)!;
-
   return (
     <section className="section" id="features">
       <div className="container">
-        <ScrollReveal className="section-heading">
+        <ScrollReveal className="section-heading section-heading-centered">
           <span className="eyebrow"><span className="eyebrow-dot" />Lo que ordena Nexo</span>
           <h2>Un stack pensado para vender mejor y operar sin fricción.</h2>
-          <p>No es solo un sistema de agenda. Es la capa comercial y operativa que conecta a tu equipo con el cliente en cada punto del recorrido.</p>
+          <p>No es solo agenda. Es la capa comercial y operativa que conecta a tu equipo con el cliente en cada punto del recorrido.</p>
         </ScrollReveal>
 
-        <ScrollReveal className="tabs-nav" delay={0.1}>
-          {TABS.map(t => (
-            <button
-              key={t.key}
-              className={`tab-btn${active === t.key ? ' active' : ''}`}
-              onClick={() => setActive(t.key)}
-            >
-              {t.icon}
-              {t.label}
-            </button>
+        <div className="bento-grid">
+          {CARDS.map((c, i) => (
+            <ScrollReveal key={c.key} delay={i * 0.06} className={`bento-card-wrap ${c.span}`}>
+              <article className="bento-card">
+                <header className="bento-card-head">
+                  <span className="bento-card-icon">{c.icon}</span>
+                  <span className="bento-card-chip">{c.chip}</span>
+                </header>
+                <div className="bento-card-body">
+                  <h3>{c.title}</h3>
+                  <p>{c.body}</p>
+                </div>
+                <div className="bento-card-visual">{c.visual}</div>
+                <div className="bento-card-glow" aria-hidden />
+              </article>
+            </ScrollReveal>
           ))}
-        </ScrollReveal>
-
-        <div className="tab-panels">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={active}
-              className="tab-panel active"
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.32, ease: 'easeOut' }}
-            >
-              <div className="tab-content">
-                <span className="chip chip-brand">{tab.chip}</span>
-                <h3>{tab.heading}</h3>
-                <p>{tab.body}</p>
-                <div className="feature-list">
-                  {tab.features.map(({ title, desc }) => (
-                    <div key={title} className="feature-list-item">
-                      <span className="fi-icon"><CheckIcon /></span>
-                      <div><strong>{title}</strong><p>{desc}</p></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="tab-visual card">
-                <div className="tab-visual-chrome">
-                  <span className="chrome-dot" /><span className="chrome-dot" /><span className="chrome-dot" />
-                  <span className="chrome-url">{tab.mockUrl}</span>
-                </div>
-                <div className="tab-visual-body">{tab.mockContent}</div>
-              </div>
-            </motion.div>
-          </AnimatePresence>
         </div>
       </div>
     </section>

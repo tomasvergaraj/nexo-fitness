@@ -717,8 +717,10 @@ export default function AgendaTab() {
                                       <XCircle size={14} />
                                       Cancelar reserva
                                     </button>
-                                  ) : !hasReservation && (gymClass.status === 'scheduled' ||
-                                    gymClass.status === 'in_progress') ? (
+                                  ) : !hasReservation &&
+                                    !isPast &&
+                                    !isInProgress &&
+                                    gymClass.status === 'scheduled' ? (
                                     <button
                                       type="button"
                                       disabled={
@@ -736,6 +738,10 @@ export default function AgendaTab() {
                                           ? 'Unirse a lista de espera'
                                           : 'Reservar clase'}
                                     </button>
+                                  ) : !hasReservation && (isPast || isInProgress) ? (
+                                    <span className="text-xs text-surface-500 dark:text-surface-400">
+                                      {isPast ? 'Clase finalizada' : 'Clase en curso'}
+                                    </span>
                                   ) : null}
 
                                   {gymClass.online_link ? (

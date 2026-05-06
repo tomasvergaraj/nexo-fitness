@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Plus, Check, Star, Edit2, ToggleLeft, ToggleRight, Tag } from 'lucide-react';
+import { Plus, Check, Star, Edit2, ToggleLeft, ToggleRight, Tag, Trash2, Gift } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
 import { plansApi } from '@/services/api';
@@ -23,6 +23,7 @@ type PlanFormState = {
   max_reservations_per_week: string;
   max_reservations_per_month: string;
   is_featured: boolean;
+  is_trial: boolean;
   auto_renew: boolean;
   is_active: boolean;
 };
@@ -142,6 +143,7 @@ const emptyForm: PlanFormState = {
   max_reservations_per_week: '',
   max_reservations_per_month: '',
   is_featured: false,
+  is_trial: false,
   auto_renew: true,
   is_active: true,
 };
@@ -162,6 +164,7 @@ function toFormState(plan?: Plan): PlanFormState {
     max_reservations_per_week: plan.max_reservations_per_week ? String(plan.max_reservations_per_week) : '',
     max_reservations_per_month: plan.max_reservations_per_month ? String(plan.max_reservations_per_month) : '',
     is_featured: plan.is_featured,
+    is_trial: plan.is_trial ?? false,
     auto_renew: plan.auto_renew,
     is_active: plan.is_active,
   };
@@ -171,6 +174,7 @@ export default function PlansPage() {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<PlanFormState>(emptyForm);
+  const [planToDelete, setPlanToDelete] = useState<Plan | null>(null);
 
   const { data, isLoading, isError } = useQuery<PaginatedResponse<Plan>>({
     queryKey: ['plans'],
@@ -193,6 +197,7 @@ export default function PlansPage() {
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
         max_reservations_per_month: form.max_reservations_per_month ? Number(form.max_reservations_per_month) : null,
         is_featured: form.is_featured,
+        is_trial: form.is_trial,
         auto_renew: duration.auto_renew,
       });
       return response.data;
@@ -223,6 +228,7 @@ export default function PlansPage() {
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
         max_reservations_per_month: form.max_reservations_per_month ? Number(form.max_reservations_per_month) : null,
         is_featured: form.is_featured,
+        is_trial: form.is_trial,
         auto_renew: duration.auto_renew,
         is_active: form.is_active,
       });
@@ -250,6 +256,20 @@ export default function PlansPage() {
     },
     onError: (error: any) => {
       toast.error(getApiError(error, 'No se pudo cambiar el estado del plan'));
+    },
+  });
+
+  const deletePlan = useMutation({
+    mutationFn: async (planId: string) => {
+      await plansApi.delete(planId);
+    },
+    onSuccess: () => {
+      toast.success('Plan eliminado');
+      setPlanToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ['plans'] });
+    },
+    onError: (error: any) => {
+      toast.error(getApiError(error, 'No se pudo eliminar el plan'));
     },
   });
 
@@ -321,6 +341,11 @@ export default function PlansPage() {
                 <span className={cn('badge', plan.is_active ? 'badge-success' : 'badge-warning')}>
                   {plan.is_active ? 'Activo' : 'Inactivo'}
                 </span>
+                {plan.is_trial ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                    <Gift size={10} /> Pase de prueba
+                  </span>
+                ) : null}
               </div>
               <p className={cn('text-sm', plan.id === featuredPlanId ? 'text-white/75' : 'text-surface-500')}>
                 {plan.description || 'Sin descripción todavía.'}
@@ -415,6 +440,19 @@ export default function PlansPage() {
                   aria-label={plan.is_active ? 'Desactivar plan' : 'Activar plan'}
                 >
                   {plan.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                </button>
+              </Tooltip>
+              <Tooltip content="Eliminar este plan">
+                <button
+                  type="button"
+                  onClick={() => setPlanToDelete(plan)}
+                  className={cn(
+                    'rounded-xl p-2.5 transition-colors',
+                    plan.id === featuredPlanId ? 'bg-white/15 hover:bg-red-500/30 text-white' : 'bg-surface-100 hover:bg-red-100 dark:bg-surface-800 dark:hover:bg-red-900/30 text-surface-500 hover:text-red-600 dark:hover:text-red-400',
+                  )}
+                  aria-label="Eliminar plan"
+                >
+                  <Trash2 size={16} />
                 </button>
               </Tooltip>
             </div>
@@ -633,18 +671,32 @@ export default function PlansPage() {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <SettingToggleCard
               title="Destacar plan"
               description="Se mostrará como recomendado frente a los demás planes."
               checked={form.is_featured}
+              disabled={form.is_trial}
               onChange={(nextValue) => setForm((current) => ({ ...current, is_featured: nextValue }))}
             />
             <SettingToggleCard
+              title="Pase de prueba"
+              description="Solo asignación manual. No aparece en el checkout público ni cobra."
+              checked={form.is_trial}
+              onChange={(nextValue) =>
+                setForm((current) => ({
+                  ...current,
+                  is_trial: nextValue,
+                  is_featured: nextValue ? false : current.is_featured,
+                  auto_renew: nextValue ? false : current.auto_renew,
+                }))
+              }
+            />
+            <SettingToggleCard
               title="Renovación automática"
-              description={form.duration_preset === 'perpetual' ? 'No aplica a planes perpetuos.' : 'El plan se renueva automáticamente al vencer.'}
-              checked={durationPreview.auto_renew}
-              disabled={form.duration_preset === 'perpetual'}
+              description={form.duration_preset === 'perpetual' ? 'No aplica a planes perpetuos.' : form.is_trial ? 'No aplica a pases de prueba.' : 'El plan se renueva automáticamente al vencer.'}
+              checked={durationPreview.auto_renew && !form.is_trial}
+              disabled={form.duration_preset === 'perpetual' || form.is_trial}
               onChange={(nextValue) => setForm((current) => ({ ...current, auto_renew: nextValue }))}
             />
             <SettingToggleCard
@@ -666,6 +718,28 @@ export default function PlansPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(planToDelete)}
+        title="Eliminar plan"
+        description={`¿Eliminar "${planToDelete?.name}"? Esta acción no se puede deshacer.`}
+        onClose={() => setPlanToDelete(null)}
+        size="sm"
+      >
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className="btn-secondary" onClick={() => setPlanToDelete(null)}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+            disabled={deletePlan.isPending}
+            onClick={() => planToDelete && deletePlan.mutate(planToDelete.id)}
+          >
+            {deletePlan.isPending ? 'Eliminando...' : 'Eliminar'}
+          </button>
+        </div>
       </Modal>
     </motion.div>
   );

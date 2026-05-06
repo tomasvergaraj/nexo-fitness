@@ -414,8 +414,16 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
 
   const reserveMutation = useMutation({
     mutationFn: async (gymClassId: string) => reservationsApi.create({ gym_class_id: gymClassId }),
-    onSuccess: async () => {
-      toast.success('Reserva creada.');
+    onSuccess: async (response) => {
+      const status = response?.data?.status;
+      if (status === 'waitlisted') {
+        const pos = response?.data?.waitlist_position;
+        toast.success(
+          pos ? `En lista de espera (posición ${pos}).` : 'En lista de espera.',
+        );
+      } else {
+        toast.success('Reserva confirmada.');
+      }
       await refreshMemberQueries(queryClient);
     },
     onError: (error: any) => toast.error(getApiError(error, 'No se pudo reservar la clase.')),

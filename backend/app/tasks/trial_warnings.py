@@ -28,7 +28,7 @@ def send_trial_warning_emails(self) -> dict:
 
 async def _run_trial_warnings() -> dict:
     from sqlalchemy import select
-    from app.core.database import AsyncSessionLocal
+    from app.tasks._db import task_session
     from app.core.config import get_settings
     from app.models.tenant import Tenant, TenantStatus
     from app.models.user import User, UserRole
@@ -48,7 +48,7 @@ async def _run_trial_warnings() -> dict:
     skipped = 0
     errors = 0
 
-    async with AsyncSessionLocal() as db:
+    async with task_session() as db:
         # Solo tenants en trial activos
         result = await db.execute(
             select(Tenant).where(

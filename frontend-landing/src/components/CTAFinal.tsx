@@ -13,17 +13,19 @@ export default function CTAFinal() {
       <div className="container">
         <ScrollReveal>
           <div className="cta-card">
+            <div className="cta-card-glow" aria-hidden />
             <span className="eyebrow"><span className="eyebrow-dot" />Listo para activar</span>
-            <h2 className="cta-headline">Tu gimnasio merece operar como un negocio moderno.</h2>
-            <p className="cta-sub">Activa tu cuenta, configura tu gimnasio en minutos y empieza a vender desde el día 1. Sin tarjeta, sin permanencia.</p>
+            <h2 className="cta-headline">Empieza hoy.<br /><span className="cta-headline-accent">Vende mañana.</span></h2>
+            <p className="cta-sub">14 días gratis, sin tarjeta. Sin permanencia. Cancela cuando quieras.</p>
             <div className="cta-actions">
               <GlowButton href="https://app.nexofitness.cl/register" size="lg">
                 <ChevronIcon />
-                Activa gratis por 14 días
+                Activar prueba gratis
               </GlowButton>
-              <a className="btn btn-secondary btn-lg" href="mailto:contacto@nexosoftware.cl">Contactar</a>
             </div>
-            <p className="cta-note">Sin tarjeta · Sin permanencia · Soporte desde el día 1</p>
+            <p className="cta-note">
+              ¿Dudas? <a href="mailto:contacto@nexosoftware.cl">Escríbenos</a> o agenda una demo de 15 min.
+            </p>
           </div>
         </ScrollReveal>
       </div>

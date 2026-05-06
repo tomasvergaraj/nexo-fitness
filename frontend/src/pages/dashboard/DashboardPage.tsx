@@ -64,7 +64,7 @@ export default function DashboardPage() {
   const canViewSubscription = user?.role === 'owner' || user?.role === 'admin';
 
   if (user?.role === 'superadmin') {
-    return <Navigate to="/platform/tenants" replace />;
+    return <Navigate to="/platform/dashboard" replace />;
   }
 
   const { data, error, isLoading, isError } = useQuery<DashboardMetrics>({

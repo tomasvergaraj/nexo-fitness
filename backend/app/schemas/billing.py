@@ -172,6 +172,10 @@ class ReactivateRequest(BaseModel):
 
 class AdminTenantBillingResponse(TenantBillingResponse):
     owner_user_id: Optional[UUID] = None
+    health_score: Optional[float] = None
+    health_level: Optional[str] = None
+    health_factors: Optional[List[dict]] = None
+    feature_flags_full: Optional[dict] = None
 
 
 class PlatformPromoCodeResponse(BaseModel):

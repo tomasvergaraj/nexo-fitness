@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { authApi, billingApi } from '@/services/api';
 import { cn, getDefaultRouteForRole } from '@/utils';
 import { buildAdminUrl, buildAppUrl, getCurrentHostKind } from '@/utils/hosts';
+import { loadTrustedDeviceToken } from '@/utils/trustedDevice';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -104,7 +105,28 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await authApi.login(email, password);
+      const { data } = await authApi.login(email, password, loadTrustedDeviceToken());
+
+      // 2FA gate — no tokens issued, redirect to verify or forced setup
+      if (data.next_action === 'mfa_required' && data.mfa_token) {
+        navigate('/auth/mfa', {
+          state: { mfa_token: data.mfa_token, email },
+          replace: true,
+        });
+        return;
+      }
+      if (data.next_action === '2fa_setup_required' && data.mfa_token) {
+        navigate('/auth/setup-2fa', {
+          state: { mfa_token: data.mfa_token, forced: true, email },
+          replace: true,
+        });
+        return;
+      }
+
+      if (!data.user || !data.access_token || !data.refresh_token) {
+        throw new Error('Respuesta de login inválida');
+      }
+
       const resolvedEmail = data.user.email || email;
 
       if (hostKind === 'admin' && data.user.role !== 'superadmin') {
@@ -119,10 +141,8 @@ export default function LoginPage() {
         return;
       }
 
-      // Siempre guardar auth — el login siempre retorna tokens válidos
       setAuth(data.user, data.access_token, data.refresh_token);
 
-      // Si hay acción de billing requerida → siempre ir a BillingWallPage primero
       if (data.next_action) {
         const params = new URLSearchParams({ status: data.billing_status ?? 'expired' });
         navigate(`/billing/expired?${params.toString()}`, { replace: true });

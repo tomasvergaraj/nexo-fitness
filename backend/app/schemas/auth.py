@@ -12,13 +12,14 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
+    device_token: Optional[str] = Field(default=None, max_length=128)
 
 
 class LoginResponse(BaseModel):
-    access_token: str
-    refresh_token: str
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
-    user: "UserResponse"
+    user: Optional["UserResponse"] = None
     # Billing wall — populated when the tenant is expired/suspended
     billing_status: Optional[str] = None
     next_action: Optional[str] = None
@@ -26,6 +27,67 @@ class LoginResponse(BaseModel):
     widget_token: Optional[str] = None
     checkout_provider: Optional[str] = None
     billing_detail: Optional[str] = None
+    # 2FA — populated when the user must complete or set up MFA
+    mfa_token: Optional[str] = None
+    mfa_attempts_remaining: Optional[int] = None
+    # Issued ONCE when remember_device=True on a successful MFA verify
+    trusted_device_token: Optional[str] = None
+
+
+class TwoFactorSetupResponse(BaseModel):
+    """Returned by /auth/2fa/setup. Secret + URI shown ONCE during enrollment."""
+    secret: str
+    provisioning_uri: str
+    issuer: str
+    account: str
+
+
+class TwoFactorVerifySetupRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=10)
+
+
+class TwoFactorVerifySetupResponse(BaseModel):
+    detail: str
+    backup_codes: List[str]  # plaintext, shown once
+
+
+class TwoFactorDisableRequest(BaseModel):
+    password: str = Field(min_length=6, max_length=128)
+    code: str = Field(min_length=6, max_length=20)  # TOTP or backup
+
+
+class TwoFactorRegenerateRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=20)
+
+
+class TwoFactorRegenerateResponse(BaseModel):
+    backup_codes: List[str]
+
+
+class TwoFactorStatusResponse(BaseModel):
+    enabled: bool
+    verified_at: Optional[datetime] = None
+    backup_codes_remaining: int = 0
+
+
+class MfaVerifyRequest(BaseModel):
+    mfa_token: str = Field(min_length=10, max_length=128)
+    code: str = Field(min_length=6, max_length=20)
+    is_backup_code: bool = False
+    remember_device: bool = False
+    device_label: Optional[str] = Field(default=None, max_length=100)
+
+
+class TrustedDeviceResponse(BaseModel):
+    id: UUID
+    label: Optional[str] = None
+    user_agent: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    expires_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class RefreshRequest(BaseModel):

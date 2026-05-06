@@ -14,8 +14,10 @@ celery = Celery(
         "app.tasks.campaigns",
         "app.tasks.push_receipts",
         "app.tasks.trial_warnings",
+        "app.tasks.license_expiry_warnings",
         "app.tasks.membership_alerts",
         "app.tasks.class_reminders",
+        "app.tasks.class_status_updater",
         "app.tasks.auto_renewal",
     ],
 )
@@ -40,6 +42,11 @@ celery.conf.update(
             "task": "app.tasks.trial_warnings.send_trial_warning_emails",
             "schedule": 86400,  # cada 24 horas
         },
+        # Avisos de vencimiento de licencia (planes pagados): una vez al día
+        "send-license-expiry-emails": {
+            "task": "app.tasks.license_expiry_warnings.send_license_expiry_emails",
+            "schedule": 86400,  # cada 24 horas
+        },
         # Alertas de membresía por vencer: una vez al día a las 10am UTC (≈ 7am Chile)
         "send-membership-expiry-alerts": {
             "task": "app.tasks.membership_alerts.send_membership_expiry_alerts",
@@ -49,6 +56,11 @@ celery.conf.update(
         "send-class-reminders": {
             "task": "app.tasks.class_reminders.send_class_reminders",
             "schedule": 900,  # cada 15 minutos
+        },
+        # Sincroniza estado de clases (scheduled -> in_progress -> completed): cada 5 min
+        "sync-class-statuses": {
+            "task": "app.tasks.class_status_updater.sync_class_statuses",
+            "schedule": 300,
         },
         # Renovación automática de membresías: una vez al día a las 8am UTC (≈ 5am Chile)
         "process-auto-renewals": {

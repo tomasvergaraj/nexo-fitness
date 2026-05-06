@@ -5,12 +5,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy import select, func, or_, cast, Date, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles, require_plans_write
+from app.core.exceptions import PlanLimitReachedError
 from app.core.security import hash_password
 from app.models.user import User, UserRole
 from app.models.business import Plan, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
@@ -20,7 +23,8 @@ from app.schemas.business import (
     PaymentCreate, PaymentResponse,
     PaginatedResponse,
 )
-from app.services.tenant_quota_service import assert_can_create_client
+from app.services import client_import_service
+from app.services.tenant_quota_service import assert_can_create_client, get_tenant_usage_snapshot
 from app.services.membership_sale_service import apply_payment_membership_snapshot, resolve_membership_timeline
 from app.services.user_account_service import purge_user_account
 
@@ -209,6 +213,354 @@ async def create_client(
     await db.flush()
     await db.refresh(user)
     return UserResponse.model_validate(user)
+
+
+# ─── Bulk import (template / preview / commit) ───────────────────────────────
+
+
+class ImportPreviewResponse(BaseModel):
+    import_token: str
+    total_rows: int
+    valid_count: int
+    error_count: int
+    valid_preview: list[dict]
+    errors: list[dict]
+    quota_remaining: int
+    quota_max: int
+    quota_blocked: bool
+
+
+class ImportCommitRequest(BaseModel):
+    import_token: str
+
+
+class ImportCommitResponse(BaseModel):
+    created: int
+    skipped: int
+
+
+@clients_router.get("/export")
+async def export_clients(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    search: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    birthday_month: bool = Query(False),
+    churn_risk: Optional[str] = Query(None, pattern="^(high|medium|low)$"),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
+):
+    base = select(User).where(User.tenant_id == ctx.tenant_id, User.role == UserRole.CLIENT)
+
+    if search:
+        search_filter = or_(
+            User.first_name.ilike(f"%{search}%"),
+            User.last_name.ilike(f"%{search}%"),
+            User.email.ilike(f"%{search}%"),
+            User.phone.ilike(f"%{search}%"),
+        )
+        base = base.where(search_filter)
+
+    if status_filter == "active":
+        base = base.where(User.is_active == True)
+    elif status_filter == "inactive":
+        base = base.where(User.is_active == False)
+
+    if birthday_month:
+        current_month = datetime.now(timezone.utc).month
+        base = base.where(
+            User.date_of_birth != None,
+            extract("month", User.date_of_birth) == current_month,
+        )
+
+    clients = (
+        await db.execute(base.order_by(User.first_name.asc(), User.last_name.asc()).limit(5000))
+    ).scalars().all()
+
+    if not clients:
+        raise HTTPException(status_code=404, detail="No hay clientes para exportar con esos filtros")
+
+    client_ids = [c.id for c in clients]
+
+    membership_rows = (
+        await db.execute(
+            select(Membership)
+            .where(
+                Membership.tenant_id == ctx.tenant_id,
+                Membership.user_id.in_(client_ids),
+            )
+            .order_by(Membership.starts_at.desc(), Membership.created_at.desc())
+        )
+    ).scalars().all()
+
+    memberships_by_user: dict[UUID, list[Membership]] = {}
+    for m in membership_rows:
+        memberships_by_user.setdefault(m.user_id, []).append(m)
+
+    latest_membership: dict[UUID, Membership] = {}
+    for user_id, mems in memberships_by_user.items():
+        state = resolve_membership_timeline(mems, persist=False)
+        if state.current_membership:
+            latest_membership[user_id] = state.current_membership
+
+    plan_ids = list({m.plan_id for m in latest_membership.values() if m.plan_id})
+    plans_by_id = {
+        p.id: p
+        for p in (await db.execute(select(Plan).where(Plan.id.in_(plan_ids)))).scalars().all()
+    } if plan_ids else {}
+
+    last_checkin_rows = (
+        await db.execute(
+            select(CheckIn.user_id, func.max(CheckIn.checked_in_at).label("last_at"))
+            .where(CheckIn.tenant_id == ctx.tenant_id, CheckIn.user_id.in_(client_ids))
+            .group_by(CheckIn.user_id)
+        )
+    ).all()
+    last_checkin_by_user = {row.user_id: row.last_at for row in last_checkin_rows}
+
+    risk_label_map = {"high": "Alto", "medium": "Medio", "low": "Bajo"}
+    membership_status_label = {
+        "active": "Activa",
+        "expired": "Vencida",
+        "cancelled": "Cancelada",
+        "frozen": "Congelada",
+        "pending": "Pendiente",
+    }
+
+    def risk_for(membership: Optional[Membership], last_at) -> str:
+        now_ = datetime.now(timezone.utc)
+        if not membership or (
+            hasattr(membership.status, "value") and membership.status.value in ("expired", "cancelled")
+        ):
+            return "high"
+        if last_at is None:
+            return "high"
+        lc = last_at if last_at.tzinfo else last_at.replace(tzinfo=timezone.utc)
+        days = (now_ - lc).days
+        if days >= 30:
+            return "high"
+        if days >= 14:
+            return "medium"
+        return "low"
+
+    records: list[dict] = []
+    for c in clients:
+        membership = latest_membership.get(c.id)
+        plan = plans_by_id.get(membership.plan_id) if membership and membership.plan_id else None
+        last_ci = last_checkin_by_user.get(c.id)
+        risk = risk_for(membership, last_ci)
+
+        if churn_risk and risk != churn_risk:
+            continue
+
+        try:
+            tags_list = json.loads(c.tags) if c.tags else []
+            if not isinstance(tags_list, list):
+                tags_list = []
+        except (json.JSONDecodeError, TypeError):
+            tags_list = []
+
+        records.append({
+            "first_name": c.first_name,
+            "last_name": c.last_name,
+            "email": c.email,
+            "phone": c.phone,
+            "date_of_birth": c.date_of_birth,
+            "gender": c.gender,
+            "emergency_contact": c.emergency_contact,
+            "emergency_phone": c.emergency_phone,
+            "medical_notes": c.medical_notes,
+            "tags": tags_list,
+            "is_active": c.is_active,
+            "plan_name": plan.name if plan else None,
+            "membership_status": membership_status_label.get(
+                membership.status.value if membership else "", ""
+            ) if membership else "Sin membresía",
+            "membership_expires_at": membership.expires_at if membership else None,
+            "churn_risk_label": risk_label_map.get(risk, ""),
+            "last_checkin_at": last_ci,
+            "created_at": c.created_at,
+        })
+
+    if not records:
+        raise HTTPException(status_code=404, detail="No hay clientes para exportar con esos filtros")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    if format == "csv":
+        body = client_import_service.build_export_csv(records)
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="clientes_nexo_{today}.csv"'},
+        )
+    body = client_import_service.build_export_xlsx(records)
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="clientes_nexo_{today}.xlsx"'},
+    )
+
+
+@clients_router.get("/import/template")
+async def download_import_template(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    if format == "csv":
+        body = client_import_service.build_template_csv()
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="plantilla_clientes.csv"'},
+        )
+    body = client_import_service.build_template_xlsx()
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="plantilla_clientes.xlsx"'},
+    )
+
+
+@clients_router.post("/import/errors-export")
+async def download_import_errors(
+    payload: dict,
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    errors = payload.get("errors") or []
+    body = client_import_service.build_errors_xlsx(errors)
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="errores_importacion.xlsx"'},
+    )
+
+
+@clients_router.post("/import/preview", response_model=ImportPreviewResponse)
+async def preview_import(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    if not ctx.tenant:
+        raise HTTPException(status_code=403, detail="No hay tenant activo para importar clientes")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="El archivo está vacío")
+    if len(raw) > client_import_service.MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="El archivo excede los 2 MB")
+
+    filename = file.filename or ""
+    if not filename.lower().endswith((".xlsx", ".csv")):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos XLSX o CSV")
+
+    try:
+        headers, data_rows = client_import_service.parse_workbook(raw, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not data_rows:
+        raise HTTPException(status_code=400, detail="El archivo no tiene filas de datos")
+    if len(data_rows) > client_import_service.MAX_ROWS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"El archivo tiene {len(data_rows)} filas. El máximo permitido es {client_import_service.MAX_ROWS}.",
+        )
+
+    candidate_emails = set()
+    for row in data_rows:
+        for cell in row:
+            if isinstance(cell, str) and "@" in cell:
+                candidate_emails.add(cell.strip().lower())
+
+    existing = await client_import_service._existing_emails(db, candidate_emails)
+    valid_rows, errors = client_import_service.validate_rows(
+        headers,
+        data_rows,
+        existing_emails=existing,
+    )
+
+    snapshot = await get_tenant_usage_snapshot(db, ctx.tenant.id, tenant=ctx.tenant)
+    quota_blocked = len(valid_rows) > snapshot.remaining_client_slots
+
+    token = await client_import_service.store_preview(ctx.tenant.id, valid_rows)
+
+    return ImportPreviewResponse(
+        import_token=token,
+        total_rows=len(data_rows),
+        valid_count=len(valid_rows),
+        error_count=len(errors),
+        valid_preview=[
+            {
+                "row": r.row,
+                "first_name": r.first_name,
+                "last_name": r.last_name,
+                "email": r.email,
+                "phone": r.phone,
+                "date_of_birth": r.date_of_birth,
+                "gender": r.gender,
+                "tags": r.tags,
+            }
+            for r in valid_rows[:50]
+        ],
+        errors=[{"row": e.row, "column": e.column, "message": e.message} for e in errors],
+        quota_remaining=snapshot.remaining_client_slots,
+        quota_max=snapshot.max_members,
+        quota_blocked=quota_blocked,
+    )
+
+
+@clients_router.post("/import/commit", response_model=ImportCommitResponse)
+async def commit_import(
+    body: ImportCommitRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    if not ctx.tenant:
+        raise HTTPException(status_code=403, detail="No hay tenant activo para importar clientes")
+
+    rows = await client_import_service.load_preview(ctx.tenant.id, body.import_token)
+    if rows is None:
+        raise HTTPException(
+            status_code=404,
+            detail="La previsualización ya no está disponible. Vuelve a subir el archivo.",
+        )
+    if not rows:
+        raise HTTPException(status_code=400, detail="No hay filas válidas para importar")
+
+    snapshot = await get_tenant_usage_snapshot(db, ctx.tenant.id, tenant=ctx.tenant)
+    if len(rows) > snapshot.remaining_client_slots:
+        raise PlanLimitReachedError(
+            (
+                f"Tu plan {snapshot.plan_key} permite {snapshot.max_members} clientes activos "
+                f"y solo tienes {snapshot.remaining_client_slots} cupos disponibles. "
+                f"Este archivo intenta crear {len(rows)} clientes."
+            ),
+            resource="clients",
+            current_usage=snapshot.active_clients,
+            limit=snapshot.max_members,
+            plan_key=snapshot.plan_key,
+        )
+
+    existing = await client_import_service._existing_emails(db, {r.email for r in rows})
+    created = 0
+    skipped = 0
+
+    for row in rows:
+        if row.email in existing:
+            skipped += 1
+            continue
+        kwargs = client_import_service.row_to_user_kwargs(row, ctx.tenant_id)
+        kwargs["hashed_password"] = hash_password(client_import_service.generate_password())
+        db.add(User(**kwargs))
+        created += 1
+
+    await db.flush()
+    await client_import_service.discard_preview(body.import_token)
+
+    return ImportCommitResponse(created=created, skipped=skipped)
 
 
 @clients_router.get("/{client_id}", response_model=UserDetailResponse)
@@ -504,6 +856,7 @@ async def create_plan(
         allowed_branches=json.dumps(data.allowed_branches) if data.allowed_branches else None,
         benefits=json.dumps(data.benefits) if data.benefits else None,
         is_featured=data.is_featured,
+        is_trial=data.is_trial,
         auto_renew=data.auto_renew,
     )
     db.add(plan)
@@ -533,6 +886,33 @@ async def update_plan(
     await db.flush()
     await db.refresh(plan)
     return PlanResponse.model_validate(plan)
+
+
+@plans_router.delete("/{plan_id}", status_code=204)
+async def delete_plan(
+    plan_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_plans_write()),
+):
+    result = await db.execute(
+        select(Plan).where(Plan.id == plan_id, Plan.tenant_id == ctx.tenant_id, Plan.deleted_at == None)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
+
+    active_memberships = await db.execute(
+        select(func.count(Membership.id)).where(
+            Membership.plan_id == plan_id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+    )
+    if active_memberships.scalar_one() > 0:
+        raise HTTPException(status_code=409, detail="No se puede eliminar un plan con membresías activas")
+
+    plan.deleted_at = datetime.now(timezone.utc)
+    await db.flush()
 
 
 # ─── Payments Router ──────────────────────────────────────────────────────────

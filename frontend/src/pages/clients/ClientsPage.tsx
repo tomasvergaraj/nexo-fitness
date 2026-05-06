@@ -13,7 +13,9 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileSpreadsheet,
   FileText,
+  Loader2,
   History,
   KeyRound,
   Mail,
@@ -35,6 +37,8 @@ import {
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
 import MembershipCardModal from '@/components/clients/MembershipCardModal';
+import ImportClientsModal from '@/components/clients/ImportClientsModal';
+import TagInput from '@/components/ui/TagInput';
 import { billingApi, clientsApi, membershipsApi, notificationsApi, plansApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
@@ -64,6 +68,11 @@ type ClientFormState = {
   phone: string;
   password: string;
   date_of_birth: string;
+  gender: string;
+  emergency_contact: string;
+  emergency_phone: string;
+  medical_notes: string;
+  tags: string[];
 };
 
 type ClientEditFormState = {
@@ -72,6 +81,11 @@ type ClientEditFormState = {
   email: string;
   phone: string;
   date_of_birth: string;
+  gender: string;
+  emergency_contact: string;
+  emergency_phone: string;
+  medical_notes: string;
+  tags: string[];
 };
 
 const emptyForm: ClientFormState = {
@@ -81,6 +95,11 @@ const emptyForm: ClientFormState = {
   phone: '',
   password: 'Client123!',
   date_of_birth: '',
+  gender: '',
+  emergency_contact: '',
+  emergency_phone: '',
+  medical_notes: '',
+  tags: [],
 };
 
 const clientCreateRoles: UserRole[] = ['owner', 'admin', 'reception'];
@@ -232,21 +251,14 @@ function formatMembershipSaleSource(source?: string | null) {
   }
 }
 
-function downloadCsv(filename: string, rows: string[][]) {
-  const csv = rows
-    .map((row) =>
-      row
-        .map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`)
-        .join(','),
-    )
-    .join('\n');
-
-  const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8;' });
+function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
+  document.body.appendChild(link);
   link.click();
+  link.remove();
   URL.revokeObjectURL(url);
 }
 
@@ -267,13 +279,22 @@ export default function ClientsPage() {
     email: '',
     phone: '',
     date_of_birth: '',
+    gender: '',
+    emergency_contact: '',
+    emergency_phone: '',
+    medical_notes: '',
+    tags: [],
   });
+  const [editClientLoading, setEditClientLoading] = useState(false);
+  const [editClientOriginalTags, setEditClientOriginalTags] = useState<string[]>([]);
   const [resetPasswordClient, setResetPasswordClient] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [notificationForm, setNotificationForm] = useState<NotificationForm>(createNotificationForm());
   const [manualSaleForm, setManualSaleForm] = useState<ManualSaleForm>(createManualSaleForm());
+  const [trialPassOnly, setTrialPassOnly] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [lastDispatchResult, setLastDispatchResult] = useState<NotificationDispatchResponse | null>(null);
   const [lastDispatchUsedPush, setLastDispatchUsedPush] = useState<boolean | null>(null);
   const [freezeClient, setFreezeClient] = useState<User | null>(null);
@@ -333,17 +354,35 @@ export default function ClientsPage() {
     staleTime: 60_000,
   });
 
-  const availablePlans = availablePlansData?.items ?? [];
+  const allAvailablePlans = availablePlansData?.items ?? [];
+  const availablePlans = useMemo(
+    () => (trialPassOnly ? allAvailablePlans.filter((plan) => plan.is_trial) : allAvailablePlans.filter((plan) => !plan.is_trial)),
+    [allAvailablePlans, trialPassOnly],
+  );
+  const hasTrialPlans = useMemo(() => allAvailablePlans.some((plan) => plan.is_trial), [allAvailablePlans]);
   const selectedSalePlan = useMemo(
     () => availablePlans.find((plan) => plan.id === manualSaleForm.plan_id) ?? null,
     [availablePlans, manualSaleForm.plan_id],
   );
 
   useEffect(() => {
-    if (!manualSaleClient || manualSaleForm.plan_id || !availablePlans.length) {
+    if (!manualSaleClient || !availablePlans.length) {
       return;
     }
-    setManualSaleForm(createManualSaleForm(availablePlans[0]));
+    if (manualSaleForm.plan_id && availablePlans.some((plan) => plan.id === manualSaleForm.plan_id)) {
+      return;
+    }
+    const nextPlan = availablePlans[0];
+    const baseForm = createManualSaleForm(nextPlan);
+    setManualSaleForm(
+      nextPlan.is_trial
+        ? {
+            ...baseForm,
+            amount: '0',
+            description: `Pase de prueba: ${nextPlan.name}`,
+          }
+        : baseForm,
+    );
   }, [availablePlans, manualSaleClient, manualSaleForm.plan_id]);
 
   const nextUpgradePlan = useMemo(() => {
@@ -380,14 +419,19 @@ export default function ClientsPage() {
 
   const createClient = useMutation({
     mutationFn: async () => {
-      const payload = {
+      const payload: Record<string, unknown> = {
         first_name: form.first_name.trim(),
         last_name: form.last_name.trim(),
         email: form.email.trim().toLowerCase(),
         password: form.password.trim(),
-        ...(form.phone.trim() ? { phone: form.phone.trim() } : {}),
-        ...(form.date_of_birth ? { date_of_birth: form.date_of_birth } : {}),
       };
+      if (form.phone.trim()) payload.phone = form.phone.trim();
+      if (form.date_of_birth) payload.date_of_birth = form.date_of_birth;
+      if (form.gender) payload.gender = form.gender;
+      if (form.emergency_contact.trim()) payload.emergency_contact = form.emergency_contact.trim();
+      if (form.emergency_phone.trim()) payload.emergency_phone = form.emergency_phone.trim();
+      if (form.medical_notes.trim()) payload.medical_notes = form.medical_notes.trim();
+      if (form.tags.length) payload.tags = form.tags;
       const response = await clientsApi.create(payload);
       return response.data;
     },
@@ -460,6 +504,11 @@ export default function ClientsPage() {
         email: string;
         phone: string;
         date_of_birth: string | null;
+        gender: string | null;
+        emergency_contact: string | null;
+        emergency_phone: string | null;
+        medical_notes: string | null;
+        tags: string[];
       }>;
     }) => {
       const response = await clientsApi.update(clientId, data);
@@ -692,7 +741,7 @@ export default function ClientsPage() {
     };
   }, [lastDispatchResult]);
 
-  const openEditClientModal = (client: User) => {
+  const openEditClientModal = async (client: User) => {
     setActionsClient(null);
     setEditContactClient(client);
     setEditContactForm({
@@ -701,7 +750,41 @@ export default function ClientsPage() {
       email: client.email,
       phone: client.phone ?? '',
       date_of_birth: getDateInputValue(client.date_of_birth),
+      gender: client.gender ?? '',
+      emergency_contact: client.emergency_contact ?? '',
+      emergency_phone: client.emergency_phone ?? '',
+      medical_notes: client.medical_notes ?? '',
+      tags: [],
     });
+    setEditClientLoading(true);
+    try {
+      const detailResponse = await clientsApi.get(client.id);
+      const detail = detailResponse.data;
+      let tags: string[] = [];
+      if (Array.isArray(detail.tags)) {
+        tags = detail.tags as string[];
+      } else if (typeof detail.tags === 'string' && detail.tags) {
+        try {
+          const parsed = JSON.parse(detail.tags);
+          if (Array.isArray(parsed)) tags = parsed.filter((t: unknown) => typeof t === 'string');
+        } catch {
+          tags = detail.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+        }
+      }
+      setEditContactForm((current) => ({
+        ...current,
+        gender: detail.gender ?? '',
+        emergency_contact: detail.emergency_contact ?? '',
+        emergency_phone: detail.emergency_phone ?? '',
+        medical_notes: detail.medical_notes ?? '',
+        tags,
+      }));
+      setEditClientOriginalTags(tags);
+    } catch (error) {
+      toast.error(getApiError(error, 'No se pudo cargar la información médica'));
+    } finally {
+      setEditClientLoading(false);
+    }
   };
 
   const openResetPasswordModal = (client: User) => {
@@ -722,10 +805,12 @@ export default function ClientsPage() {
   const openManualSaleModal = (client: User) => {
     setActionsClient(null);
     setManualSaleClient(client);
-    const nextForm = createManualSaleForm(availablePlans[0]);
+    setTrialPassOnly(false);
+    const firstPlan = availablePlans[0];
+    const nextForm = createManualSaleForm(firstPlan);
     if (client.membership_expires_at) {
       nextForm.starts_at = getDateInputValue(client.membership_expires_at);
-      nextForm.expires_at = getSuggestedExpiryDate(availablePlans[0] ?? null, nextForm.starts_at);
+      nextForm.expires_at = getSuggestedExpiryDate(firstPlan ?? null, nextForm.starts_at);
     }
     setManualSaleForm(nextForm);
   };
@@ -736,32 +821,54 @@ export default function ClientsPage() {
       ...current,
       plan_id: planId,
       expires_at: getSuggestedExpiryDate(nextPlan, current.starts_at),
-      amount: nextPlan ? String(getEffectivePlanPrice(nextPlan)) : '',
+      amount: nextPlan?.is_trial ? '0' : nextPlan ? String(getEffectivePlanPrice(nextPlan)) : '',
       currency: nextPlan?.currency ?? 'CLP',
-      description: nextPlan ? `Venta manual del plan ${nextPlan.name}` : current.description,
+      description: nextPlan
+        ? nextPlan.is_trial
+          ? `Pase de prueba: ${nextPlan.name}`
+          : `Venta manual del plan ${nextPlan.name}`
+        : current.description,
     }));
   };
 
-  const exportClients = () => {
-    if (!items.length) {
-      toast('No hay clientes para exportar con los filtros actuales');
-      return;
-    }
+  const [exportingFormat, setExportingFormat] = useState<null | 'xlsx' | 'csv'>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
-    downloadCsv(
-      `clientes-nexo-${new Date().toISOString().slice(0, 10)}.csv`,
-      [
-        ['Nombre', 'Email', 'Teléfono', 'Estado', 'Registrado'],
-        ...items.map((client) => [
-          `${client.first_name} ${client.last_name}`,
-          client.email,
-          client.phone ?? '',
-          client.is_active ? 'Activo' : 'Inactivo',
-          formatDate(client.created_at),
-        ]),
-      ],
-    );
-    toast.success('CSV exportado');
+  const exportClients = async (format: 'xlsx' | 'csv') => {
+    setShowExportMenu(false);
+    setExportingFormat(format);
+    try {
+      const isChurnFilter = statusFilter === 'churn_high' || statusFilter === 'churn_medium';
+      const params: Record<string, unknown> & { format: 'xlsx' | 'csv' } = {
+        format,
+        ...(deferredSearch ? { search: deferredSearch } : {}),
+        ...(statusFilter && !['birthday', 'churn_high', 'churn_medium'].includes(statusFilter) ? { status: statusFilter } : {}),
+        ...(statusFilter === 'birthday' ? { birthday_month: true } : {}),
+        ...(isChurnFilter ? { churn_risk: statusFilter === 'churn_high' ? 'high' : 'medium' } : {}),
+      };
+      const response = await clientsApi.export(params);
+      const today = new Date().toISOString().slice(0, 10);
+      const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+      downloadBlob(response.data as Blob, `clientes_nexo_${today}.${ext}`);
+      toast.success(format === 'xlsx' ? 'Excel descargado' : 'CSV descargado');
+    } catch (error: any) {
+      // Blob errors need special unwrapping
+      let message = 'No se pudo exportar';
+      if (error?.response?.data instanceof Blob) {
+        try {
+          const text = await error.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed?.detail) message = parsed.detail;
+        } catch {
+          // ignore
+        }
+      } else {
+        message = getApiError(error, message);
+      }
+      toast.error(message);
+    } finally {
+      setExportingFormat(null);
+    }
   };
 
   const title = useMemo(() => {
@@ -782,22 +889,64 @@ export default function ClientsPage() {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => toast('La importación masiva aún no está conectada')}
-            className="btn-ghost text-sm"
-          >
-            <Upload size={16} /> Importar
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={exportClients}
-            className="btn-ghost text-sm"
-          >
-            <Download size={16} /> Exportar
-          </motion.button>
+          {canCreateClients ? (
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowImportModal(true)}
+              className="btn-ghost text-sm"
+            >
+              <Upload size={16} /> Importar
+            </motion.button>
+          ) : null}
+          <div className="relative">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowExportMenu((v) => !v)}
+              disabled={exportingFormat !== null}
+              className="btn-ghost text-sm"
+            >
+              {exportingFormat ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" /> Exportando…
+                </>
+              ) : (
+                <>
+                  <Download size={16} /> Exportar
+                </>
+              )}
+            </motion.button>
+            {showExportMenu ? (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
+                <div className="absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-xl dark:border-surface-800 dark:bg-surface-900">
+                  <button
+                    type="button"
+                    onClick={() => exportClients('xlsx')}
+                    className="flex w-full items-start gap-3 px-4 py-3 text-left text-sm hover:bg-surface-50 dark:hover:bg-surface-800"
+                  >
+                    <FileSpreadsheet size={18} className="mt-0.5 text-emerald-600" />
+                    <div>
+                      <p className="font-semibold text-surface-900 dark:text-white">Excel (.xlsx)</p>
+                      <p className="text-xs text-surface-500">Recomendado, abre en Excel sin ajustes.</p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => exportClients('csv')}
+                    className="flex w-full items-start gap-3 border-t border-surface-100 px-4 py-3 text-left text-sm hover:bg-surface-50 dark:border-surface-800 dark:hover:bg-surface-800"
+                  >
+                    <FileText size={18} className="mt-0.5 text-surface-500" />
+                    <div>
+                      <p className="font-semibold text-surface-900 dark:text-white">CSV</p>
+                      <p className="text-xs text-surface-500">Para sistemas externos o backups.</p>
+                    </div>
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
           {canCreateClients ? (
             <motion.button
               whileHover={{ scale: 1.02 }}
@@ -1310,9 +1459,41 @@ export default function ClientsPage() {
                       : 'Aún no tiene una membresía activa registrada.'}
                   </p>
                 </div>
-                <span className="badge badge-success">Venta manual</span>
+                <span className={cn('badge', trialPassOnly ? 'badge-warning' : 'badge-success')}>
+                  {trialPassOnly ? 'Pase de prueba' : 'Venta manual'}
+                </span>
               </div>
             </div>
+
+            {hasTrialPlans ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-surface-200 bg-white px-4 py-3 dark:border-surface-800 dark:bg-surface-950/40">
+                <p className="flex-1 text-sm text-surface-600 dark:text-surface-300">
+                  Selecciona el tipo de asignación para este cliente.
+                </p>
+                <div className="inline-flex rounded-xl bg-surface-100 p-1 text-sm dark:bg-surface-900">
+                  <button
+                    type="button"
+                    onClick={() => setTrialPassOnly(false)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 font-medium transition-colors',
+                      !trialPassOnly ? 'bg-white text-surface-900 shadow-sm dark:bg-surface-800 dark:text-white' : 'text-surface-500',
+                    )}
+                  >
+                    Plan pagado
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTrialPassOnly(true)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 font-medium transition-colors',
+                      trialPassOnly ? 'bg-white text-surface-900 shadow-sm dark:bg-surface-800 dark:text-white' : 'text-surface-500',
+                    )}
+                  >
+                    Pase de prueba
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {isLoadingAvailablePlans ? (
               <div className="space-y-3">
@@ -1322,7 +1503,9 @@ export default function ClientsPage() {
               </div>
             ) : !availablePlans.length ? (
               <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-sm text-surface-500 dark:border-surface-700">
-                No hay planes activos para asignar. Crea o reactiva un plan en el módulo de planes antes de registrar esta venta.
+                {trialPassOnly
+                  ? 'No tienes pases de prueba configurados. Crea un plan y márcalo como "Pase de prueba" en el módulo de planes.'
+                  : 'No hay planes activos para asignar. Crea o reactiva un plan en el módulo de planes antes de registrar esta venta.'}
               </div>
             ) : (
               <>
@@ -1338,7 +1521,7 @@ export default function ClientsPage() {
                       <option value="">Selecciona un plan</option>
                       {availablePlans.map((plan) => (
                         <option key={plan.id} value={plan.id}>
-                          {plan.name} · {formatCurrency(getEffectivePlanPrice(plan), plan.currency)}
+                          {plan.name} · {plan.is_trial ? 'Sin costo' : formatCurrency(getEffectivePlanPrice(plan), plan.currency)}
                         </option>
                       ))}
                     </select>
@@ -1394,7 +1577,9 @@ export default function ClientsPage() {
                     <p className="mt-1 text-xs text-surface-500">Puedes ajustarlo manualmente si necesitas una vigencia distinta.</p>
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Monto registrado</label>
+                    <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                      {selectedSalePlan?.is_trial ? 'Monto registrado (sin costo)' : 'Monto registrado'}
+                    </label>
                     <input
                       type="number"
                       min="0"
@@ -1402,7 +1587,8 @@ export default function ClientsPage() {
                       className="input"
                       value={manualSaleForm.amount}
                       onChange={(event) => setManualSaleForm((current) => ({ ...current, amount: event.target.value }))}
-                      placeholder="29990"
+                      placeholder={selectedSalePlan?.is_trial ? '0' : '29990'}
+                      disabled={selectedSalePlan?.is_trial ?? false}
                       required
                     />
                   </div>
@@ -1483,7 +1669,11 @@ export default function ClientsPage() {
                   || Number(manualSaleForm.amount) < 0
                 }
               >
-                {registerManualSale.isPending ? 'Registrando venta...' : 'Asignar plan y registrar pago'}
+                {registerManualSale.isPending
+                  ? 'Registrando...'
+                  : selectedSalePlan?.is_trial
+                    ? 'Asignar pase de prueba'
+                    : 'Asignar plan y registrar pago'}
               </button>
             </div>
           </form>
@@ -1572,6 +1762,68 @@ export default function ClientsPage() {
             <p className="mt-1 text-xs text-surface-500">Debe tener al menos 8 caracteres, una mayúscula y un número.</p>
           </div>
 
+          <details className="rounded-2xl border border-surface-200 bg-surface-50/50 dark:border-surface-800 dark:bg-surface-950/40">
+            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-surface-800 dark:text-surface-200">
+              Información médica y de emergencia <span className="font-normal text-surface-500">(opcional)</span>
+            </summary>
+            <div className="space-y-4 px-4 pb-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Género</label>
+                  <select
+                    className="input"
+                    value={form.gender}
+                    onChange={(event) => setForm((current) => ({ ...current, gender: event.target.value }))}
+                  >
+                    <option value="">Sin especificar</option>
+                    <option value="masculino">Masculino</option>
+                    <option value="femenino">Femenino</option>
+                    <option value="otro">Otro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Tags</label>
+                  <TagInput
+                    value={form.tags}
+                    onChange={(tags) => setForm((current) => ({ ...current, tags }))}
+                    placeholder="Ej: vip, crossfit, mañana"
+                  />
+                  <p className="mt-1 text-xs text-surface-500">Enter o coma para agregar.</p>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Contacto de emergencia</label>
+                  <input
+                    className="input"
+                    value={form.emergency_contact}
+                    onChange={(event) => setForm((current) => ({ ...current, emergency_contact: event.target.value }))}
+                    placeholder="Ej: María Soto (madre)"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Teléfono de emergencia</label>
+                  <input
+                    type="tel"
+                    className="input"
+                    value={form.emergency_phone}
+                    onChange={(event) => setForm((current) => ({ ...current, emergency_phone: event.target.value }))}
+                    placeholder="+56 9 8765 4321"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Notas médicas</label>
+                <textarea
+                  className="input min-h-24 resize-y"
+                  value={form.medical_notes}
+                  onChange={(event) => setForm((current) => ({ ...current, medical_notes: event.target.value }))}
+                  placeholder="Alergias, condiciones, lesiones, medicación…"
+                />
+              </div>
+            </div>
+          </details>
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setShowCreateModal(false)}>
               Cancelar
@@ -1655,6 +1907,11 @@ export default function ClientsPage() {
               email: string;
               phone: string;
               date_of_birth: string | null;
+              gender: string | null;
+              emergency_contact: string | null;
+              emergency_phone: string | null;
+              medical_notes: string | null;
+              tags: string[];
             }> = {};
             const firstName = editContactForm.first_name.trim();
             const lastName = editContactForm.last_name.trim();
@@ -1668,6 +1925,30 @@ export default function ClientsPage() {
             if (email !== editContactClient.email) payload.email = email;
             if (phone !== (editContactClient.phone ?? '')) payload.phone = phone;
             if (nextDateOfBirth !== currentDateOfBirth) payload.date_of_birth = nextDateOfBirth || null;
+
+            const gender = editContactForm.gender.trim();
+            if (gender !== (editContactClient.gender ?? '')) payload.gender = gender || null;
+
+            const emergencyContact = editContactForm.emergency_contact.trim();
+            if (emergencyContact !== (editContactClient.emergency_contact ?? '')) {
+              payload.emergency_contact = emergencyContact || null;
+            }
+
+            const emergencyPhone = editContactForm.emergency_phone.trim();
+            if (emergencyPhone !== (editContactClient.emergency_phone ?? '')) {
+              payload.emergency_phone = emergencyPhone || null;
+            }
+
+            const medicalNotes = editContactForm.medical_notes.trim();
+            if (medicalNotes !== (editContactClient.medical_notes ?? '')) {
+              payload.medical_notes = medicalNotes || null;
+            }
+
+            const tagsChanged =
+              editContactForm.tags.length !== editClientOriginalTags.length
+              || editContactForm.tags.some((t, i) => t !== editClientOriginalTags[i]);
+            if (tagsChanged) payload.tags = editContactForm.tags;
+
             if (!Object.keys(payload).length) {
               setEditContactClient(null);
               return;
@@ -1740,11 +2021,91 @@ export default function ClientsPage() {
               Opcional. Puedes dejarla vacía o quitarla si no quieres registrarla.
             </p>
           </div>
+
+          <details
+            className="rounded-2xl border border-surface-200 bg-surface-50/50 dark:border-surface-800 dark:bg-surface-950/40"
+            open={Boolean(
+              editContactForm.gender
+              || editContactForm.emergency_contact
+              || editContactForm.emergency_phone
+              || editContactForm.medical_notes
+              || editContactForm.tags.length,
+            )}
+          >
+            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-surface-800 dark:text-surface-200">
+              Información médica y de emergencia{' '}
+              {editClientLoading ? (
+                <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-surface-500">
+                  <Loader2 size={12} className="animate-spin" /> cargando…
+                </span>
+              ) : (
+                <span className="font-normal text-surface-500">(opcional)</span>
+              )}
+            </summary>
+            <div className="space-y-4 px-4 pb-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Género</label>
+                  <select
+                    className="input"
+                    value={editContactForm.gender}
+                    onChange={(e) => setEditContactForm((f) => ({ ...f, gender: e.target.value }))}
+                  >
+                    <option value="">Sin especificar</option>
+                    <option value="masculino">Masculino</option>
+                    <option value="femenino">Femenino</option>
+                    <option value="otro">Otro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Tags</label>
+                  <TagInput
+                    value={editContactForm.tags}
+                    onChange={(tags) => setEditContactForm((f) => ({ ...f, tags }))}
+                    placeholder="Ej: vip, crossfit, mañana"
+                    disabled={editClientLoading}
+                  />
+                  <p className="mt-1 text-xs text-surface-500">Enter o coma para agregar.</p>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Contacto de emergencia</label>
+                  <input
+                    className="input"
+                    value={editContactForm.emergency_contact}
+                    onChange={(e) => setEditContactForm((f) => ({ ...f, emergency_contact: e.target.value }))}
+                    placeholder="Ej: María Soto (madre)"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Teléfono de emergencia</label>
+                  <input
+                    type="tel"
+                    className="input"
+                    value={editContactForm.emergency_phone}
+                    onChange={(e) => setEditContactForm((f) => ({ ...f, emergency_phone: e.target.value }))}
+                    placeholder="+56 9 8765 4321"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Notas médicas</label>
+                <textarea
+                  className="input min-h-24 resize-y"
+                  value={editContactForm.medical_notes}
+                  onChange={(e) => setEditContactForm((f) => ({ ...f, medical_notes: e.target.value }))}
+                  placeholder="Alergias, condiciones, lesiones, medicación…"
+                />
+              </div>
+            </div>
+          </details>
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setEditContactClient(null)}>
               Cancelar
             </button>
-            <button type="submit" className="btn-primary" disabled={updateContactInfo.isPending}>
+            <button type="submit" className="btn-primary" disabled={updateContactInfo.isPending || editClientLoading}>
               {updateContactInfo.isPending ? 'Guardando...' : 'Guardar cambios'}
             </button>
           </div>
@@ -2298,6 +2659,14 @@ export default function ClientsPage() {
       <MembershipCardModal
         client={cardClient}
         onClose={() => setCardClient(null)}
+      />
+
+      <ImportClientsModal
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onCompleted={() => {
+          queryClient.invalidateQueries({ queryKey: ['clients'] });
+        }}
       />
     </motion.div>
   );

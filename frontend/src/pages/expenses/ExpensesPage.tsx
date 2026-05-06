@@ -74,10 +74,14 @@ export default function ExpensesPage() {
   });
 
   // ── KPIs ───────────────────────────────────────────────────────────────────
-  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+  const toNum = (v: unknown) => {
+    const n = typeof v === 'string' ? parseFloat(v) : Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const totalExpenses = expenses.reduce((s, e) => s + toNum(e.amount), 0);
   const byCategory = Object.entries(CATEGORY_LABELS).map(([key, label]) => ({
     key, label,
-    total: expenses.filter(e => e.category === key).reduce((s, e) => s + e.amount, 0),
+    total: expenses.filter(e => e.category === key).reduce((s, e) => s + toNum(e.amount), 0),
   })).filter(c => c.total > 0).sort((a, b) => b.total - a.total);
 
   function openCreate() {
@@ -213,7 +217,7 @@ export default function ExpensesPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 font-bold text-red-600 dark:text-red-400">
-                      {formatCLP(expense.amount)}
+                      {formatCLP(toNum(expense.amount))}
                     </td>
                     <td className="px-4 py-3 text-surface-500 text-xs">
                       {new Date(expense.expense_date + 'T12:00:00').toLocaleDateString('es-CL', { dateStyle: 'medium' })}

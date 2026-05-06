@@ -6,10 +6,52 @@ export interface LoginRequest {
 }
 
 export interface AuthResponse {
-  access_token: string;
-  refresh_token: string;
+  access_token?: string;
+  refresh_token?: string;
   token_type: string;
-  user: User;
+  user?: User;
+  billing_status?: string;
+  next_action?: string | null;
+  checkout_url?: string | null;
+  widget_token?: string | null;
+  checkout_provider?: string | null;
+  billing_detail?: string | null;
+  // 2FA
+  mfa_token?: string;
+  mfa_attempts_remaining?: number;
+  trusted_device_token?: string;
+}
+
+export interface TrustedDevice {
+  id: string;
+  label?: string | null;
+  user_agent?: string | null;
+  ip_address?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+  expires_at: string;
+}
+
+export interface TwoFactorStatus {
+  enabled: boolean;
+  verified_at?: string | null;
+  backup_codes_remaining: number;
+}
+
+export interface TwoFactorSetupResponse {
+  secret: string;
+  provisioning_uri: string;
+  issuer: string;
+  account: string;
+}
+
+export interface TwoFactorVerifySetupResponse {
+  detail: string;
+  backup_codes: string[];
+}
+
+export interface MfaForcedSetupResponse extends AuthResponse {
+  backup_codes: string[];
 }
 
 export interface RegisterGymRequest {
@@ -161,8 +203,19 @@ export interface TenantBilling {
   next_plan_paid?: boolean;
 }
 
+export interface HealthFactor {
+  key: string;
+  label: string;
+  delta: number;
+  kind: 'critical' | 'warn' | 'info' | 'ok';
+}
+
 export interface AdminTenantBilling extends TenantBilling {
   owner_user_id?: string;
+  health_score?: number | null;
+  health_level?: 'healthy' | 'watch' | 'at_risk' | 'critical' | null;
+  health_factors?: HealthFactor[] | null;
+  feature_flags_full?: Record<string, unknown> | null;
 }
 
 export interface OwnerPaymentItem {
@@ -290,6 +343,11 @@ export interface PlatformBillingPayment {
   folio_number?: number | null;
   invoice_status?: string | null;
   invoice_date?: string | null;
+  refunded_amount?: number | null;
+  refunded_at?: string | null;
+  refund_reason?: string | null;
+  refund_external_reference?: string | null;
+  refund_status?: 'refunded' | 'partial' | 'manual' | 'failed' | null;
 }
 
 export interface AdminTenantManualPaymentRequest {
@@ -341,6 +399,7 @@ export interface Plan {
   max_reservations_per_month?: number;
   is_active: boolean;
   is_featured: boolean;
+  is_trial?: boolean;
   auto_renew: boolean;
   created_at: string;
 }
@@ -364,6 +423,8 @@ export interface GymClass {
   current_bookings: number;
   waitlist_enabled: boolean;
   online_link?: string;
+  cancellation_deadline_hours?: number;
+  reservation_closes_minutes_before?: number;
   color?: string;
   program_id?: string;
   restricted_plan_id?: string;

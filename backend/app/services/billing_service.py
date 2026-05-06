@@ -801,6 +801,7 @@ class BillingService:
         if not isinstance(platform_features, list):
             platform_features = []
         usage = await get_tenant_usage_snapshot(db, tenant.id, tenant=tenant)
+        health = await BillingService._compute_tenant_health(db, tenant, owner=owner)
 
         return {
             "tenant_id": tenant.id,
@@ -834,7 +835,105 @@ class BillingService:
             "next_plan_name": tenant.next_plan_name,
             "next_plan_starts_at": tenant.next_plan_starts_at,
             "next_plan_paid": await BillingService._has_future_payment(db, tenant),
+            "health_score": health["score"],
+            "health_level": health["level"],
+            "health_factors": health["factors"],
+            "feature_flags_full": feature_flags,
         }
+
+    @staticmethod
+    async def _compute_tenant_health(
+        db: AsyncSession, tenant: Tenant, *, owner=None
+    ) -> dict[str, Any]:
+        """Composite tenant health score (0-100) for ops triage.
+
+        Each factor adds positive or negative points to a 100-point baseline.
+        ``factors`` returns the breakdown so the UI can show why a score is
+        what it is. Score is clamped to [0, 100]."""
+        now = datetime.now(timezone.utc)
+        factors: list[dict[str, Any]] = []
+        score = 100.0
+
+        # 1. Account access
+        if not tenant.is_active:
+            score -= 35
+            factors.append({"key": "blocked", "label": "Acceso bloqueado", "delta": -35, "kind": "critical"})
+
+        # 2. Status
+        status_value = tenant.status.value if isinstance(tenant.status, TenantStatus) else str(tenant.status)
+        if status_value in {"suspended"}:
+            score -= 30
+            factors.append({"key": "suspended", "label": "Cuenta suspendida", "delta": -30, "kind": "critical"})
+        elif status_value in {"cancelled", "expired"}:
+            score -= 50
+            factors.append({"key": "cancelled", "label": f"Cuenta {status_value}", "delta": -50, "kind": "critical"})
+        elif status_value == "trial":
+            factors.append({"key": "trial", "label": "En período de prueba", "delta": 0, "kind": "info"})
+
+        # 3. License expiry proximity
+        if tenant.license_expires_at:
+            days = (tenant.license_expires_at - now).days
+            if days < 0:
+                score -= 25
+                factors.append({"key": "license_expired", "label": f"Licencia vencida hace {-days}d", "delta": -25, "kind": "critical"})
+            elif days <= 7:
+                score -= 12
+                factors.append({"key": "license_soon", "label": f"Licencia vence en {days}d", "delta": -12, "kind": "warn"})
+            elif days <= 30:
+                score -= 4
+                factors.append({"key": "license_30d", "label": f"Licencia vence en {days}d", "delta": -4, "kind": "info"})
+            else:
+                factors.append({"key": "license_ok", "label": "Licencia con > 30 días", "delta": 0, "kind": "ok"})
+        elif tenant.trial_ends_at:
+            days = (tenant.trial_ends_at - now).days
+            if days < 0:
+                score -= 35
+                factors.append({"key": "trial_expired", "label": f"Trial vencido hace {-days}d", "delta": -35, "kind": "critical"})
+            elif days <= 2:
+                score -= 8
+                factors.append({"key": "trial_critical", "label": f"Trial vence en {days}d", "delta": -8, "kind": "warn"})
+
+        # 4. Recent payment activity (last 60 days)
+        last_payment = (
+            await db.execute(
+                select(PlatformBillingPayment.created_at)
+                .where(PlatformBillingPayment.tenant_id == tenant.id)
+                .order_by(PlatformBillingPayment.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if last_payment:
+            days_since_paid = (now - last_payment).days
+            if days_since_paid <= 35:
+                factors.append({"key": "recent_payment", "label": f"Pago reciente ({days_since_paid}d)", "delta": 0, "kind": "ok"})
+            elif days_since_paid <= 90:
+                score -= 5
+                factors.append({"key": "stale_payment", "label": f"Sin pagos hace {days_since_paid}d", "delta": -5, "kind": "warn"})
+            else:
+                score -= 12
+                factors.append({"key": "old_payment", "label": f"Sin pagos hace {days_since_paid}d", "delta": -12, "kind": "warn"})
+        elif status_value == "active":
+            score -= 8
+            factors.append({"key": "no_payments", "label": "Sin pagos registrados", "delta": -8, "kind": "warn"})
+
+        # 5. Owner has 2FA enabled
+        if owner is not None and getattr(owner, "is_2fa_enabled", False):
+            factors.append({"key": "owner_2fa", "label": "Owner con 2FA", "delta": 0, "kind": "ok"})
+        elif owner is not None:
+            score -= 5
+            factors.append({"key": "owner_no_2fa", "label": "Owner sin 2FA", "delta": -5, "kind": "info"})
+
+        score = max(0.0, min(100.0, round(score, 1)))
+        if score >= 80:
+            level = "healthy"
+        elif score >= 60:
+            level = "watch"
+        elif score >= 40:
+            level = "at_risk"
+        else:
+            level = "critical"
+
+        return {"score": score, "level": level, "factors": factors}
 
     @staticmethod
     async def _has_future_payment(db: AsyncSession, tenant: Tenant) -> bool:
@@ -1084,3 +1183,406 @@ class BillingService:
         tenant.next_plan_name = None
         tenant.next_plan_starts_at = None
         await db.flush()
+
+    @staticmethod
+    async def refund_platform_payment(
+        db: AsyncSession,
+        *,
+        payment_id: UUID,
+        amount: Optional[Decimal] = None,
+        reason: Optional[str] = None,
+        method_override: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Trigger a refund for a SaaS payment.
+
+        Webpay payments call the Transbank refund endpoint via the existing
+        WebpayTransaction record. Transfer / cash / other methods are marked
+        as ``manual`` since there's no provider to call. Stripe is stubbed
+        until provider integration ships."""
+        from app.models.platform import WebpayTransaction
+        from app.integrations.payments.webpay_service import webpay_service
+
+        payment = await db.get(PlatformBillingPayment, payment_id)
+        if not payment:
+            raise ValueError("Pago no encontrado")
+
+        already_refunded = Decimal(payment.refunded_amount or 0)
+        max_refundable = Decimal(payment.total_amount or 0) - already_refunded
+        if max_refundable <= 0:
+            raise ValueError("Pago ya reembolsado en su totalidad")
+
+        amount = (amount if amount is not None else max_refundable)
+        if amount <= 0:
+            raise ValueError("El monto debe ser mayor a 0")
+        if amount > max_refundable:
+            raise ValueError(f"Excede el saldo refundable ({max_refundable})")
+
+        method = method_override or (
+            payment.payment_method.value
+            if hasattr(payment.payment_method, "value")
+            else str(payment.payment_method)
+        )
+
+        provider_payload: Optional[dict[str, Any]] = None
+        new_status = "refunded"
+        external_ref: Optional[str] = None
+
+        if method == "webpay":
+            wp_token = (payment.external_reference or "").strip()
+            if not wp_token:
+                raise ValueError("Pago Webpay sin token registrado, no se puede refundir")
+            wp_tx = (
+                await db.execute(
+                    select(WebpayTransaction).where(WebpayTransaction.token == wp_token).limit(1)
+                )
+            ).scalar_one_or_none()
+            if not wp_tx:
+                raise ValueError("Transacción Webpay no encontrada para este pago")
+
+            metadata = _loads_dict_safe(wp_tx.metadata_json)
+            credentials = webpay_service.credentials_from_metadata(metadata)
+            if credentials is None:
+                credentials = webpay_service.get_platform_credentials()
+            if credentials is None:
+                raise ValueError("No hay credenciales Webpay configuradas para refundir")
+
+            try:
+                provider_payload = await webpay_service.refund(
+                    token=wp_token,
+                    amount=int(amount),
+                    credentials=credentials,
+                )
+            except Exception as exc:  # noqa: BLE001
+                payment.refund_status = "failed"
+                payment.refund_reason = reason
+                await db.flush()
+                raise ValueError(f"Webpay rechazó el reembolso: {exc}") from exc
+
+            response_type = (provider_payload or {}).get("type", "")
+            external_ref = (provider_payload or {}).get("authorization_code") or wp_token
+            if str(response_type).upper() == "REVERSED":
+                new_status = "refunded"
+            elif str(response_type).upper() == "NULLIFIED":
+                new_status = "refunded"
+            else:
+                new_status = "partial" if (already_refunded + amount) < Decimal(payment.total_amount or 0) else "refunded"
+        elif method in {"transfer", "cash", "other"}:
+            new_status = "manual"
+            external_ref = "manual_offline"
+        elif method == "stripe":
+            raise ValueError("Refunds Stripe aún no integrados")
+        else:
+            raise ValueError(f"Método de pago no soportado para refunds: {method}")
+
+        payment.refunded_amount = already_refunded + amount
+        payment.refunded_at = datetime.now(timezone.utc)
+        payment.refund_reason = reason
+        payment.refund_external_reference = external_ref
+        payment.refund_status = new_status
+        await db.flush()
+        return {
+            "payment_id": str(payment.id),
+            "refunded_amount": str(payment.refunded_amount),
+            "refund_status": new_status,
+            "method": method,
+            "provider_payload": provider_payload,
+        }
+
+    @staticmethod
+    async def get_platform_stats(db: AsyncSession) -> dict[str, Any]:
+        """Aggregated metrics for the superadmin platform dashboard.
+
+        Bundles MRR, tenant counts by status, trial conversion, lead funnel,
+        12-month revenue series and a list of operational alerts."""
+        from app.models.platform import PlatformLead
+
+        now = datetime.now(timezone.utc)
+        today_date = now.date()
+        last_30d = now - timedelta(days=30)
+        next_7d = now + timedelta(days=7)
+        next_2d = now + timedelta(days=2)
+
+        # ── Tenant aggregates ────────────────────────────────────────
+        status_counts_q = select(Tenant.status, func.count(Tenant.id)).group_by(Tenant.status)
+        status_rows = (await db.execute(status_counts_q)).all()
+        status_counts: dict[str, int] = {}
+        for status_value, count in status_rows:
+            key = status_value.value if hasattr(status_value, "value") else str(status_value)
+            status_counts[key] = int(count or 0)
+
+        active_tenants = status_counts.get(TenantStatus.ACTIVE.value, 0)
+        trial_tenants = status_counts.get(TenantStatus.TRIAL.value, 0)
+        suspended_tenants = status_counts.get(TenantStatus.SUSPENDED.value, 0)
+        cancelled_tenants = status_counts.get(TenantStatus.CANCELLED.value, 0)
+        total_tenants = sum(status_counts.values())
+
+        # Trials expiring soon (next 7d)
+        trial_expiring_q = select(func.count(Tenant.id)).where(
+            Tenant.status == TenantStatus.TRIAL,
+            Tenant.trial_ends_at.is_not(None),
+            Tenant.trial_ends_at <= next_7d,
+            Tenant.trial_ends_at >= now,
+        )
+        trials_expiring = int((await db.execute(trial_expiring_q)).scalar() or 0)
+
+        trial_critical_q = select(func.count(Tenant.id)).where(
+            Tenant.status == TenantStatus.TRIAL,
+            Tenant.trial_ends_at.is_not(None),
+            Tenant.trial_ends_at <= next_2d,
+            Tenant.trial_ends_at >= now,
+        )
+        trials_critical = int((await db.execute(trial_critical_q)).scalar() or 0)
+
+        # Active licenses expiring next 7d
+        license_expiring_q = select(func.count(Tenant.id)).where(
+            Tenant.status == TenantStatus.ACTIVE,
+            Tenant.license_expires_at.is_not(None),
+            Tenant.license_expires_at <= next_7d,
+            Tenant.license_expires_at >= now,
+        )
+        licenses_expiring = int((await db.execute(license_expiring_q)).scalar() or 0)
+
+        # Conversion rate trial → paid (cohort: tenants whose trial ended ≥ 30d ago)
+        cohort_cutoff = now - timedelta(days=30)
+        cohort_q = select(func.count(Tenant.id)).where(
+            Tenant.trial_ends_at.is_not(None),
+            Tenant.trial_ends_at <= now,
+            Tenant.created_at >= cohort_cutoff - timedelta(days=60),
+        )
+        cohort_total = int((await db.execute(cohort_q)).scalar() or 0)
+        cohort_active_q = select(func.count(Tenant.id)).where(
+            Tenant.trial_ends_at.is_not(None),
+            Tenant.trial_ends_at <= now,
+            Tenant.created_at >= cohort_cutoff - timedelta(days=60),
+            Tenant.status == TenantStatus.ACTIVE,
+        )
+        cohort_converted = int((await db.execute(cohort_active_q)).scalar() or 0)
+        conversion_rate = (cohort_converted / cohort_total * 100.0) if cohort_total > 0 else 0.0
+
+        # ── Revenue ─────────────────────────────────────────────────
+        # MRR proxy = sum of payments in last 30 days (CLP)
+        mrr_q = select(func.coalesce(func.sum(PlatformBillingPayment.total_amount), 0)).where(
+            PlatformBillingPayment.created_at >= last_30d,
+            PlatformBillingPayment.currency == "CLP",
+        )
+        mrr_amount = float((await db.execute(mrr_q)).scalar() or 0)
+
+        prev_30d_start = now - timedelta(days=60)
+        prev_mrr_q = select(func.coalesce(func.sum(PlatformBillingPayment.total_amount), 0)).where(
+            PlatformBillingPayment.created_at >= prev_30d_start,
+            PlatformBillingPayment.created_at < last_30d,
+            PlatformBillingPayment.currency == "CLP",
+        )
+        mrr_prev = float((await db.execute(prev_mrr_q)).scalar() or 0)
+        mrr_delta_pct = ((mrr_amount - mrr_prev) / mrr_prev * 100.0) if mrr_prev > 0 else 0.0
+
+        # 12-month revenue series
+        series_start = (now.replace(day=1) - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
+        series_q = (
+            select(
+                func.date_trunc("month", PlatformBillingPayment.created_at).label("month"),
+                func.coalesce(func.sum(PlatformBillingPayment.total_amount), 0).label("amount"),
+            )
+            .where(
+                PlatformBillingPayment.created_at >= series_start,
+                PlatformBillingPayment.currency == "CLP",
+            )
+            .group_by("month")
+            .order_by("month")
+        )
+        series_rows = (await db.execute(series_q)).all()
+        series_map: dict[str, float] = {}
+        for row in series_rows:
+            month_dt = row.month
+            if month_dt is None:
+                continue
+            key = month_dt.strftime("%Y-%m")
+            series_map[key] = float(row.amount or 0)
+
+        # Fill missing months with 0
+        mrr_series: list[dict[str, Any]] = []
+        cursor = series_start.replace(day=1)
+        while cursor <= now:
+            key = cursor.strftime("%Y-%m")
+            mrr_series.append({"month": key, "amount": series_map.get(key, 0.0)})
+            # advance one month
+            if cursor.month == 12:
+                cursor = cursor.replace(year=cursor.year + 1, month=1)
+            else:
+                cursor = cursor.replace(month=cursor.month + 1)
+
+        # Payments last 24h (count + total)
+        last_24h = now - timedelta(hours=24)
+        recent_payments_q = select(func.count(PlatformBillingPayment.id)).where(
+            PlatformBillingPayment.created_at >= last_24h,
+        )
+        recent_payments = int((await db.execute(recent_payments_q)).scalar() or 0)
+
+        # ── Leads funnel ────────────────────────────────────────────
+        leads_q = select(PlatformLead.status, func.count(PlatformLead.id)).group_by(PlatformLead.status)
+        lead_rows = (await db.execute(leads_q)).all()
+        funnel_keys = ["new", "contacted", "qualified", "won", "lost"]
+        leads_funnel: dict[str, int] = {k: 0 for k in funnel_keys}
+        for status_value, count in lead_rows:
+            leads_funnel[str(status_value)] = int(count or 0)
+        leads_total = sum(leads_funnel.values())
+
+        # ── Alerts ──────────────────────────────────────────────────
+        alerts: list[dict[str, Any]] = []
+        if trials_critical > 0:
+            alerts.append({
+                "kind": "warn",
+                "title": f"{trials_critical} trial{'s' if trials_critical != 1 else ''} vence{'n' if trials_critical != 1 else ''} en menos de 48 hrs",
+                "detail": "Considera enviar recordatorio o extender prueba",
+                "cta_to": "/platform/tenants",
+                "cta_label": "Revisar",
+                "count": trials_critical,
+            })
+        if trials_expiring > trials_critical:
+            remaining = trials_expiring - trials_critical
+            alerts.append({
+                "kind": "info",
+                "title": f"{remaining} trial{'s' if remaining != 1 else ''} vence{'n' if remaining != 1 else ''} en próximos 7 días",
+                "detail": "Pipeline de conversión esta semana",
+                "cta_to": "/platform/tenants",
+                "cta_label": "Revisar",
+                "count": remaining,
+            })
+        if licenses_expiring > 0:
+            alerts.append({
+                "kind": "warn",
+                "title": f"{licenses_expiring} licencia{'s' if licenses_expiring != 1 else ''} activa{'s' if licenses_expiring != 1 else ''} vence{'n' if licenses_expiring != 1 else ''} pronto",
+                "detail": "Próximos 7 días — riesgo de churn si no renuevan",
+                "cta_to": "/platform/tenants",
+                "cta_label": "Revisar",
+                "count": licenses_expiring,
+            })
+        if leads_funnel["new"] > 0:
+            alerts.append({
+                "kind": "info",
+                "title": f"{leads_funnel['new']} lead{'s' if leads_funnel['new'] != 1 else ''} nuevo{'s' if leads_funnel['new'] != 1 else ''} sin contactar",
+                "detail": "Esperando primer contacto comercial",
+                "cta_to": "/platform/leads",
+                "cta_label": "Contactar",
+                "count": leads_funnel["new"],
+            })
+
+        # ── Cohort retention (12 monthly cohorts × up to 12 months follow-up) ──
+        cohort_window_start = (now.replace(day=1) - timedelta(days=365)).replace(hour=0, minute=0, second=0, microsecond=0)
+        cohort_q = select(
+            func.date_trunc("month", Tenant.created_at).label("cohort_month"),
+            Tenant.id,
+            Tenant.created_at,
+            Tenant.status,
+            Tenant.license_expires_at,
+        ).where(Tenant.created_at >= cohort_window_start)
+        cohort_rows = (await db.execute(cohort_q)).all()
+
+        cohorts: dict[str, dict[str, Any]] = {}
+        for row in cohort_rows:
+            cohort_dt = row.cohort_month
+            if cohort_dt is None:
+                continue
+            key = cohort_dt.strftime("%Y-%m")
+            entry = cohorts.setdefault(key, {"cohort_month": key, "size": 0, "retention": []})
+            entry["size"] += 1
+
+        # For each cohort, compute % retained at month offsets 0..N (N = months elapsed)
+        def _months_between(start: datetime, end: datetime) -> int:
+            return (end.year - start.year) * 12 + (end.month - start.month)
+
+        # Build retention buckets
+        for key, entry in cohorts.items():
+            year, month = (int(p) for p in key.split("-"))
+            cohort_start = datetime(year, month, 1, tzinfo=timezone.utc)
+            elapsed = max(0, _months_between(cohort_start, now))
+            entry["months_elapsed"] = elapsed
+            buckets: list[Optional[float]] = []
+            for offset in range(0, min(elapsed, 11) + 1):
+                # window_end = cohort_start + (offset+1) months
+                target_year = cohort_start.year + ((cohort_start.month + offset - 1) // 12)
+                target_month = ((cohort_start.month + offset - 1) % 12) + 1
+                if target_month == 12:
+                    next_year = target_year + 1
+                    next_month = 1
+                else:
+                    next_year = target_year
+                    next_month = target_month + 1
+                window_end = datetime(next_year, next_month, 1, tzinfo=timezone.utc)
+                # A tenant is "retained at month N" if active at window_end OR license valid through it
+                retained = 0
+                for r in cohort_rows:
+                    if r.cohort_month is None:
+                        continue
+                    rkey = r.cohort_month.strftime("%Y-%m")
+                    if rkey != key:
+                        continue
+                    # Treat ACTIVE status whose license_expires_at >= window_end as retained
+                    license_ok = r.license_expires_at is not None and r.license_expires_at >= window_end
+                    if str(r.status).lower().endswith("active") and license_ok:
+                        retained += 1
+                    elif r.status == TenantStatus.ACTIVE and not r.license_expires_at:
+                        # no license expiry yet but active right now → only retained at offsets ≤ elapsed
+                        if window_end <= now:
+                            retained += 1
+                pct = (retained / entry["size"] * 100.0) if entry["size"] > 0 else 0.0
+                buckets.append(round(pct, 1))
+            entry["retention"] = buckets
+
+        cohort_list = sorted(cohorts.values(), key=lambda e: e["cohort_month"])
+
+        # ── Lead attribution by source ───────────────────────────
+        lead_source_q = select(
+            PlatformLead.source,
+            PlatformLead.status,
+            func.count(PlatformLead.id),
+        ).group_by(PlatformLead.source, PlatformLead.status)
+        lead_source_rows = (await db.execute(lead_source_q)).all()
+
+        sources_map: dict[str, dict[str, Any]] = {}
+        for source_value, status_value, count in lead_source_rows:
+            src = source_value or "unknown"
+            entry = sources_map.setdefault(src, {"source": src, "total": 0, "won": 0, "qualified": 0, "lost": 0, "new": 0, "contacted": 0})
+            count_int = int(count or 0)
+            entry["total"] += count_int
+            status_str = str(status_value or "").lower()
+            if status_str in entry:
+                entry[status_str] = count_int
+
+        sources_list = sorted(sources_map.values(), key=lambda e: e["total"], reverse=True)
+        for entry in sources_list:
+            entry["conversion_rate"] = round((entry["won"] / entry["total"] * 100.0), 1) if entry["total"] > 0 else 0.0
+
+        return {
+            "metrics": {
+                "mrr": mrr_amount,
+                "mrr_delta_pct": mrr_delta_pct,
+                "active_tenants": active_tenants,
+                "trial_tenants": trial_tenants,
+                "suspended_tenants": suspended_tenants,
+                "cancelled_tenants": cancelled_tenants,
+                "total_tenants": total_tenants,
+                "trials_expiring_7d": trials_expiring,
+                "trials_critical_2d": trials_critical,
+                "licenses_expiring_7d": licenses_expiring,
+                "conversion_rate": round(conversion_rate, 1),
+                "conversion_cohort_size": cohort_total,
+                "payments_last_24h": recent_payments,
+            },
+            "mrr_series": mrr_series,
+            "leads_funnel": {**leads_funnel, "total": leads_total},
+            "lead_sources": sources_list,
+            "cohort_retention": cohort_list,
+            "alerts": alerts,
+            "as_of": now.isoformat(),
+        }
+
+
+def _loads_dict_safe(raw_value: Optional[str]) -> dict[str, Any]:
+    if not raw_value:
+        return {}
+    try:
+        loaded = json.loads(raw_value)
+        return loaded if isinstance(loaded, dict) else {}
+    except (TypeError, ValueError):
+        return {}

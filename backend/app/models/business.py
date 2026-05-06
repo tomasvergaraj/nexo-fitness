@@ -147,6 +147,7 @@ class Plan(Base):
     benefits: Mapped[Optional[str]] = mapped_column(Text)  # JSON array
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_trial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     auto_renew: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     stripe_price_id: Mapped[Optional[str]] = mapped_column(String(255))
@@ -211,6 +212,7 @@ class GymClass(Base):
     waitlist_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     online_link: Mapped[Optional[str]] = mapped_column(String(500))
     cancellation_deadline_hours: Mapped[int] = mapped_column(Integer, default=1)
+    reservation_closes_minutes_before: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
     recurrence_rule: Mapped[Optional[str]] = mapped_column(String(255))  # RRULE string
     color: Mapped[Optional[str]] = mapped_column(String(7))

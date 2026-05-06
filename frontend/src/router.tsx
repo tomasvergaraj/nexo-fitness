@@ -1,7 +1,13 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
+import PlatformLayout from '@/components/layout/platform/PlatformLayout';
+import PlatformDashboardPage from '@/pages/platform/PlatformDashboardPage';
+import PlatformAuditLogPage from '@/pages/platform/PlatformAuditLogPage';
+import PlatformEmailTemplatesPage from '@/pages/platform/PlatformEmailTemplatesPage';
 import AuthGuard from '@/components/auth/AuthGuard';
 import LoginPage from '@/pages/auth/LoginPage';
+import MfaVerifyPage from '@/pages/auth/MfaVerifyPage';
+import Setup2faPage from '@/pages/auth/Setup2faPage';
 import RegisterPage from '@/pages/auth/RegisterPage';
 import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
@@ -70,6 +76,14 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  {
+    path: '/auth/mfa',
+    element: <MfaVerifyPage />,
+  },
+  {
+    path: '/auth/setup-2fa',
+    element: <Setup2faPage />,
   },
   {
     path: '/register',
@@ -185,46 +199,25 @@ export const router = createBrowserRouter([
           </AuthGuard>
         ),
       },
-      {
-        path: 'platform/tenants',
-        element: (
-          <AuthGuard roles={['superadmin']}>
-            <PlatformTenantsPage />
-          </AuthGuard>
-        ),
-      },
-      {
-        path: 'platform/plans',
-        element: (
-          <AuthGuard roles={['superadmin']}>
-            <PlatformPlansPage />
-          </AuthGuard>
-        ),
-      },
-      {
-        path: 'platform/promo-codes',
-        element: (
-          <AuthGuard roles={['superadmin']}>
-            <PlatformPromoCodesPage />
-          </AuthGuard>
-        ),
-      },
-      {
-        path: 'platform/leads',
-        element: (
-          <AuthGuard roles={['superadmin']}>
-            <PlatformLeadsPage />
-          </AuthGuard>
-        ),
-      },
-      {
-        path: 'platform/feedback',
-        element: (
-          <AuthGuard roles={['superadmin']}>
-            <PlatformFeedbackPage />
-          </AuthGuard>
-        ),
-      },
+    ],
+  },
+  {
+    path: '/platform',
+    element: (
+      <AuthGuard roles={['superadmin']}>
+        <PlatformLayout />
+      </AuthGuard>
+    ),
+    children: [
+      { index: true, element: <Navigate to="dashboard" replace /> },
+      { path: 'dashboard', element: <PlatformDashboardPage /> },
+      { path: 'tenants', element: <PlatformTenantsPage /> },
+      { path: 'plans', element: <PlatformPlansPage /> },
+      { path: 'promo-codes', element: <PlatformPromoCodesPage /> },
+      { path: 'leads', element: <PlatformLeadsPage /> },
+      { path: 'feedback', element: <PlatformFeedbackPage /> },
+      { path: 'audit', element: <PlatformAuditLogPage /> },
+      { path: 'email-templates', element: <PlatformEmailTemplatesPage /> },
     ],
   },
   {

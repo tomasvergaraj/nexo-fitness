@@ -58,6 +58,7 @@ class PlanCreate(BaseModel):
     allowed_branches: Optional[List[str]] = None
     benefits: Optional[List[str]] = None
     is_featured: bool = False
+    is_trial: bool = False
     auto_renew: bool = True
 
 class PlanUpdate(BaseModel):
@@ -71,6 +72,7 @@ class PlanUpdate(BaseModel):
     max_reservations_per_month: Optional[int] = None
     is_active: Optional[bool] = None
     is_featured: Optional[bool] = None
+    is_trial: Optional[bool] = None
     auto_renew: Optional[bool] = None
 
 class PlanResponse(BaseModel):
@@ -86,6 +88,7 @@ class PlanResponse(BaseModel):
     max_reservations_per_month: Optional[int] = None
     is_active: bool
     is_featured: bool
+    is_trial: bool = False
     auto_renew: bool
     created_at: datetime
     model_config = {"from_attributes": True}
@@ -106,6 +109,7 @@ class GymClassCreate(BaseModel):
     waitlist_enabled: bool = True
     online_link: Optional[str] = None
     cancellation_deadline_hours: int = 2
+    reservation_closes_minutes_before: int = Field(ge=0, default=0)
     color: Optional[str] = None
     program_id: Optional[UUID] = None
     restricted_plan_id: Optional[UUID] = None
@@ -124,6 +128,8 @@ class GymClassUpdate(BaseModel):
     max_capacity: Optional[int] = None
     waitlist_enabled: Optional[bool] = None
     online_link: Optional[str] = None
+    cancellation_deadline_hours: Optional[int] = None
+    reservation_closes_minutes_before: Optional[int] = Field(default=None, ge=0)
     color: Optional[str] = None
     status: Optional[str] = None
     program_id: Optional[UUID] = None
@@ -146,6 +152,8 @@ class GymClassResponse(BaseModel):
     current_bookings: int
     waitlist_enabled: bool
     online_link: Optional[str] = None
+    cancellation_deadline_hours: int = 1
+    reservation_closes_minutes_before: int = 0
     color: Optional[str] = None
     program_id: Optional[UUID] = None
     restricted_plan_id: Optional[UUID] = None

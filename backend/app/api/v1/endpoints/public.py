@@ -301,7 +301,12 @@ async def _build_tenant_public_profile_response(
     plans = (
         await db.execute(
             select(Plan)
-            .where(Plan.tenant_id == tenant.id, Plan.is_active == True, Plan.deleted_at == None)
+            .where(
+                Plan.tenant_id == tenant.id,
+                Plan.is_active == True,
+                Plan.deleted_at == None,
+                Plan.is_trial == False,
+            )
             .order_by(Plan.is_featured.desc(), Plan.sort_order.asc(), Plan.price.asc())
             .limit(6)
         )
@@ -540,7 +545,7 @@ async def _activate_checkout_purchase(
         except Exception:
             pass  # Don't fail the checkout on promo tracking error
 
-    if is_new_user and settings.SENDGRID_API_KEY.strip():
+    if is_new_user and settings.RESEND_API_KEY.strip():
         await email_service.send_password_reset(customer_email, _build_checkout_reset_url(user.id))
 
     return {
@@ -573,7 +578,12 @@ async def list_tenant_public_plans(slug: str, db: AsyncSession = Depends(get_db)
     plans = (
         await db.execute(
             select(Plan)
-            .where(Plan.tenant_id == tenant.id, Plan.is_active == True, Plan.deleted_at == None)
+            .where(
+                Plan.tenant_id == tenant.id,
+                Plan.is_active == True,
+                Plan.deleted_at == None,
+                Plan.is_trial == False,
+            )
             .order_by(Plan.is_featured.desc(), Plan.sort_order.asc(), Plan.price.asc())
         )
     ).scalars().all()
@@ -1594,6 +1604,7 @@ async def webpay_return(request: Request, db: AsyncSession = Depends(get_db)):
                 provider="webpay",
                 status="success",
                 flow=transaction.flow_type,
+                webpay_token=token_ws if transaction.flow_type == "webpay_connectivity_test" else None,
             )
         except Exception as exc:
             transaction.status = "activation_error"
@@ -1843,6 +1854,38 @@ async def create_public_lead(data: PlatformLeadCreateRequest, db: AsyncSession =
                 detail="Platform leads storage is not initialized. Run migrations.",
             ) from error
         raise
+
+
+@platform_router.post("/users/{user_id}/disable-2fa")
+async def platform_disable_user_2fa(
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    superadmin=Depends(require_superadmin()),
+):
+    """Emergency 2FA reset by superadmin (e.g. owner lost device + backup codes).
+
+    Audit-logged. Recipient is forced to re-enroll on next login if their tenant
+    still requires 2FA.
+    """
+    from app.models.user import User as _User
+    user = await db.get(_User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not user.two_factor_enabled and not user.two_factor_secret:
+        return {"detail": "El usuario no tenía 2FA activado.", "user_id": str(user_id)}
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.two_factor_verified_at = None
+    user.backup_codes = None
+    await db.commit()
+    import structlog as _sl
+    _sl.get_logger().warning(
+        "platform_2fa_disabled_by_superadmin",
+        target_user_id=str(user_id),
+        target_email=user.email,
+        actor_user_id=str(superadmin.id) if superadmin else None,
+    )
+    return {"detail": "2FA desactivado. El usuario podrá iniciar sesión sin verificación.", "user_id": str(user_id)}
 
 
 @platform_router.get("/leads", response_model=PaginatedResponse)

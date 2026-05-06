@@ -240,10 +240,25 @@ export default function ReportsPage() {
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={data?.revenue_by_plan ?? []} dataKey="value" innerRadius={55} outerRadius={95} paddingAngle={3}>
+                      <Pie
+                        data={data?.revenue_by_plan ?? []}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="45%"
+                        innerRadius={50}
+                        outerRadius={85}
+                        paddingAngle={3}
+                      >
                         {(data?.revenue_by_plan ?? []).map((item) => <Cell key={item.name} fill={item.color} />)}
                       </Pie>
                       <Tooltip formatter={(value: number) => [formatCurrency(value), 'Ingresos']} />
+                      <Legend
+                        verticalAlign="bottom"
+                        align="center"
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 )}

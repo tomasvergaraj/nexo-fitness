@@ -84,8 +84,12 @@ export default api;
 /* ─── API Service Functions ──────────────────────────────────── */
 
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post('/auth/login', { email, password }),
+  login: (email: string, password: string, device_token?: string | null) =>
+    api.post('/auth/login', {
+      email,
+      password,
+      ...(device_token ? { device_token } : {}),
+    }),
   registerGym: (data: Record<string, unknown>) =>
     api.post('/auth/register-gym', data),
   me: () => api.get('/auth/me'),
@@ -104,6 +108,39 @@ export const authApi = {
     api.post('/auth/email-verification/send', { email }),
   confirmEmailVerification: (email: string, code: string) =>
     api.post('/auth/email-verification/confirm', { email, code }),
+
+  // 2FA — already-authenticated user
+  get2faStatus: () => api.get('/auth/2fa/status'),
+  start2faSetup: () => api.post('/auth/2fa/setup'),
+  verify2faSetup: (code: string) => api.post('/auth/2fa/verify-setup', { code }),
+  disable2fa: (password: string, code: string) =>
+    api.post('/auth/2fa/disable', { password, code }),
+  regenerate2faBackupCodes: (code: string) =>
+    api.post('/auth/2fa/regenerate-backup-codes', { code }),
+
+  // 2FA — login flow (uses mfa_token, not JWT)
+  verifyMfaLogin: (
+    mfa_token: string,
+    code: string,
+    is_backup_code = false,
+    options?: { remember_device?: boolean; device_label?: string },
+  ) =>
+    api.post('/auth/login/verify', {
+      mfa_token,
+      code,
+      is_backup_code,
+      remember_device: options?.remember_device ?? false,
+      device_label: options?.device_label,
+    }),
+  loginStart2faSetup: (mfa_token: string) =>
+    api.post('/auth/login/setup-2fa', { mfa_token }),
+  loginVerify2faSetup: (mfa_token: string, code: string) =>
+    api.post('/auth/login/verify-setup-2fa', { mfa_token, code }),
+
+  // Trusted devices
+  listTrustedDevices: () => api.get('/auth/2fa/trusted-devices'),
+  revokeTrustedDevice: (id: string) => api.delete(`/auth/2fa/trusted-devices/${id}`),
+  revokeAllTrustedDevices: () => api.delete('/auth/2fa/trusted-devices'),
 };
 
 export const billingApi = {
@@ -130,6 +167,30 @@ export const billingApi = {
     api.get(`/billing/admin/tenants/${tenantId}/payments`, { params }),
   recordPaymentInvoice: (paymentId: string, data: { folio_number: number; invoice_date: string }) =>
     api.patch(`/billing/admin/payments/${paymentId}/invoice`, data),
+  // Acciones admin sobre tenants
+  setTenantAccess: (tenantId: string, data: { is_active: boolean; reason?: string }) =>
+    api.patch(`/billing/admin/tenants/${tenantId}/access`, data),
+  sendOwnerPasswordReset: (tenantId: string) =>
+    api.post(`/billing/admin/tenants/${tenantId}/owner-password-reset`),
+};
+
+export const platformAdminApi = {
+  disableUser2fa: (userId: string) => api.post(`/platform/users/${userId}/disable-2fa`),
+  getPlatformStats: () => api.get('/billing/admin/platform-stats'),
+  listAuditLogs: (params?: Record<string, unknown>) => api.get('/billing/admin/audit-logs', { params }),
+  impersonateTenantOwner: (tenantId: string) => api.post(`/billing/admin/tenants/${tenantId}/impersonate`),
+  refundPayment: (paymentId: string, data: { amount?: number; reason?: string }) =>
+    api.post(`/billing/admin/payments/${paymentId}/refund`, data),
+  updateTenantFeatureFlags: (tenantId: string, flags: Record<string, unknown>) =>
+    api.patch(`/billing/admin/tenants/${tenantId}/feature-flags`, { flags }),
+  listEmailTemplates: () => api.get('/billing/admin/email-templates'),
+  getEmailTemplate: (key: string) => api.get(`/billing/admin/email-templates/${key}`),
+  upsertEmailTemplate: (key: string, data: {
+    name: string; subject: string; body_html: string; body_text?: string;
+    description?: string; variables?: Record<string, unknown>; is_active?: boolean;
+  }) => api.put(`/billing/admin/email-templates/${key}`, data),
+  previewEmailTemplate: (key: string, context?: Record<string, unknown>) =>
+    api.post(`/billing/admin/email-templates/${key}/preview`, { context: context ?? {} }),
 };
 
 export const dashboardApi = {
@@ -174,12 +235,28 @@ export const clientsApi = {
   resetPassword: (id: string, newPassword: string) => api.post(`/clients/${id}/reset-password`, { new_password: newPassword }),
   stats: (id: string) => api.get(`/clients/${id}/stats`),
   membershipHistory: (id: string) => api.get(`/clients/${id}/membership-history`),
+  importTemplate: (format: 'xlsx' | 'csv' = 'xlsx') =>
+    api.get('/clients/import/template', { params: { format }, responseType: 'blob' }),
+  importPreview: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/clients/import/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  importCommit: (importToken: string) =>
+    api.post('/clients/import/commit', { import_token: importToken }),
+  importErrorsExport: (errors: Array<{ row: number; column: string; message: string }>) =>
+    api.post('/clients/import/errors-export', { errors }, { responseType: 'blob' }),
+  export: (params: Record<string, unknown> & { format: 'xlsx' | 'csv' }) =>
+    api.get('/clients/export', { params, responseType: 'blob' }),
 };
 
 export const plansApi = {
   list: (params?: Record<string, unknown>) => api.get('/plans', { params }),
   create: (data: Record<string, unknown>) => api.post('/plans', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/plans/${id}`, data),
+  delete: (id: string) => api.delete(`/plans/${id}`),
 };
 
 export const paymentsApi = {
@@ -306,6 +383,8 @@ export const paymentProviderApi = {
   create: (data: Record<string, unknown>) => api.post('/payment-provider/accounts', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/payment-provider/accounts/${id}`, data),
   delete: (id: string) => api.delete(`/payment-provider/accounts/${id}`),
+  createWebpayTestTransaction: (id: string) =>
+    api.post<{ checkout_url: string; transaction_id: string }>(`/payment-provider/accounts/${id}/webpay/test-transaction`),
 };
 
 export const platformApi = {

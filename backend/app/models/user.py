@@ -56,6 +56,12 @@ class User(Base):
     password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     refresh_token: Mapped[Optional[str]] = mapped_column(String(500))
 
+    # 2FA / TOTP
+    two_factor_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    two_factor_secret: Mapped[Optional[str]] = mapped_column(String(255))  # Fernet-encrypted base32 seed
+    two_factor_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    backup_codes: Mapped[Optional[str]] = mapped_column(Text)  # JSON list of bcrypt hashes (single-use)
+
     # Meta
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -77,3 +83,25 @@ class User(Base):
     @property
     def full_name(self) -> str:
         return " ".join(part for part in [self.first_name, self.last_name] if part).strip()
+
+
+class UserTrustedDevice(Base):
+    """Devices on which a user has chosen to skip 2FA for ~30 days."""
+    __tablename__ = "user_trusted_devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(100))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(500))
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

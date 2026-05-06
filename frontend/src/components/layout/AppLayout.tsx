@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import ImpersonationBanner from './ImpersonationBanner';
 import OwnerDesktopInstallPrompt from '@/components/dashboard/OwnerDesktopInstallPrompt';
 import { useOwnerDesktopInstallPrompt } from '@/hooks/useOwnerDesktopInstallPrompt';
 import { billingApi } from '@/services/api';
@@ -138,6 +139,8 @@ export default function AppLayout() {
             void desktopInstall.requestInstall();
           }}
         />
+
+        <ImpersonationBanner />
 
         <OwnerDesktopInstallPrompt
           open={desktopInstall.isSuggestionOpen}

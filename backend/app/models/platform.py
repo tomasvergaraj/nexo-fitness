@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -291,6 +291,13 @@ class PlatformBillingPayment(Base):
     invoice_xml: Mapped[Optional[str]] = mapped_column(Text)
     invoice_pdf_path: Mapped[Optional[str]] = mapped_column(String(500))
 
+    # Refunds (managed by superadmin)
+    refunded_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    refunded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    refund_reason: Mapped[Optional[str]] = mapped_column(String(255))
+    refund_external_reference: Mapped[Optional[str]] = mapped_column(String(255))
+    refund_status: Mapped[Optional[str]] = mapped_column(String(30), index=True)  # pending / partial / refunded / failed / manual
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -382,6 +389,71 @@ class PushDelivery(Base):
     receipt_message: Mapped[Optional[str]] = mapped_column(Text)
     receipt_error: Mapped[Optional[str]] = mapped_column(String(100))
     receipt_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class PlatformAuditLog(Base):
+    """Append-only log of superadmin actions on the SaaS platform.
+
+    Records who did what, on what target, with payload, IP and UA. Used by
+    the audit page and the impersonation banner so privileged actions are
+    always traceable."""
+
+    __tablename__ = "platform_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    actor_email: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    action: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String(60), index=True)
+    target_id: Mapped[Optional[str]] = mapped_column(String(80), index=True)
+    target_label: Mapped[Optional[str]] = mapped_column(String(255))
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB)
+    severity: Mapped[str] = mapped_column(String(20), default="info", index=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+
+
+class PlatformEmailTemplate(Base):
+    """Email templates managed by superadmin (trial reminders, expiration warnings, etc).
+
+    Body uses ``{{var}}`` placeholders. The ``variables`` field documents
+    expected keys + sample values for the preview pane in the editor."""
+
+    __tablename__ = "platform_email_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    body_html: Mapped[str] = mapped_column(Text, nullable=False)
+    body_text: Mapped[Optional[str]] = mapped_column(Text)
+    variables: Mapped[Optional[dict]] = mapped_column(JSONB)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
