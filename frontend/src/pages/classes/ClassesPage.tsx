@@ -500,10 +500,15 @@ export default function ClassesPage() {
     queryFn: async () => (await branchesApi.list()).data,
   });
 
-  const { data: plans = [] } = useQuery<import('@/types').Plan[]>({
+  const { data: plansRaw } = useQuery<import('@/types').Plan[]>({
     queryKey: ['plans-active'],
-    queryFn: async () => (await plansApi.list({ is_active: true })).data?.items ?? [],
+    queryFn: async () => {
+      const response = await plansApi.list({ active_only: true });
+      const items = response.data?.items;
+      return Array.isArray(items) ? items : [];
+    },
   });
+  const plans = Array.isArray(plansRaw) ? plansRaw : [];
 
   const { data: staffList = [] } = useQuery<Array<{ id: string; full_name: string; role: string }>>({
     queryKey: ['staff'],

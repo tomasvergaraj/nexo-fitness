@@ -367,7 +367,7 @@ export default function ClientsPage() {
     queryFn: async () => (await plansApi.list({ active_only: true })).data,
     staleTime: 5 * 60_000,
   });
-  const planOptions = planOptionsData?.items ?? [];
+  const planOptions = Array.isArray(planOptionsData?.items) ? planOptionsData!.items : [];
 
   const allAvailablePlans = availablePlansData?.items ?? [];
   const availablePlans = useMemo(
