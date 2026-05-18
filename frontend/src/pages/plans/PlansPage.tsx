@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 import { Plus, Check, Star, Edit2, ToggleLeft, ToggleRight, Tag, Trash2, Gift } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
+import { SkeletonCard } from '@/components/ui/Skeleton';
 import { plansApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import { cn, formatCurrency, formatDurationLabel, parseApiNumber, getApiError } from '@/utils';
@@ -309,8 +311,30 @@ export default function PlansPage() {
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
         {isLoading ? (
           Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="shimmer h-[420px] rounded-2xl" />
+            <SkeletonCard key={index} lines={6} />
           ))
+        ) : null}
+
+        {!isLoading && !plans.length ? (
+          <div className="col-span-full">
+            <EmptyState
+              icon={Tag}
+              title="Todavía no tienes planes"
+              description="Crea el primer plan para empezar a vender membresías a tus clientes."
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm(emptyForm);
+                    setShowModal(true);
+                  }}
+                  className="btn-primary text-sm"
+                >
+                  <Plus size={14} /> Nuevo plan
+                </button>
+              }
+            />
+          </div>
         ) : null}
 
         {!isLoading ? plans.map((plan, index) => (
@@ -339,6 +363,7 @@ export default function PlansPage() {
                   {plan.name}
                 </h3>
                 <span className={cn('badge', plan.is_active ? 'badge-success' : 'badge-warning')}>
+                  {plan.is_active ? <Check size={10} /> : <ToggleLeft size={10} />}
                   {plan.is_active ? 'Activo' : 'Inactivo'}
                 </span>
                 {plan.is_trial ? (

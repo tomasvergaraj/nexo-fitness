@@ -7,6 +7,7 @@ import {
   BarChart2,
   Bell,
   Cake,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CreditCard,
@@ -36,6 +37,8 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
+import EmptyState from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/Skeleton';
 import MembershipCardModal from '@/components/clients/MembershipCardModal';
 import ImportClientsModal from '@/components/clients/ImportClientsModal';
 import TagInput from '@/components/ui/TagInput';
@@ -1027,15 +1030,9 @@ export default function ClientsPage() {
 
         <div className="divide-y divide-surface-100 dark:divide-surface-800">
           {isLoading ? (
-            Array.from({ length: 5 }).map((_, index) => (
-              <div key={index} className="grid grid-cols-1 gap-4 px-5 py-4 md:grid-cols-12">
-                <div className="shimmer h-14 rounded-xl md:col-span-4" />
-                <div className="shimmer h-14 rounded-xl md:col-span-3" />
-                <div className="shimmer h-14 rounded-xl md:col-span-2" />
-                <div className="shimmer h-14 rounded-xl md:col-span-1" />
-                <div className="shimmer h-14 rounded-xl md:col-span-2" />
-              </div>
-            ))
+            <div className="p-4">
+              <SkeletonTable rows={6} columns={5} />
+            </div>
           ) : null}
 
           {!isLoading && isError ? (
@@ -1045,11 +1042,22 @@ export default function ClientsPage() {
           ) : null}
 
           {!isLoading && !isError && !items.length ? (
-            <div className="px-5 py-10 text-center">
-              <Users size={28} className="mx-auto mb-3 text-surface-300 dark:text-surface-700" />
-              <p className="font-medium text-surface-700 dark:text-surface-200">No hay clientes para mostrar</p>
-              <p className="mt-1 text-sm text-surface-500">Prueba con otros filtros o crea un cliente nuevo.</p>
-            </div>
+            <EmptyState
+              icon={Users}
+              title="No hay clientes para mostrar"
+              description="Prueba con otros filtros o agrega tu primer cliente para empezar."
+              variant="inline"
+              action={
+                <button type="button" onClick={() => setShowCreateModal(true)} className="btn-primary text-sm">
+                  <Plus size={14} /> Nuevo cliente
+                </button>
+              }
+              secondaryAction={
+                <button type="button" onClick={() => setShowImportModal(true)} className="btn-secondary text-sm">
+                  <Upload size={14} /> Importar
+                </button>
+              }
+            />
           ) : null}
 
           {!isLoading && !isError
@@ -1080,6 +1088,7 @@ export default function ClientsPage() {
 
                   <div className="col-span-2 flex flex-wrap items-center gap-1">
                     <span className={cn('badge', client.is_active ? 'badge-success' : 'badge-warning')}>
+                      {client.is_active ? <CheckCircle2 size={10} /> : <Power size={10} />}
                       {client.is_active ? 'Activo' : 'Inactivo'}
                     </span>
                     {client.membership_status === 'frozen' && (

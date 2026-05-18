@@ -94,7 +94,7 @@ function StatusCard({ billing }: { billing: TenantBilling }) {
   const label = STATUS_LABEL[billing.status] ?? billing.status;
 
   return (
-    <div className="rounded-[2rem] border border-brand-200/40 bg-gradient-to-br from-brand-500 via-brand-600 to-brand-800 p-6 text-white shadow-2xl shadow-brand-500/20">
+    <div className="rounded-[2rem] border border-brand-200/40 bg-gradient-to-br from-brand-500 via-brand-600 to-brand-800 p-6 text-white shadow-xl shadow-brand-500/20 dark:border-brand-700/40 dark:from-brand-700 dark:via-brand-800 dark:to-brand-950 dark:shadow-brand-900/30">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/15">

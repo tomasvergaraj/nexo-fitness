@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
+import { SkeletonCard, SkeletonList } from '@/components/ui/Skeleton';
 import { campaignsApi, clientsApi, notificationsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatDateTime, toDateInputValue, getApiError } from '@/utils';
@@ -433,7 +434,7 @@ export default function MarketingPage() {
       {/* ── Dashboard KPIs primarios ── */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {isLoadingOverview ? (
-          Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-28 rounded-2xl" />)
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} lines={1} />)
         ) : (
           <>
             <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
@@ -482,7 +483,7 @@ export default function MarketingPage() {
       {/* ── Dashboard métricas operativas ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {isLoadingOverview ? (
-          Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-24 rounded-2xl" />)
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} lines={1} />)
         ) : (
           <>
             <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
@@ -545,9 +546,7 @@ export default function MarketingPage() {
       {/* ── Lista de campañas ── */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {isLoading ? (
-          Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="shimmer h-64 rounded-3xl" />
-          ))
+          Array.from({ length: 4 }).map((_, index) => <SkeletonCard key={index} lines={4} />)
         ) : campaigns.length === 0 ? (
           <motion.div
             variants={fadeInUp}
@@ -1196,7 +1195,7 @@ export default function MarketingPage() {
             {/* Lista de clientes */}
             <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
               {isLoadingClients
-                ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-16 rounded-2xl" />)
+                ? <SkeletonList rows={4} withAvatar />
                 : null}
 
               {isClientsError ? (

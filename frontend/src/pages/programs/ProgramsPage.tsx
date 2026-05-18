@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  Clock3,
   Dumbbell,
   LibraryBig,
   Link2Off,
@@ -20,6 +21,8 @@ import {
   X,
 } from 'lucide-react';
 import ClassColorPicker from '@/components/ui/ClassColorPicker';
+import EmptyState from '@/components/ui/EmptyState';
+import { SkeletonCard } from '@/components/ui/Skeleton';
 import Modal from '@/components/ui/Modal';
 import { branchesApi, classesApi, plansApi, programBookingsApi, programsApi, staffApi } from '@/services/api';
 import { cn, formatDateTime, getApiError } from '@/utils';
@@ -1687,7 +1690,7 @@ export default function ProgramsPage() {
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
         {isLoading ? (
-          Array.from({ length: 3 }).map((_, index) => <div key={index} className="shimmer h-56 rounded-3xl" />)
+          Array.from({ length: 3 }).map((_, index) => <SkeletonCard key={index} lines={4} />)
         ) : filteredPrograms.map((program) => {
           const plannedExerciseCount = countProgramExercises(program);
           const normalizedSchedule = program.schedule.map((entry, index) => normalizeScheduleDay(entry, index));
@@ -1703,6 +1706,7 @@ export default function ProgramsPage() {
                   <Dumbbell size={22} />
                 </div>
                 <span className={`badge ${program.is_active ? 'badge-success' : 'badge-warning'}`}>
+                  {program.is_active ? <CheckCircle2 size={10} /> : <Clock3 size={10} />}
                   {program.is_active ? 'Activo' : 'Pausado'}
                 </span>
               </div>
@@ -1826,16 +1830,21 @@ export default function ProgramsPage() {
         })}
 
         {!isLoading && !filteredPrograms.length ? (
-          <div className="col-span-full rounded-3xl border border-dashed border-surface-300 bg-surface-50 px-6 py-12 text-center dark:border-surface-700 dark:bg-surface-900/30">
-            <Dumbbell size={28} className="mx-auto mb-3 text-surface-300 dark:text-surface-700" />
-            <p className="font-medium text-surface-700 dark:text-surface-200">
-              {programSearch ? 'No encontramos programas con ese filtro' : 'Todavía no tienes programas creados'}
-            </p>
-            <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">
-              {programSearch
+          <div className="col-span-full">
+            <EmptyState
+              icon={Dumbbell}
+              title={programSearch ? 'No encontramos programas con ese filtro' : 'Todavía no tienes programas creados'}
+              description={programSearch
                 ? 'Prueba con otro nombre, tipo o trainer.'
                 : 'Crea el primero y luego planifica sus ejercicios por día.'}
-            </p>
+              action={
+                !programSearch ? (
+                  <button type="button" onClick={openCreateProgramModal} className="btn-primary text-sm">
+                    <Plus size={14} /> Nuevo programa
+                  </button>
+                ) : undefined
+              }
+            />
           </div>
         ) : null}
       </div>

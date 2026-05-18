@@ -7,6 +7,8 @@ import {
   Ban, ExternalLink, MapPin, Repeat2, UserCircle, Copy, Tag, Info,
 } from 'lucide-react';
 import ClassColorPicker from '@/components/ui/ClassColorPicker';
+import EmptyState from '@/components/ui/EmptyState';
+import { SkeletonCard, SkeletonList } from '@/components/ui/Skeleton';
 import Modal from '@/components/ui/Modal';
 import Tooltip from '@/components/ui/Tooltip';
 import { branchesApi, checkinsApi, classesApi, clientsApi, plansApi, reservationsApi, staffApi } from '@/services/api';
@@ -1523,18 +1525,31 @@ export default function ClassesPage() {
           )}
         >
           {(viewMode === 'calendar' ? isCalendarLoading : isLoading) ? (
-            Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="shimmer h-44 rounded-2xl" />
-            ))
+            viewMode === 'list' ? (
+              <SkeletonList rows={6} withAvatar={false} />
+            ) : (
+              Array.from({ length: 6 }).map((_, index) => (
+                <SkeletonCard key={index} lines={3} />
+              ))
+            )
           ) : null}
 
           {!isLoading && viewMode !== 'calendar' && !classes.length ? (
-            <div className="col-span-full rounded-2xl border border-dashed border-surface-300 bg-surface-50 px-6 py-10 text-center dark:border-surface-700 dark:bg-surface-900/30">
-              <CalendarDays size={28} className="mx-auto mb-3 text-surface-300 dark:text-surface-700" />
-              <p className="font-medium text-surface-700 dark:text-surface-200">No hay clases para este día</p>
-              <p className="mt-1 text-sm text-surface-500">
-                {selectedBranchId ? 'Prueba otra sede o crea una nueva clase.' : 'Prueba otro día o crea una nueva clase.'}
-              </p>
+            <div className="col-span-full">
+              <EmptyState
+                icon={CalendarDays}
+                title="No hay clases para este día"
+                description={selectedBranchId ? 'Prueba otra sede o crea una nueva clase.' : 'Prueba otro día o crea una nueva clase.'}
+                action={
+                  <button
+                    type="button"
+                    onClick={() => openCreateModalForDate(selectedDate, 9)}
+                    className="btn-primary text-sm"
+                  >
+                    <Plus size={14} /> Crear clase
+                  </button>
+                }
+              />
             </div>
           ) : null}
 
