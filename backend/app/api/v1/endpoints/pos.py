@@ -6,6 +6,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1157,6 +1158,57 @@ async def update_expense(
     await db.commit()
     await db.refresh(expense)
     return expense
+
+
+@pos_router.get("/expenses/export")
+async def export_expenses(
+    category: Optional[str] = None,
+    branch_id: Optional[UUID] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Exporta los gastos filtrados como CSV."""
+    import csv
+    from io import StringIO
+
+    q = select(Expense).where(Expense.tenant_id == ctx.tenant_id)
+    if category:
+        q = q.where(Expense.category == category)
+    if branch_id:
+        q = q.where(Expense.branch_id == branch_id)
+    if from_date:
+        q = q.where(Expense.expense_date >= from_date)
+    if to_date:
+        q = q.where(Expense.expense_date <= to_date)
+    q = q.order_by(Expense.expense_date.desc()).limit(10000)
+    rows = (await db.execute(q)).scalars().all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No hay gastos para exportar con esos filtros")
+
+    buf = StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(["Fecha", "Categoría", "Descripción", "Monto", "Recibo", "Sucursal"])
+    for e in rows:
+        writer.writerow([
+            e.expense_date.isoformat() if e.expense_date else "",
+            e.category or "",
+            (e.description or "").replace("\n", " "),
+            str(e.amount or 0),
+            e.receipt_url or "",
+            str(e.branch_id) if e.branch_id else "",
+        ])
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    body = "﻿" + buf.getvalue()  # BOM for Excel
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="gastos_nexo_{today}.csv"'},
+    )
 
 
 @pos_router.delete("/expenses/{expense_id}", status_code=204)

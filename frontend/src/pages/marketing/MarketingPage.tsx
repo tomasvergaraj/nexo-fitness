@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -202,9 +203,29 @@ function channelColors(channel: Campaign['channel']) {
 
 export default function MarketingPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [showModal, setShowModal] = useState(false);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   const [form, setForm] = useState<CampaignForm>(emptyForm);
+
+  // Quick-launch retention campaign cuando llegamos con ?segment=inactive (desde
+  // el banner de churn de ClientsPage). Pre-puebla la audiencia y abre el modal.
+  useEffect(() => {
+    const segment = searchParams.get('segment');
+    if (segment === 'inactive') {
+      setForm({
+        ...emptyForm,
+        name: 'Campaña de retención',
+        subject: '¡Te extrañamos!',
+        content: 'Hace un tiempo que no te vemos por el gym. Vuelve y te tenemos una sorpresa.',
+        audience_status: 'inactive',
+      });
+      setShowModal(true);
+      searchParams.delete('segment');
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [broadcastForm, setBroadcastForm] = useState<BroadcastForm>(createBroadcastForm());
   const [recipientSearch, setRecipientSearch] = useState('');
   const [lastBroadcastResult, setLastBroadcastResult] = useState<NotificationBroadcastResponse | null>(null);

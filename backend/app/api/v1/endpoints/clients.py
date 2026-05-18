@@ -42,6 +42,7 @@ async def list_clients(
     tag: Optional[str] = None,
     birthday_month: bool = Query(False),
     churn_risk: Optional[str] = Query(None, pattern="^(high|medium|low)$"),
+    plan_id: Optional[UUID] = Query(None, description="Filtra por plan de la membresía vigente"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
@@ -151,6 +152,10 @@ async def list_clients(
 
         # Apply churn_risk filter post-enrichment (avoids complex SQL join)
         if churn_risk and risk != churn_risk:
+            continue
+
+        # Apply plan_id filter post-enrichment (membership.plan_id of current membership)
+        if plan_id and (not membership or membership.plan_id != plan_id):
             continue
 
         # date_of_birth may be a datetime — normalize to date

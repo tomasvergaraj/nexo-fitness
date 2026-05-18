@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  DollarSign, Plus, Edit2, Trash2, Loader2, Check, TrendingDown,
+  DollarSign, Plus, Edit2, Trash2, Loader2, Check, TrendingDown, Download,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import TableScroll from '@/components/ui/TableScroll';
@@ -74,6 +74,30 @@ export default function ExpensesPage() {
     onError: (err) => toast.error(getApiError(err)),
   });
 
+  const [isExporting, setIsExporting] = useState(false);
+  async function handleExport() {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const res = await posApi.exportExpenses(categoryFilter ? { category: categoryFilter } : {});
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const today = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `gastos_nexo_${today}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('Descargado');
+    } catch (err) {
+      toast.error(getApiError(err, 'No se pudo exportar'));
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   // ── KPIs ───────────────────────────────────────────────────────────────────
   const toNum = (v: unknown) => {
     const n = typeof v === 'string' ? parseFloat(v) : Number(v);
@@ -128,9 +152,19 @@ export default function ExpensesPage() {
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Gastos</h1>
           <p className="text-sm text-surface-500 mt-0.5">Registro de gastos operacionales</p>
         </div>
-        <button onClick={openCreate} className="btn-primary flex w-full items-center justify-center gap-1.5 px-4 py-2.5 text-sm sm:w-auto">
-          <Plus size={15} /> Registrar gasto
-        </button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <button
+            onClick={handleExport}
+            disabled={isExporting || expenses.length === 0}
+            className="btn-secondary flex w-full items-center justify-center gap-1.5 px-4 py-2.5 text-sm disabled:opacity-60 sm:w-auto"
+          >
+            {isExporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            Exportar CSV
+          </button>
+          <button onClick={openCreate} className="btn-primary flex w-full items-center justify-center gap-1.5 px-4 py-2.5 text-sm sm:w-auto">
+            <Plus size={15} /> Registrar gasto
+          </button>
+        </div>
       </div>
 
       {/* KPI cards */}

@@ -494,4 +494,6 @@ export const posApi = {
   createExpense: (data: Record<string, unknown>) => api.post('/pos/expenses', data),
   updateExpense: (id: string, data: Record<string, unknown>) => api.put(`/pos/expenses/${id}`, data),
   deleteExpense: (id: string) => api.delete(`/pos/expenses/${id}`),
+  exportExpenses: (params?: Record<string, unknown>) =>
+    api.get('/pos/expenses/export', { params, responseType: 'blob' }),
 };

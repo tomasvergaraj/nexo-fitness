@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -267,9 +268,11 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function ClientsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const userRole = useAuthStore((state) => state.user?.role);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [planFilter, setPlanFilter] = useState('');
   const [page, setPage] = useState(1);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
@@ -318,10 +321,10 @@ export default function ClientsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [deferredSearch, statusFilter]);
+  }, [deferredSearch, statusFilter, planFilter]);
 
   const { data, isLoading, isError } = useQuery<PaginatedResponse<User>>({
-    queryKey: ['clients', page, deferredSearch, statusFilter],
+    queryKey: ['clients', page, deferredSearch, statusFilter, planFilter],
     queryFn: async () => {
       const isChurnFilter = statusFilter === 'churn_high' || statusFilter === 'churn_medium';
       const response = await clientsApi.list({
@@ -331,6 +334,7 @@ export default function ClientsPage() {
         ...(statusFilter && !['birthday', 'churn_high', 'churn_medium'].includes(statusFilter) ? { status: statusFilter } : {}),
         ...(statusFilter === 'birthday' ? { birthday_month: true } : {}),
         ...(isChurnFilter ? { churn_risk: statusFilter === 'churn_high' ? 'high' : 'medium' } : {}),
+        ...(planFilter ? { plan_id: planFilter } : {}),
       });
       return response.data;
     },
@@ -356,6 +360,14 @@ export default function ClientsPage() {
     enabled: !!manualSaleClient,
     staleTime: 60_000,
   });
+
+  // Plans para filtro de la lista (siempre cargado, no depende de manualSaleClient)
+  const { data: planOptionsData } = useQuery<PaginatedResponse<Plan>>({
+    queryKey: ['plans', 'filter-options'],
+    queryFn: async () => (await plansApi.list({ active_only: true })).data,
+    staleTime: 5 * 60_000,
+  });
+  const planOptions = planOptionsData?.items ?? [];
 
   const allAvailablePlans = availablePlansData?.items ?? [];
   const availablePlans = useMemo(
@@ -1013,8 +1025,52 @@ export default function ClientsPage() {
               </button>
             );
           })}
+          {planOptions.length > 0 ? (
+            <select
+              value={planFilter}
+              onChange={(event) => setPlanFilter(event.target.value)}
+              className={cn(
+                'rounded-xl border border-surface-200 bg-white px-3 py-2 text-sm font-medium text-surface-600 transition-colors dark:border-surface-700 dark:bg-surface-900 dark:text-surface-300',
+                planFilter && 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950/40 dark:text-brand-300',
+              )}
+              aria-label="Filtrar por plan"
+            >
+              <option value="">Todos los planes</option>
+              {planOptions.map((plan) => (
+                <option key={plan.id} value={plan.id}>{plan.name}</option>
+              ))}
+            </select>
+          ) : null}
         </div>
       </motion.div>
+
+      {(statusFilter === 'churn_high' || statusFilter === 'churn_medium') && data && data.total > 0 ? (
+        <motion.div
+          variants={fadeInUp}
+          className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+              <TrendingDown size={16} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                {data.total} cliente{data.total === 1 ? '' : 's'} en riesgo de churn
+              </p>
+              <p className="text-xs text-amber-800/80 dark:text-amber-200/80">
+                Envíales una campaña de retención antes de que se den de baja.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/marketing?segment=inactive')}
+            className="btn-primary text-sm shrink-0"
+          >
+            Crear campaña
+          </button>
+        </motion.div>
+      ) : null}
 
       <motion.div
         variants={fadeInUp}
