@@ -33,7 +33,6 @@ async def _run_trial_warnings() -> dict:
     from app.models.tenant import Tenant, TenantStatus
     from app.models.user import User, UserRole
     from app.integrations.email.email_service import email_service
-    from app.services.tenant_access_service import create_reactivation_checkout
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -94,14 +93,7 @@ async def _run_trial_warnings() -> dict:
                 continue
 
             try:
-                # Intentar obtener URL de checkout para reactivación
                 checkout_url = settings.FRONTEND_URL + "/billing/expired"
-                try:
-                    generated_checkout_url = await create_reactivation_checkout(db, tenant, owner)
-                    if generated_checkout_url:
-                        checkout_url = generated_checkout_url
-                except Exception:
-                    pass  # Fallback a la billing wall
 
                 ok = await email_service.send_trial_expiring(
                     to_email=owner.email,

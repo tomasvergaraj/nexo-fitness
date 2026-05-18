@@ -90,14 +90,26 @@ async def list_owner_payments(
 async def reactivate_or_schedule_plan(
     data: ReactivateRequest,
     db: AsyncSession = Depends(get_db),
-    tenant=Depends(get_current_tenant),
     current_user=Depends(get_current_user),
     _user=Depends(require_roles("owner")),
 ):
+    # Fetch tenant WITHOUT enforce_tenant_access — this endpoint must remain
+    # callable when the tenant is EXPIRED (the whole point is to renew).
+    if current_user.is_superadmin or not current_user.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No aplica")
+    result = await db.execute(
+        select(Tenant)
+        .options(selectinload(Tenant.users))
+        .where(Tenant.id == current_user.tenant_id)
+    )
+    tenant = result.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
+
     try:
-        result = await BillingService.schedule_next_plan(db, tenant, current_user, data)
+        result_payload = await BillingService.schedule_next_plan(db, tenant, current_user, data)
         await db.commit()
-        return result
+        return result_payload
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -670,50 +682,7 @@ async def get_billing_status(
     }
 
 
-class ReactivateRequest(BaseModel):
-    plan_key: Optional[str] = None
-    promo_code_id: Optional[UUID] = None
-
-
-@router.post("/reactivate")
-async def reactivate_subscription(
-    body: ReactivateRequest = ReactivateRequest(),
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Generates a checkout URL for subscription renewal.
-    Accepts an optional plan_key to switch plans.
-    Only available to owners/admins.
-    """
-    if current_user.is_superadmin or not current_user.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No aplica")
-
-    result = await db.execute(
-        select(Tenant)
-        .options(selectinload(Tenant.users))
-        .where(Tenant.id == current_user.tenant_id)
-    )
-    tenant = result.scalar_one_or_none()
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada")
-
-    try:
-        checkout_url = await create_reactivation_checkout(
-            db,
-            tenant,
-            current_user,
-            plan_key=body.plan_key,
-            promo_code_id=body.promo_code_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
-    if checkout_url:
-        await db.flush()
-        return {"checkout_url": checkout_url}
-
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="No hay checkout disponible para este plan. Contacta a soporte.",
-    )
+# NOTE: a second `@router.post("/reactivate")` used to live here; it was unreachable
+# because FastAPI matches the first registered route. The reactivation flow now lives
+# in `reactivate_or_schedule_plan` above, which intentionally bypasses the
+# enforce_tenant_access gate so EXPIRED tenants can still hit it.

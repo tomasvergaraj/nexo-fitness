@@ -39,7 +39,6 @@ async def _run_license_expiry_warnings() -> dict:
     from app.models.tenant import Tenant, TenantStatus
     from app.models.user import User, UserRole
     from app.services.billing_service import get_tenant_feature_flags
-    from app.services.tenant_access_service import create_reactivation_checkout
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -115,14 +114,6 @@ async def _run_license_expiry_warnings() -> dict:
 
             try:
                 checkout_url = settings.FRONTEND_URL + "/billing/expired"
-                try:
-                    generated_checkout_url = await create_reactivation_checkout(
-                        db, tenant, owner, queue_after_payment=True
-                    )
-                    if generated_checkout_url:
-                        checkout_url = generated_checkout_url
-                except Exception:
-                    pass
 
                 ok = await email_service.send_license_expiring(
                     to_email=owner.email,
