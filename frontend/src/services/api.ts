@@ -215,6 +215,8 @@ export const classesApi = {
     }),
   replicate: (data: { mode: 'day' | 'week' | 'month'; source_date: string; target_dates: string[] }) =>
     api.post('/classes/replicate', data),
+  duplicate: (id: string, data: { start_time: string }) =>
+    api.post(`/classes/${id}/duplicate`, data),
 };
 
 export const reservationsApi = {

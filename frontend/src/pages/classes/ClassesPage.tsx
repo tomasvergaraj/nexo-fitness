@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
   CalendarDays, Plus, Filter, Clock, Users, Video, ChevronLeft, ChevronRight,
-  Ban, ExternalLink, MapPin, Repeat2, UserCircle, Copy, Tag,
+  Ban, ExternalLink, MapPin, Repeat2, UserCircle, Copy, Tag, Info,
 } from 'lucide-react';
 import ClassColorPicker from '@/components/ui/ClassColorPicker';
 import Modal from '@/components/ui/Modal';
@@ -447,7 +447,7 @@ export default function ClassesPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createModalDate, setCreateModalDate] = useState<Date | null>(null);
   const [calendarHourStart, setCalendarHourStart] = useState(6);
-  const [calendarHourEnd, setCalendarHourEnd] = useState(23);
+  const [calendarHourEnd, setCalendarHourEnd] = useState(24);
   const [selectedClass, setSelectedClass] = useState<GymClass | null>(null);
   const [classToCancel, setClassToCancel] = useState<GymClass | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -472,6 +472,20 @@ export default function ClassesPage() {
   const [replicateSourceDate, setReplicateSourceDate] = useState('');
   const [replicateTargetStart, setReplicateTargetStart] = useState('');
   const [replicateTargetEnd, setReplicateTargetEnd] = useState('');
+
+  // Calendar drag-and-drop copy: drag a day column header onto another day
+  const [dragSourceKey, setDragSourceKey] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [pendingCopy, setPendingCopy] = useState<{ source: string; target: string; count: number } | null>(null);
+  // Shift+drop on day header → pick multiple target days
+  const [pendingMultiCopy, setPendingMultiCopy] = useState<{ source: string; count: number } | null>(null);
+  const [multiCopySelectedKeys, setMultiCopySelectedKeys] = useState<string[]>([]);
+  // Drag of a single class block onto an hour slot
+  const [draggingClassId, setDraggingClassId] = useState<string | null>(null);
+  const [dragSlotKey, setDragSlotKey] = useState<string | null>(null); // `${dateKey}:${hour}`
+  const [pendingClassMove, setPendingClassMove] = useState<{
+    classId: string; className: string; newStart: Date; durationMin: number; copy: boolean;
+  } | null>(null);
 
   const weekDates = useMemo(() => buildWeekDays(weekStartDate), [weekStartDate]);
 
@@ -715,14 +729,37 @@ export default function ClassesPage() {
     },
     onSuccess: (data) => {
       setBulkCancelPreview(data);
-      if (data.matched_classes === 0) {
-        toast('No encontramos clases futuras programadas dentro del rango y horario visibles.');
-      }
-    },
-    onError: (error: any) => {
-      toast.error(getApiError(error, 'No se pudo previsualizar la cancelación masiva'));
     },
   });
+
+  function runManualPreview() {
+    previewBulkCancel.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data.matched_classes === 0) {
+          toast('No encontramos clases futuras programadas dentro del rango y horario visibles.');
+        }
+      },
+      onError: (error: any) => {
+        toast.error(getApiError(error, 'No se pudo previsualizar la cancelación masiva'));
+      },
+    });
+  }
+
+  useEffect(() => {
+    if (!showBulkCancelModal) return;
+    if (!bulkCancelForm.date_from || !bulkCancelForm.date_to) return;
+    const handle = setTimeout(() => previewBulkCancel.mutate(), 300);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    showBulkCancelModal,
+    bulkCancelForm.date_from,
+    bulkCancelForm.date_to,
+    bulkCancelForm.time_from,
+    bulkCancelForm.time_to,
+    selectedBranchId,
+    selectedInstructorId,
+  ]);
 
   const executeBulkCancel = useMutation({
     mutationFn: async () => {
@@ -861,12 +898,92 @@ export default function ClassesPage() {
       classesApi.replicate(payload),
     onSuccess: (res: any) => {
       const count = res.data?.created ?? 0;
-      toast.success(`${count} clase${count !== 1 ? 's' : ''} replicada${count !== 1 ? 's' : ''} correctamente`);
+      const createdIds: string[] = ((res.data?.classes ?? []) as Array<{ id?: string }>)
+        .map((c) => c.id)
+        .filter((id): id is string => Boolean(id));
       setShowReplicateModal(false);
       queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
       queryClient.invalidateQueries({ queryKey: ['classes'] });
+      const label = `${count} clase${count !== 1 ? 's' : ''} replicada${count !== 1 ? 's' : ''}`;
+      if (createdIds.length === 0) {
+        toast.success(label);
+        return;
+      }
+      toast.custom((t) => (
+        <div className="flex items-center gap-3 rounded-xl bg-surface-900 px-4 py-3 text-sm font-medium text-white shadow-lg ring-1 ring-black/10">
+          <span>{label}</span>
+          <button
+            type="button"
+            className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide hover:bg-white/25"
+            onClick={async () => {
+              toast.dismiss(t.id);
+              const undoToastId = toast.loading('Deshaciendo…');
+              const results = await Promise.allSettled(createdIds.map((id) => classesApi.cancel(id)));
+              const failed = results.filter((r) => r.status === 'rejected').length;
+              queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+              queryClient.invalidateQueries({ queryKey: ['classes'] });
+              toast.dismiss(undoToastId);
+              if (failed > 0) {
+                toast.error(`No se pudieron eliminar ${failed} clase${failed !== 1 ? 's' : ''}`);
+              } else {
+                toast.success('Copia deshecha');
+              }
+            }}
+          >
+            Deshacer
+          </button>
+        </div>
+      ), { duration: 8000 });
     },
     onError: (error: any) => toast.error(getApiError(error, 'No se pudo replicar')),
+  });
+
+  const moveClassMutation = useMutation({
+    mutationFn: (vars: { id: string; start: string; end: string }) =>
+      classesApi.update(vars.id, { start_time: vars.start, end_time: vars.end }),
+    onSuccess: () => {
+      toast.success('Clase movida');
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo mover la clase')),
+  });
+
+  const duplicateClassMutation = useMutation({
+    mutationFn: (vars: { id: string; start: string }) =>
+      classesApi.duplicate(vars.id, { start_time: vars.start }),
+    onSuccess: (res: any) => {
+      const newId = res.data?.id as string | undefined;
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      if (!newId) {
+        toast.success('Clase duplicada');
+        return;
+      }
+      toast.custom((t) => (
+        <div className="flex items-center gap-3 rounded-xl bg-surface-900 px-4 py-3 text-sm font-medium text-white shadow-lg ring-1 ring-black/10">
+          <span>Clase duplicada</span>
+          <button
+            type="button"
+            className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide hover:bg-white/25"
+            onClick={async () => {
+              toast.dismiss(t.id);
+              try {
+                await classesApi.cancel(newId);
+                queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+                queryClient.invalidateQueries({ queryKey: ['classes'] });
+                toast.success('Duplicado deshecho');
+              } catch (e) {
+                toast.error('No se pudo deshacer');
+              }
+            }}
+          >
+            Deshacer
+          </button>
+        </div>
+      ), { duration: 6000 });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo duplicar la clase')),
   });
 
   function buildTargetDates(mode: ReplicateMode, start: string, end: string): string[] {
@@ -896,6 +1013,126 @@ export default function ClassesPage() {
       }
     }
     return dates;
+  }
+
+  function handleDayDragStart(event: React.DragEvent<HTMLButtonElement>, sourceKey: string, count: number) {
+    if (count === 0) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', sourceKey);
+    setDragSourceKey(sourceKey);
+  }
+
+  function handleDayDragOver(event: React.DragEvent<HTMLButtonElement>, key: string) {
+    if (!dragSourceKey || dragSourceKey === key) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    if (dragOverKey !== key) setDragOverKey(key);
+  }
+
+  function handleDayDragLeave(key: string) {
+    setDragOverKey((current) => (current === key ? null : current));
+  }
+
+  function handleDayDrop(event: React.DragEvent<HTMLButtonElement>, targetKey: string) {
+    event.preventDefault();
+    const source = dragSourceKey;
+    const shift = event.shiftKey;
+    setDragSourceKey(null);
+    setDragOverKey(null);
+    if (!source || source === targetKey) return;
+    const count = (calendarClassesByDay[source] ?? []).filter((c) => c.status !== 'cancelled').length;
+    if (count === 0) return;
+    if (shift) {
+      setPendingMultiCopy({ source, count });
+      setMultiCopySelectedKeys([targetKey]);
+    } else {
+      setPendingCopy({ source, target: targetKey, count });
+    }
+  }
+
+  function confirmPendingCopy() {
+    if (!pendingCopy) return;
+    replicateMutation.mutate({ mode: 'day', source_date: pendingCopy.source, target_dates: [pendingCopy.target] });
+    setPendingCopy(null);
+  }
+
+  function confirmMultiCopy() {
+    if (!pendingMultiCopy || multiCopySelectedKeys.length === 0) return;
+    replicateMutation.mutate({
+      mode: 'day',
+      source_date: pendingMultiCopy.source,
+      target_dates: multiCopySelectedKeys,
+    });
+    setPendingMultiCopy(null);
+    setMultiCopySelectedKeys([]);
+  }
+
+  function handleClassDragStart(event: React.DragEvent<HTMLButtonElement>, gymClass: GymClass) {
+    event.stopPropagation();
+    const wantsCopy = event.ctrlKey || event.metaKey;
+    event.dataTransfer.effectAllowed = wantsCopy ? 'copy' : 'move';
+    event.dataTransfer.setData('application/x-class-id', gymClass.id);
+    setDraggingClassId(gymClass.id);
+  }
+
+  function handleSlotDragOver(event: React.DragEvent<HTMLButtonElement>, dateKey: string, hour: number) {
+    if (!draggingClassId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = event.ctrlKey || event.metaKey ? 'copy' : 'move';
+    const key = `${dateKey}:${hour}`;
+    if (dragSlotKey !== key) setDragSlotKey(key);
+  }
+
+  function handleSlotDragLeave(dateKey: string, hour: number) {
+    const key = `${dateKey}:${hour}`;
+    setDragSlotKey((current) => (current === key ? null : current));
+  }
+
+  function handleSlotDrop(event: React.DragEvent<HTMLButtonElement>, date: Date, hour: number) {
+    if (!draggingClassId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const id = draggingClassId;
+    const copy = event.ctrlKey || event.metaKey;
+    setDraggingClassId(null);
+    setDragSlotKey(null);
+    const gc = calendarClasses.find((c) => c.id === id);
+    if (!gc) return;
+    const originalStart = new Date(gc.start_time);
+    // Preserve original minutes; only the hour + day come from the drop slot.
+    // Sub-hour precision is fiddly with drag-drop; users tweak minutes via edit.
+    const newStart = new Date(date);
+    newStart.setHours(hour, originalStart.getMinutes(), 0, 0);
+    const durationMs = new Date(gc.end_time).getTime() - originalStart.getTime();
+    const durationMin = Math.max(15, Math.round(durationMs / 60000));
+    // Same exact slot → no-op for move; for copy keep going.
+    if (
+      !copy
+      && originalStart.getFullYear() === newStart.getFullYear()
+      && originalStart.getMonth() === newStart.getMonth()
+      && originalStart.getDate() === newStart.getDate()
+      && originalStart.getHours() === newStart.getHours()
+    ) {
+      return;
+    }
+    setPendingClassMove({ classId: id, className: gc.name, newStart, durationMin, copy });
+  }
+
+  function confirmClassMove() {
+    if (!pendingClassMove) return;
+    const { classId, newStart, durationMin, copy } = pendingClassMove;
+    const startIso = newStart.toISOString();
+    if (copy) {
+      duplicateClassMutation.mutate({ id: classId, start: startIso });
+    } else {
+      const newEnd = new Date(newStart.getTime() + durationMin * 60000);
+      moveClassMutation.mutate({ id: classId, start: startIso, end: newEnd.toISOString() });
+    }
+    setPendingClassMove(null);
   }
 
   function handleReplicate() {
@@ -928,6 +1165,41 @@ export default function ClassesPage() {
     () => Array.from({ length: Math.max(calendarHourEnd - calendarHourStart, 1) }, (_, index) => calendarHourStart + index),
     [calendarHourEnd, calendarHourStart],
   );
+
+  const [nowMinutes, setNowMinutes] = useState(() => getMinutesOfDay(new Date()));
+  useEffect(() => {
+    if (viewMode !== 'calendar') return;
+    const tick = () => setNowMinutes(getMinutesOfDay(new Date()));
+    tick();
+    const id = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(id);
+  }, [viewMode]);
+  const nowInRange = nowMinutes >= calendarStartMinutes && nowMinutes <= calendarEndMinutes;
+  const nowTopPx = ((nowMinutes - calendarStartMinutes) / 60) * CALENDAR_SLOT_HEIGHT;
+  const nowLabel = `${String(Math.floor(nowMinutes / 60)).padStart(2, '0')}:${String(nowMinutes % 60).padStart(2, '0')}`;
+
+  // Auto-expand the visible calendar window when there are classes outside it.
+  // Shrinks are left to the user — we only widen so nothing is silently hidden.
+  useEffect(() => {
+    if (calendarClasses.length === 0) return;
+    let minStart = 24 * 60;
+    let maxEnd = 0;
+    for (const gc of calendarClasses) {
+      if (gc.status === 'cancelled' && statusFilter !== 'cancelled') continue;
+      const start = new Date(gc.start_time);
+      const end = new Date(gc.end_time);
+      const sm = getMinutesOfDay(start);
+      let em = getMinutesOfDay(end);
+      if (end.getTime() > start.getTime() && em <= sm) em = 1440; // crosses midnight
+      minStart = Math.min(minStart, sm);
+      maxEnd = Math.max(maxEnd, em);
+    }
+    if (maxEnd === 0) return;
+    const neededStart = Math.max(0, Math.floor(minStart / 60));
+    const neededEnd = Math.min(24, Math.ceil(maxEnd / 60));
+    setCalendarHourStart((current) => Math.min(current, neededStart));
+    setCalendarHourEnd((current) => Math.max(current, neededEnd));
+  }, [calendarClasses, statusFilter]);
 
   const handleViewModeChange = (nextMode: ViewMode) => {
     setViewMode(nextMode);
@@ -1268,6 +1540,24 @@ export default function ClassesPage() {
 
           {!isCalendarLoading && viewMode === 'calendar' ? (
             <div className="overflow-x-auto">
+              <div className="mb-2 flex items-center justify-end">
+                <Tooltip
+                  content={(
+                    <div className="space-y-1.5 text-left">
+                      <p className="font-semibold text-white">Atajos del calendario</p>
+                      <p>Arrastra una clase a otro horario para moverla.</p>
+                      <p>Mantén <kbd className="rounded bg-white/20 px-1">Ctrl</kbd> mientras arrastras una clase para duplicarla.</p>
+                      <p>Arrastra el encabezado de un día sobre otro para copiar sus clases.</p>
+                      <p>Mantén <kbd className="rounded bg-white/20 px-1">Shift</kbd> al soltar un día para elegir varios destinos.</p>
+                    </div>
+                  )}
+                >
+                  <span className="inline-flex cursor-help items-center gap-1 text-[11px] font-medium text-surface-400 hover:text-surface-600 dark:hover:text-surface-200">
+                    <Info size={12} />
+                    Arrastra para mover o copiar
+                  </span>
+                </Tooltip>
+              </div>
               <div className="min-w-[1120px] overflow-hidden rounded-[28px] border border-surface-200/70 bg-white dark:border-surface-800/70 dark:bg-surface-900">
                 <div className="grid grid-cols-[88px_repeat(7,minmax(148px,1fr))] border-b border-surface-200/70 dark:border-surface-800/70">
                   <div className="border-r border-surface-200/70 bg-surface-50/80 px-3 py-4 dark:border-surface-800/70 dark:bg-surface-950/20">
@@ -1275,18 +1565,33 @@ export default function ClassesPage() {
                   </div>
                   {weekDates.map((date, index) => {
                     const isToday = isSameDay(date, today);
-                    const totalDayClasses = (calendarClassesByDay[formatDateKey(date)] ?? []).length;
+                    const dateKey = formatDateKey(date);
+                    const totalDayClasses = (calendarClassesByDay[dateKey] ?? []).length;
+                    const isDragSource = dragSourceKey === dateKey;
+                    const isDragTarget = dragOverKey === dateKey && dragSourceKey !== dateKey;
+                    const isDraggable = totalDayClasses > 0;
 
                     return (
                       <button
                         key={date.toISOString()}
                         type="button"
+                        draggable={isDraggable}
                         onClick={() => setSelectedDay(index)}
+                        onDragStart={(event) => handleDayDragStart(event, dateKey, totalDayClasses)}
+                        onDragOver={(event) => handleDayDragOver(event, dateKey)}
+                        onDragLeave={() => handleDayDragLeave(dateKey)}
+                        onDrop={(event) => handleDayDrop(event, dateKey)}
+                        onDragEnd={() => { setDragSourceKey(null); setDragOverKey(null); }}
+                        title={isDraggable ? 'Arrastra este día sobre otro para copiar sus clases' : undefined}
                         className={cn(
-                          'border-r border-surface-200/70 px-4 py-4 text-left transition-colors last:border-r-0 dark:border-surface-800/70',
-                          selectedDay === index
-                            ? 'bg-brand-50/80 dark:bg-brand-950/20'
-                            : 'bg-white hover:bg-surface-50 dark:bg-surface-900 dark:hover:bg-surface-800/70',
+                          'relative border-r border-surface-200/70 px-4 py-4 text-left transition-colors last:border-r-0 dark:border-surface-800/70',
+                          isDraggable ? 'cursor-grab active:cursor-grabbing' : '',
+                          isDragSource ? 'opacity-60' : '',
+                          isDragTarget
+                            ? 'bg-brand-100 ring-2 ring-inset ring-brand-400 dark:bg-brand-900/40'
+                            : selectedDay === index
+                              ? 'bg-brand-50/80 dark:bg-brand-950/20'
+                              : 'bg-white hover:bg-surface-50 dark:bg-surface-900 dark:hover:bg-surface-800/70',
                         )}
                       >
                         <div className="flex items-start justify-between gap-3">
@@ -1309,6 +1614,11 @@ export default function ClassesPage() {
                             {`${totalDayClasses} ${totalDayClasses === 1 ? 'clase' : 'clases'}`}
                           </span>
                         </div>
+                        {isDragTarget ? (
+                          <span className="pointer-events-none absolute inset-x-2 bottom-1 rounded-md bg-brand-500 px-2 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white shadow-md">
+                            Soltar para copiar
+                          </span>
+                        ) : null}
                       </button>
                     );
                   })}
@@ -1366,18 +1676,43 @@ export default function ClassesPage() {
                           <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-amber-400/60" />
                         ) : null}
 
-                        {calendarHourSlots.map((hour) => (
-                          <button
-                            key={`${dateKey}-${hour}`}
-                            type="button"
-                            onClick={() => openCreateModalForDate(date, hour)}
-                            className="group flex h-[72px] w-full items-start border-b border-surface-200/70 px-3 pt-2 text-left transition-colors hover:bg-brand-50/70 last:border-b-0 dark:border-surface-800/70 dark:hover:bg-brand-950/20"
+                        {/* Current time indicator */}
+                        {isColToday && nowInRange ? (
+                          <div
+                            className="pointer-events-none absolute inset-x-0 z-20"
+                            style={{ top: `${nowTopPx}px` }}
                           >
-                            <span className="rounded-full bg-white/90 px-2 py-1 text-[10px] font-medium text-brand-600 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 dark:bg-surface-900/90 dark:text-brand-300">
-                              + Clase
-                            </span>
-                          </button>
-                        ))}
+                            <div className="relative h-0.5 bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]">
+                              <span className="absolute -left-1 -top-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-surface-900" />
+                              <span className="absolute right-1 -top-2 rounded-sm bg-rose-500 px-1 py-px text-[9px] font-semibold leading-none text-white shadow-sm">
+                                {nowLabel}
+                              </span>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {calendarHourSlots.map((hour) => {
+                          const slotKey = `${dateKey}:${hour}`;
+                          const isDropTarget = dragSlotKey === slotKey;
+                          return (
+                            <button
+                              key={`${dateKey}-${hour}`}
+                              type="button"
+                              onClick={() => openCreateModalForDate(date, hour)}
+                              onDragOver={(event) => handleSlotDragOver(event, dateKey, hour)}
+                              onDragLeave={() => handleSlotDragLeave(dateKey, hour)}
+                              onDrop={(event) => handleSlotDrop(event, date, hour)}
+                              className={cn(
+                                'group flex h-[72px] w-full items-start border-b border-surface-200/70 px-3 pt-2 text-left transition-colors hover:bg-brand-50/70 last:border-b-0 dark:border-surface-800/70 dark:hover:bg-brand-950/20',
+                                isDropTarget ? 'bg-brand-100 ring-2 ring-inset ring-brand-400 dark:bg-brand-900/30' : '',
+                              )}
+                            >
+                              <span className="rounded-full bg-white/90 px-2 py-1 text-[10px] font-medium text-brand-600 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 dark:bg-surface-900/90 dark:text-brand-300">
+                                + Clase
+                              </span>
+                            </button>
+                          );
+                        })}
 
                         {dayLayout.map(({ gymClass, col, totalCols }) => {
                           const start = new Date(gymClass.start_time);
@@ -1418,9 +1753,15 @@ export default function ClassesPage() {
                               >
                                 <button
                                   type="button"
+                                  draggable
                                   onClick={() => setCalendarMenuClass(gymClass)}
-                                  title={isRestricted ? planMarkerTitle : undefined}
-                                  className="h-full w-full overflow-hidden rounded-xl px-2.5 py-2 text-left shadow-lg shadow-surface-950/5 ring-1 ring-black/5 transition-transform hover:scale-[1.01]"
+                                  onDragStart={(event) => handleClassDragStart(event, gymClass)}
+                                  onDragEnd={() => { setDraggingClassId(null); setDragSlotKey(null); }}
+                                  title={isRestricted ? planMarkerTitle : 'Arrastra para mover · Ctrl+arrastra para copiar'}
+                                  className={cn(
+                                    'h-full w-full overflow-hidden rounded-xl px-2.5 py-2 text-left shadow-lg shadow-surface-950/5 ring-1 ring-black/5 transition-transform hover:scale-[1.01] cursor-grab active:cursor-grabbing',
+                                    draggingClassId === gymClass.id ? 'opacity-50' : '',
+                                  )}
                                   style={{ backgroundColor: gymClass.color || '#06b6d4' }}
                                 >
                                   <div className="flex h-full flex-col justify-between text-white">
@@ -2949,10 +3290,10 @@ export default function ClassesPage() {
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => previewBulkCancel.mutate()}
+              onClick={runManualPreview}
               disabled={previewBulkCancel.isPending || executeBulkCancel.isPending}
             >
-              {previewBulkCancel.isPending ? 'Previsualizando...' : 'Previsualizar impacto'}
+              {previewBulkCancel.isPending ? 'Calculando...' : 'Actualizar conteo'}
             </button>
             <button
               type="submit"
@@ -3112,6 +3453,169 @@ export default function ClassesPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* ── Drag-and-drop copy confirm ──────────────────────────── */}
+      <Modal
+        open={Boolean(pendingCopy)}
+        title="Copiar día"
+        size="sm"
+        onClose={() => setPendingCopy(null)}
+      >
+        {pendingCopy ? (
+          <div className="space-y-4">
+            <p className="text-sm text-surface-700 dark:text-surface-200">
+              Vas a copiar <strong>{pendingCopy.count}</strong>{' '}
+              clase{pendingCopy.count !== 1 ? 's' : ''} del{' '}
+              <strong>{new Date(pendingCopy.source + 'T12:00:00').toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}</strong>{' '}
+              al{' '}
+              <strong>{new Date(pendingCopy.target + 'T12:00:00').toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}</strong>.
+            </p>
+            <p className="text-xs text-surface-500 dark:text-surface-400">
+              Las clases existentes en el día destino no se reemplazan; las nuevas se suman.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingCopy(null)}
+                className="flex-1 btn-secondary text-sm py-2.5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmPendingCopy}
+                disabled={replicateMutation.isPending}
+                className="flex-1 btn-primary text-sm py-2.5"
+              >
+                {replicateMutation.isPending ? 'Copiando...' : 'Copiar'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* ── Shift+drop multi-day picker ─────────────────────────── */}
+      <Modal
+        open={Boolean(pendingMultiCopy)}
+        title="Copiar día a múltiples días"
+        size="sm"
+        onClose={() => { setPendingMultiCopy(null); setMultiCopySelectedKeys([]); }}
+      >
+        {pendingMultiCopy ? (
+          <div className="space-y-4">
+            <p className="text-sm text-surface-700 dark:text-surface-200">
+              Copiar <strong>{pendingMultiCopy.count}</strong>{' '}
+              clase{pendingMultiCopy.count !== 1 ? 's' : ''} del{' '}
+              <strong>{new Date(pendingMultiCopy.source + 'T12:00:00').toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}</strong>{' '}
+              a:
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {weekDates.map((d) => {
+                const key = formatDateKey(d);
+                if (key === pendingMultiCopy.source) return null;
+                const checked = multiCopySelectedKeys.includes(key);
+                return (
+                  <label
+                    key={key}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors',
+                      checked
+                        ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/30'
+                        : 'border-surface-200 hover:border-surface-300 dark:border-surface-700 dark:hover:border-surface-600',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) => {
+                        setMultiCopySelectedKeys((current) =>
+                          event.target.checked
+                            ? [...current, key]
+                            : current.filter((k) => k !== key),
+                        );
+                      }}
+                      className="h-4 w-4 accent-brand-500"
+                    />
+                    <span className="font-medium">
+                      {d.toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => { setPendingMultiCopy(null); setMultiCopySelectedKeys([]); }}
+                className="flex-1 btn-secondary text-sm py-2.5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmMultiCopy}
+                disabled={replicateMutation.isPending || multiCopySelectedKeys.length === 0}
+                className="flex-1 btn-primary text-sm py-2.5"
+              >
+                {replicateMutation.isPending
+                  ? 'Copiando...'
+                  : `Copiar a ${multiCopySelectedKeys.length} día${multiCopySelectedKeys.length !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* ── Mover / duplicar clase individual ───────────────────── */}
+      <Modal
+        open={Boolean(pendingClassMove)}
+        title={pendingClassMove?.copy ? 'Duplicar clase' : 'Mover clase'}
+        size="sm"
+        onClose={() => setPendingClassMove(null)}
+      >
+        {pendingClassMove ? (
+          <div className="space-y-4">
+            <p className="text-sm text-surface-700 dark:text-surface-200">
+              {pendingClassMove.copy ? 'Duplicar' : 'Mover'}{' '}
+              <strong>{pendingClassMove.className}</strong>{' '}
+              al{' '}
+              <strong>
+                {pendingClassMove.newStart.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}
+                {' a las '}
+                {pendingClassMove.newStart.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+              </strong>.
+            </p>
+            {!pendingClassMove.copy ? (
+              <p className="text-xs text-surface-500 dark:text-surface-400">
+                Las reservas existentes se mantienen y los participantes verán la nueva hora.
+              </p>
+            ) : (
+              <p className="text-xs text-surface-500 dark:text-surface-400">
+                Se creará una nueva clase vacía con la misma configuración.
+              </p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingClassMove(null)}
+                className="flex-1 btn-secondary text-sm py-2.5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmClassMove}
+                disabled={moveClassMutation.isPending || duplicateClassMutation.isPending}
+                className="flex-1 btn-primary text-sm py-2.5"
+              >
+                {(moveClassMutation.isPending || duplicateClassMutation.isPending)
+                  ? (pendingClassMove.copy ? 'Duplicando...' : 'Moviendo...')
+                  : (pendingClassMove.copy ? 'Duplicar' : 'Mover')}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </motion.div>
   );

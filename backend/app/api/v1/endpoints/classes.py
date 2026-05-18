@@ -122,6 +122,19 @@ def _tenant_local_day_bounds(day: date, zone: ZoneInfo) -> tuple[datetime, datet
     return day_start_local.astimezone(timezone.utc), next_day_local.astimezone(timezone.utc)
 
 
+def _shift_in_zone(dt_utc: datetime, days_delta: int, zone: ZoneInfo) -> datetime:
+    """Shift a UTC datetime by N days while preserving the wall-clock time in `zone`.
+
+    Why: timedelta(days=N) on a UTC datetime is exact 24h shifts, so when a DST
+    transition lies between source and target the local clock time drifts by 1h.
+    Recomputing the date in local time keeps a 20:00 class at 20:00 across DST.
+    """
+    local = dt_utc.astimezone(zone)
+    new_date = local.date() + timedelta(days=days_delta)
+    new_local = datetime.combine(new_date, local.time(), tzinfo=zone)
+    return new_local.astimezone(timezone.utc)
+
+
 def _checkin_history_response(
     checkin: CheckIn,
     *,
@@ -1002,6 +1015,62 @@ async def update_class(
     return await build_gym_class_response(db, gym_class)
 
 
+class DuplicateClassRequest(BaseModel):
+    start_time: datetime
+
+
+@router.post("/classes/{class_id}/duplicate", response_model=GymClassResponse, status_code=201)
+async def duplicate_class(
+    class_id: UUID,
+    body: DuplicateClassRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Create an exact copy of a class at a new start_time. Duration is preserved."""
+    result = await db.execute(
+        select(GymClass).where(GymClass.id == class_id, GymClass.tenant_id == ctx.tenant_id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+
+    duration = source.end_time - source.start_time
+    new_start = body.start_time
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    else:
+        new_start = new_start.astimezone(timezone.utc)
+    new_end = new_start + duration
+
+    new_cls = GymClass(
+        id=uuid4(),
+        tenant_id=source.tenant_id,
+        branch_id=source.branch_id,
+        name=source.name,
+        description=source.description,
+        class_type=source.class_type,
+        modality=source.modality,
+        status=ClassStatus.SCHEDULED,
+        instructor_id=source.instructor_id,
+        start_time=new_start,
+        end_time=new_end,
+        max_capacity=source.max_capacity,
+        current_bookings=0,
+        waitlist_enabled=source.waitlist_enabled,
+        online_link=source.online_link,
+        cancellation_deadline_hours=source.cancellation_deadline_hours,
+        reservation_closes_minutes_before=source.reservation_closes_minutes_before,
+        color=source.color,
+        program_id=source.program_id,
+        repeat_type="none",
+    )
+    db.add(new_cls)
+    await db.commit()
+    await db.refresh(new_cls)
+    return await build_gym_class_response(db, new_cls)
+
+
 @router.delete("/classes/{class_id}", status_code=204)
 async def cancel_class(
     class_id: UUID,
@@ -1744,9 +1813,10 @@ async def replicate_classes(
 
     created: list[dict] = []
 
+    zone = _tenant_zone(ctx)
+
     if body.mode == "day":
-        source_start = datetime.combine(body.source_date, datetime.min.time(), tzinfo=timezone.utc)
-        source_end = datetime.combine(body.source_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        source_start, source_end = _tenant_local_day_bounds(body.source_date, zone)
         result = await db.execute(
             select(GymClass).where(
                 GymClass.tenant_id == ctx.tenant_id,
@@ -1761,6 +1831,7 @@ async def replicate_classes(
             delta = target_date - body.source_date
             for cls in source_classes:
                 new_cls = GymClass(
+                    id=uuid4(),
                     tenant_id=cls.tenant_id,
                     branch_id=cls.branch_id,
                     name=cls.name,
@@ -1769,8 +1840,8 @@ async def replicate_classes(
                     modality=cls.modality,
                     status=ClassStatus.SCHEDULED,
                     instructor_id=cls.instructor_id,
-                    start_time=cls.start_time + timedelta(days=delta.days),
-                    end_time=cls.end_time + timedelta(days=delta.days),
+                    start_time=_shift_in_zone(cls.start_time, delta.days, zone),
+                    end_time=_shift_in_zone(cls.end_time, delta.days, zone),
                     max_capacity=cls.max_capacity,
                     current_bookings=0,
                     waitlist_enabled=cls.waitlist_enabled,
@@ -1782,13 +1853,13 @@ async def replicate_classes(
                     repeat_type="none",
                 )
                 db.add(new_cls)
-                created.append({"name": new_cls.name, "date": str(target_date)})
+                created.append({"id": str(new_cls.id), "name": new_cls.name, "date": str(target_date)})
 
     elif body.mode == "week":
         # Source week: Monday of the week containing source_date
         source_monday = body.source_date - timedelta(days=body.source_date.weekday())
-        source_start = datetime.combine(source_monday, datetime.min.time(), tzinfo=timezone.utc)
-        source_end = datetime.combine(source_monday + timedelta(days=7), datetime.min.time(), tzinfo=timezone.utc)
+        source_start, _ = _tenant_local_day_bounds(source_monday, zone)
+        _, source_end = _tenant_local_day_bounds(source_monday + timedelta(days=6), zone)
         result = await db.execute(
             select(GymClass).where(
                 GymClass.tenant_id == ctx.tenant_id,
@@ -1803,7 +1874,10 @@ async def replicate_classes(
             target_monday = target_date - timedelta(days=target_date.weekday())
             week_delta = (target_monday - source_monday).days
             for cls in source_classes:
+                new_start = _shift_in_zone(cls.start_time, week_delta, zone)
+                new_end = _shift_in_zone(cls.end_time, week_delta, zone)
                 new_cls = GymClass(
+                    id=uuid4(),
                     tenant_id=cls.tenant_id,
                     branch_id=cls.branch_id,
                     name=cls.name,
@@ -1812,8 +1886,8 @@ async def replicate_classes(
                     modality=cls.modality,
                     status=ClassStatus.SCHEDULED,
                     instructor_id=cls.instructor_id,
-                    start_time=cls.start_time + timedelta(days=week_delta),
-                    end_time=cls.end_time + timedelta(days=week_delta),
+                    start_time=new_start,
+                    end_time=new_end,
                     max_capacity=cls.max_capacity,
                     current_bookings=0,
                     waitlist_enabled=cls.waitlist_enabled,
@@ -1825,7 +1899,7 @@ async def replicate_classes(
                     repeat_type="none",
                 )
                 db.add(new_cls)
-                created.append({"name": new_cls.name, "date": str(cls.start_time.date() + timedelta(days=week_delta))})
+                created.append({"id": str(new_cls.id), "name": new_cls.name, "date": str(new_start.astimezone(zone).date())})
 
     elif body.mode == "month":
         source_month_start = body.source_date.replace(day=1)
@@ -1834,11 +1908,13 @@ async def replicate_classes(
         else:
             source_month_end = source_month_start.replace(month=source_month_start.month + 1)
 
+        source_start, _ = _tenant_local_day_bounds(source_month_start, zone)
+        _, source_end = _tenant_local_day_bounds(source_month_end - timedelta(days=1), zone)
         result = await db.execute(
             select(GymClass).where(
                 GymClass.tenant_id == ctx.tenant_id,
-                GymClass.start_time >= datetime.combine(source_month_start, datetime.min.time(), tzinfo=timezone.utc),
-                GymClass.start_time < datetime.combine(source_month_end, datetime.min.time(), tzinfo=timezone.utc),
+                GymClass.start_time >= source_start,
+                GymClass.start_time < source_end,
                 GymClass.status != ClassStatus.CANCELLED,
             )
         )
@@ -1848,15 +1924,16 @@ async def replicate_classes(
         for target_date in body.target_dates:
             target_month_start = target_date.replace(day=1)
             for cls in source_classes:
-                src_day = cls.start_time.day
+                src_local_date = cls.start_time.astimezone(zone).date()
                 days_in_target = cal_module.monthrange(target_month_start.year, target_month_start.month)[1]
-                target_day = min(src_day, days_in_target)
+                target_day = min(src_local_date.day, days_in_target)
                 try:
                     new_date = target_month_start.replace(day=target_day)
                 except ValueError:
                     new_date = target_month_start.replace(day=days_in_target)
-                delta_days = (new_date - cls.start_time.date()).days
+                delta_days = (new_date - src_local_date).days
                 new_cls = GymClass(
+                    id=uuid4(),
                     tenant_id=cls.tenant_id,
                     branch_id=cls.branch_id,
                     name=cls.name,
@@ -1865,8 +1942,8 @@ async def replicate_classes(
                     modality=cls.modality,
                     status=ClassStatus.SCHEDULED,
                     instructor_id=cls.instructor_id,
-                    start_time=cls.start_time + timedelta(days=delta_days),
-                    end_time=cls.end_time + timedelta(days=delta_days),
+                    start_time=_shift_in_zone(cls.start_time, delta_days, zone),
+                    end_time=_shift_in_zone(cls.end_time, delta_days, zone),
                     max_capacity=cls.max_capacity,
                     current_bookings=0,
                     waitlist_enabled=cls.waitlist_enabled,
@@ -1878,7 +1955,7 @@ async def replicate_classes(
                     repeat_type="none",
                 )
                 db.add(new_cls)
-                created.append({"name": new_cls.name, "date": str(new_date)})
+                created.append({"id": str(new_cls.id), "name": new_cls.name, "date": str(new_date)})
 
     await db.commit()
     return {"created": len(created), "classes": created}
