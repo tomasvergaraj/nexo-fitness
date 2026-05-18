@@ -309,7 +309,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
           <NavLink to={homePath} className="flex items-center gap-2.5 group">
             <NexoBrand
               iconSize={34}
-              iconClassName="shadow-lg shadow-brand-500/25"
+              iconClassName="shadow-lg shadow-brand-500/25 dark:shadow-brand-400/15"
               titleClassName="text-base tracking-tight text-surface-900 dark:text-white"
               accentClassName="text-brand-500"
               subtitle={NEXO_BRAND_SLOGAN}

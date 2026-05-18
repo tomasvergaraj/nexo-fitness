@@ -10,6 +10,7 @@ import toast from 'react-hot-toast';
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
+import { SkeletonStat } from '@/components/ui/Skeleton';
 import { billingApi, dashboardApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
@@ -360,18 +361,31 @@ export default function DashboardPage() {
 
       <OnboardingChecklist />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Ingresos del Día" value={parseApiNumber(data?.revenue_today)} icon={DollarSign} format="currency" color="brand" />
-        <StatCard label="Miembros Activos" value={data?.active_members ?? 0} icon={Users} color="emerald" />
-        <StatCard label="Clases Hoy" value={data?.classes_today ?? 0} icon={CalendarDays} color="violet" />
-        <StatCard label="Check-ins Hoy" value={data?.checkins_today ?? 0} icon={UserCheck} color="blue" />
-      </div>
+      {isLoading && !data ? (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonStat key={`s1-${i}`} />)}
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => <SkeletonStat key={`s2-${i}`} />)}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Ingresos del Día" value={parseApiNumber(data?.revenue_today)} icon={DollarSign} format="currency" color="brand" />
+            <StatCard label="Miembros Activos" value={data?.active_members ?? 0} icon={Users} color="emerald" />
+            <StatCard label="Clases Hoy" value={data?.classes_today ?? 0} icon={CalendarDays} color="violet" />
+            <StatCard label="Check-ins Hoy" value={data?.checkins_today ?? 0} icon={UserCheck} color="blue" />
+          </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Reservas Hoy" value={data?.reservations_today ?? 0} icon={ClipboardCheck} color="amber" />
-        <StatCard label="Pagos Pendientes" value={data?.pending_payments ?? 0} icon={AlertTriangle} color="rose" />
-        <StatCard label="Miembros por vencer" value={data?.expiring_memberships ?? 0} icon={TrendingUp} color="emerald" />
-      </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <StatCard label="Reservas Hoy" value={data?.reservations_today ?? 0} icon={ClipboardCheck} color="amber" />
+            <StatCard label="Pagos Pendientes" value={data?.pending_payments ?? 0} icon={AlertTriangle} color="rose" />
+            <StatCard label="Miembros por vencer" value={data?.expiring_memberships ?? 0} icon={TrendingUp} color="emerald" />
+          </div>
+        </>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <motion.div

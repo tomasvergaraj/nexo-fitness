@@ -5,7 +5,10 @@ import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import ImpersonationBanner from './ImpersonationBanner';
 import OwnerDesktopInstallPrompt from '@/components/dashboard/OwnerDesktopInstallPrompt';
+import CommandPalette from '@/components/CommandPalette';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { useOwnerDesktopInstallPrompt } from '@/hooks/useOwnerDesktopInstallPrompt';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -32,8 +35,8 @@ function TrialBanner({ billing, onDismiss }: { billing: BillingStatus; onDismiss
     <div
       className={`w-full px-4 py-2.5 flex items-center justify-between gap-3 text-sm font-medium ${
         urgent
-          ? 'bg-red-600 text-white'
-          : 'bg-amber-500 text-amber-950'
+          ? 'bg-rose-600 text-white dark:bg-rose-700'
+          : 'bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-100'
       }`}
     >
       <span>
@@ -47,8 +50,8 @@ function TrialBanner({ billing, onDismiss }: { billing: BillingStatus; onDismiss
             onClick={handleActivate}
             className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
               urgent
-                ? 'bg-white text-red-700 hover:bg-red-50'
-                : 'bg-amber-900/20 hover:bg-amber-900/30 text-amber-950'
+                ? 'bg-white text-rose-700 hover:bg-rose-50'
+                : 'bg-amber-900/15 hover:bg-amber-900/25 text-amber-900 dark:bg-amber-100/15 dark:hover:bg-amber-100/25 dark:text-amber-100'
             }`}
           >
             Activar suscripción
@@ -67,12 +70,9 @@ function TrialBanner({ billing, onDismiss }: { billing: BillingStatus; onDismiss
 }
 
 export default function AppLayout() {
-  // Abierto por defecto solo en pantallas grandes (≥1024px).
-  // En móvil/tablet empieza cerrado para no tapar el contenido.
-  const [sidebarOpen, setSidebarOpen] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
-  );
-  const wasDesktopRef = useRef(typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
+  const prevDesktopRef = useRef(isDesktop);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const navigate = useNavigate();
@@ -80,25 +80,11 @@ export default function AppLayout() {
   const desktopInstall = useOwnerDesktopInstallPrompt(user);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
+    if (isDesktop !== prevDesktopRef.current) {
+      setSidebarOpen(isDesktop);
+      prevDesktopRef.current = isDesktop;
     }
-
-    const syncSidebarWithViewport = () => {
-      const isDesktop = window.innerWidth >= 1024;
-
-      if (isDesktop !== wasDesktopRef.current) {
-        setSidebarOpen(isDesktop);
-        wasDesktopRef.current = isDesktop;
-      }
-    };
-
-    window.addEventListener('resize', syncSidebarWithViewport);
-
-    return () => {
-      window.removeEventListener('resize', syncSidebarWithViewport);
-    };
-  }, []);
+  }, [isDesktop]);
 
   useEffect(() => {
     // Solo verificar para roles de gimnasio (no superadmin ni clientes)
@@ -173,10 +159,14 @@ export default function AppLayout() {
           className="flex-1 overflow-y-auto"
         >
           <div className="max-w-[1600px] mx-auto px-4 lg:px-6 py-6">
-            <Outlet />
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
           </div>
         </motion.main>
       </div>
+
+      <CommandPalette />
     </div>
   );
 }

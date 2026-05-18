@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import ProfileSettingsModal from '@/components/profile/ProfileSettingsModal';
 import Tooltip from '@/components/ui/Tooltip';
+import { useCommandPalette } from '@/components/CommandPalette';
 import { notificationsApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
@@ -32,9 +33,15 @@ export default function Topbar({
   const { user, logout } = useAuthStore();
   const { isDark, toggle: toggleTheme } = useThemeStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const openPalette = useCommandPalette((s) => s.setOpen);
+  const [isMac, setIsMac] = useState(false);
+  useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      setIsMac(/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent));
+    }
+  }, []);
   const userDisplayName = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim() || user?.email || 'Usuario';
   const userInitials = [user?.first_name?.[0], user?.last_name?.[0]].filter(Boolean).join('').toUpperCase() || '?';
 
@@ -107,41 +114,28 @@ export default function Topbar({
           <Menu size={20} className="text-surface-600 dark:text-surface-400" />
         </motion.button>
 
-        {/* Search bar */}
-        <div className="hidden sm:flex items-center">
-          <AnimatePresence mode="wait">
-            {showSearch ? (
-              <motion.div
-                initial={{ width: 0, opacity: 0 }}
-                animate={{ width: 280, opacity: 1 }}
-                exit={{ width: 0, opacity: 0 }}
-                transition={{ duration: 0.3, ease: 'easeInOut' }}
-                className="overflow-hidden"
-              >
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
-                  <input
-                    autoFocus
-                    type="text"
-                    placeholder="Buscar clientes, clases..."
-                    className="input pl-9 pr-4 py-2 text-sm !rounded-full bg-surface-50 dark:bg-surface-800/50"
-                    onBlur={() => setShowSearch(false)}
-                  />
-                </div>
-              </motion.div>
-            ) : (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setShowSearch(true)}
-                className="p-2.5 rounded-full bg-surface-50 dark:bg-surface-800/50
-                           hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
-              >
-                <Search size={16} className="text-surface-500" />
-              </motion.button>
-            )}
-          </AnimatePresence>
-        </div>
+        {/* Command palette opener */}
+        <Tooltip content={`Búsqueda rápida (${isMac ? '⌘' : 'Ctrl'}K)`}>
+          <button
+            type="button"
+            onClick={() => openPalette(true)}
+            className="hidden sm:inline-flex items-center gap-2 rounded-full bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors px-3 py-2 text-sm text-surface-500 dark:text-surface-400"
+          >
+            <Search size={15} />
+            <span className="hidden md:inline">Buscar...</span>
+            <kbd className="ml-2 hidden md:inline rounded border border-surface-200 px-1.5 py-0.5 text-[10px] font-medium text-surface-500 dark:border-surface-700 dark:text-surface-400">
+              {isMac ? '⌘K' : 'Ctrl K'}
+            </kbd>
+          </button>
+        </Tooltip>
+        <button
+          type="button"
+          onClick={() => openPalette(true)}
+          aria-label="Buscar"
+          className="sm:hidden p-2.5 rounded-full bg-surface-50 dark:bg-surface-800/50 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+        >
+          <Search size={16} className="text-surface-500" />
+        </button>
       </div>
 
       {/* Right: Actions */}
