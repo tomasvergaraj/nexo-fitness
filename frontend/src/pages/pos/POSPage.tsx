@@ -6,6 +6,8 @@ import {
   Banknote, Package, ChevronRight, X, Loader2, Receipt,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import Drawer from '@/components/ui/Drawer';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { posApi } from '@/services/api';
 import { cn, getApiError } from '@/utils';
 import type { Product, ProductCategory, POSTransaction } from '@/types';
@@ -73,6 +75,8 @@ export default function POSPage() {
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes] = useState('');
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const isCompact = useMediaQuery('(max-width: 1279px)');
+  const [cartSheetOpen, setCartSheetOpen] = useState(false);
 
   // ── Queries ────────────────────────────────────────────────────────────────
   const { data: categories = [] } = useQuery<ProductCategory[]>({
@@ -164,6 +168,144 @@ export default function POSPage() {
       notes: notes || undefined,
     });
   }
+
+  const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
+
+  const cartPanelContent = (
+    <>
+      {/* Cart items */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <h2 className="text-sm font-semibold text-surface-600 dark:text-surface-400 uppercase tracking-wide mb-3">
+          Carrito ({cart.length})
+        </h2>
+        {cart.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-surface-300 dark:text-surface-600">
+            <ShoppingCart size={32} className="mb-2" />
+            <p className="text-sm">Vacío — agrega productos</p>
+          </div>
+        ) : (
+          cart.map(item => (
+            <div key={item.product.id}
+              className="flex flex-col gap-3 rounded-xl bg-white p-3 shadow-sm dark:bg-surface-800 sm:flex-row sm:items-center"
+            >
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
+                  {item.product.name}
+                </p>
+                <p className="text-xs text-surface-400">{formatCLP(item.product.price)} c/u</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => updateQty(item.product.id, -1)}
+                  className="w-6 h-6 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
+                >
+                  <Minus size={12} />
+                </button>
+                <span className="w-6 text-center text-sm font-bold text-surface-800 dark:text-white">
+                  {item.quantity}
+                </span>
+                <button
+                  onClick={() => updateQty(item.product.id, 1)}
+                  className="w-6 h-6 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
+              <div className="text-right min-w-[56px]">
+                <p className="text-sm font-bold text-surface-800 dark:text-white">
+                  {formatCLP(item.product.price * item.quantity)}
+                </p>
+              </div>
+              <button onClick={() => removeFromCart(item.product.id)} className="self-end text-surface-300 transition-colors hover:text-red-500 sm:self-auto">
+                <X size={14} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Totals + checkout */}
+      <div className="border-t border-surface-200 dark:border-surface-800 p-4 space-y-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <label className="text-xs text-surface-500 sm:flex-shrink-0">Descuento ($)</label>
+          <input
+            type="number"
+            min={0}
+            value={discount || ''}
+            onChange={e => setDiscount(Number(e.target.value) || 0)}
+            placeholder="0"
+            className="input min-w-0 flex-1 text-sm"
+          />
+        </div>
+
+        <div className="space-y-1 text-sm">
+          {discount > 0 && (
+            <div className="flex justify-between text-surface-400">
+              <span>Subtotal</span>
+              <span>{formatCLP(subtotal)}</span>
+            </div>
+          )}
+          {discount > 0 && (
+            <div className="flex justify-between text-red-500">
+              <span>Descuento</span>
+              <span>- {formatCLP(discount)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-bold text-lg text-surface-900 dark:text-white pt-1 border-t border-surface-100 dark:border-surface-800">
+            <span>Total</span>
+            <span>{formatCLP(total)}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          {PAYMENT_METHODS.map(pm => (
+            <button
+              key={pm.value}
+              onClick={() => setPaymentMethod(pm.value)}
+              className={cn(
+                'flex-1 flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-xs font-medium transition-all',
+                paymentMethod === pm.value
+                  ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/40 text-brand-600 dark:text-brand-400'
+                  : 'border-surface-200 dark:border-surface-700 text-surface-500 hover:border-surface-300',
+              )}
+            >
+              {pm.icon}
+              {pm.label}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={() => {
+            if (cart.length === 0) return;
+            setCartSheetOpen(false);
+            setCheckoutOpen(true);
+          }}
+          disabled={cart.length === 0}
+          className={cn(
+            'w-full py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2',
+            cart.length > 0
+              ? 'bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/25 active:scale-[0.98]'
+              : 'bg-surface-100 dark:bg-surface-800 text-surface-400 cursor-not-allowed',
+          )}
+        >
+          <ShoppingCart size={16} />
+          Cobrar {cart.length > 0 ? formatCLP(total) : ''}
+        </button>
+
+        {todaySales.length > 0 && (
+          <div className="mt-2">
+            <p className="text-xs font-semibold text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
+            <div className="max-h-40 overflow-y-auto">
+              {todaySales.slice(0, 10).map(tx => (
+                <RecentSaleRow key={tx.id} tx={tx} onRefund={id => refundMutation.mutate(id)} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <div className="flex min-h-full flex-col gap-0">
@@ -288,141 +430,49 @@ export default function POSPage() {
           </div>
         </div>
 
-        {/* ── Right: Cart + Recent sales ─────────────────────────────────── */}
-        <div className="w-full shrink-0 border-t border-surface-200 bg-surface-50 dark:border-surface-800 dark:bg-surface-900/50 xl:w-96 xl:border-t-0">
-          {/* Cart items */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            <h2 className="text-sm font-semibold text-surface-600 dark:text-surface-400 uppercase tracking-wide mb-3">
-              Carrito ({cart.length})
-            </h2>
-            {cart.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-surface-300 dark:text-surface-600">
-                <ShoppingCart size={32} className="mb-2" />
-                <p className="text-sm">Vacío — agrega productos</p>
-              </div>
-            ) : (
-              cart.map(item => (
-                <div key={item.product.id}
-                  className="flex flex-col gap-3 rounded-xl bg-white p-3 shadow-sm dark:bg-surface-800 sm:flex-row sm:items-center"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
-                      {item.product.name}
-                    </p>
-                    <p className="text-xs text-surface-400">{formatCLP(item.product.price)} c/u</p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => updateQty(item.product.id, -1)}
-                      className="w-6 h-6 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
-                    >
-                      <Minus size={12} />
-                    </button>
-                    <span className="w-6 text-center text-sm font-bold text-surface-800 dark:text-white">
-                      {item.quantity}
-                    </span>
-                    <button
-                      onClick={() => updateQty(item.product.id, 1)}
-                      className="w-6 h-6 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
-                    >
-                      <Plus size={12} />
-                    </button>
-                  </div>
-                  <div className="text-right min-w-[56px]">
-                    <p className="text-sm font-bold text-surface-800 dark:text-white">
-                      {formatCLP(item.product.price * item.quantity)}
-                    </p>
-                  </div>
-                  <button onClick={() => removeFromCart(item.product.id)} className="self-end text-surface-300 transition-colors hover:text-red-500 sm:self-auto">
-                    <X size={14} />
-                  </button>
-                </div>
-              ))
-            )}
+        {/* ── Right: Cart + Recent sales (xl+ inline) ────────────────────── */}
+        {!isCompact ? (
+          <div className="hidden xl:flex w-96 shrink-0 flex-col bg-surface-50 dark:bg-surface-900/50">
+            {cartPanelContent}
           </div>
+        ) : null}
+      </div>
 
-          {/* Totals + checkout */}
-          <div className="border-t border-surface-200 dark:border-surface-800 p-4 space-y-3">
-            {/* Discount */}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label className="text-xs text-surface-500 sm:flex-shrink-0">Descuento ($)</label>
-              <input
-                type="number"
-                min={0}
-                value={discount || ''}
-                onChange={e => setDiscount(Number(e.target.value) || 0)}
-                placeholder="0"
-                className="input min-w-0 flex-1 text-sm"
-              />
-            </div>
-
-            {/* Subtotal / total */}
-            <div className="space-y-1 text-sm">
-              {discount > 0 && (
-                <div className="flex justify-between text-surface-400">
-                  <span>Subtotal</span>
-                  <span>{formatCLP(subtotal)}</span>
-                </div>
-              )}
-              {discount > 0 && (
-                <div className="flex justify-between text-red-500">
-                  <span>Descuento</span>
-                  <span>- {formatCLP(discount)}</span>
-                </div>
-              )}
-              <div className="flex justify-between font-bold text-lg text-surface-900 dark:text-white pt-1 border-t border-surface-100 dark:border-surface-800">
-                <span>Total</span>
-                <span>{formatCLP(total)}</span>
-              </div>
-            </div>
-
-            {/* Payment method */}
-            <div className="grid grid-cols-3 gap-2">
-              {PAYMENT_METHODS.map(pm => (
-                <button
-                  key={pm.value}
-                  onClick={() => setPaymentMethod(pm.value)}
-                  className={cn(
-                    'flex-1 flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-xs font-medium transition-all',
-                    paymentMethod === pm.value
-                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/40 text-brand-600 dark:text-brand-400'
-                      : 'border-surface-200 dark:border-surface-700 text-surface-500 hover:border-surface-300',
-                  )}
-                >
-                  {pm.icon}
-                  {pm.label}
-                </button>
-              ))}
-            </div>
-
+      {/* ── Compact bottom action bar + sheet ────────────────────────────── */}
+      {isCompact ? (
+        <>
+          <div className="sticky bottom-0 z-30 border-t border-surface-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-surface-800 dark:bg-surface-950/95">
             <button
-              onClick={() => cart.length > 0 && setCheckoutOpen(true)}
-              disabled={cart.length === 0}
+              type="button"
+              onClick={() => setCartSheetOpen(true)}
               className={cn(
-                'w-full py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2',
-                cart.length > 0
-                  ? 'bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/25 active:scale-[0.98]'
-                  : 'bg-surface-100 dark:bg-surface-800 text-surface-400 cursor-not-allowed',
+                'flex w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-colors',
+                cartCount > 0
+                  ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
+                  : 'bg-surface-100 text-surface-500 dark:bg-surface-800',
               )}
             >
-              <ShoppingCart size={16} />
-              Cobrar {cart.length > 0 ? formatCLP(total) : ''}
+              <span className="flex items-center gap-2">
+                <ShoppingCart size={18} />
+                {cartCount > 0 ? `${cartCount} ${cartCount === 1 ? 'item' : 'items'}` : 'Carrito vacío'}
+              </span>
+              <span className="flex items-center gap-2">
+                {cartCount > 0 ? formatCLP(total) : null}
+                <ChevronRight size={16} />
+              </span>
             </button>
-
-            {/* Recent sales */}
-            {todaySales.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs font-semibold text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
-                <div className="max-h-40 overflow-y-auto">
-                  {todaySales.slice(0, 10).map(tx => (
-                    <RecentSaleRow key={tx.id} tx={tx} onRefund={id => refundMutation.mutate(id)} />
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
-        </div>
-      </div>
+          <Drawer
+            open={cartSheetOpen}
+            onClose={() => setCartSheetOpen(false)}
+            side="bottom"
+            title="Carrito"
+            bodyClassName="!px-0 !py-0"
+          >
+            <div className="flex h-full flex-col">{cartPanelContent}</div>
+          </Drawer>
+        </>
+      ) : null}
 
       {/* ── Checkout Confirmation Modal ─────────────────────────────────────── */}
       <Modal open={checkoutOpen} title="Confirmar venta" onClose={() => setCheckoutOpen(false)}>

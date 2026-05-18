@@ -5,6 +5,7 @@ import {
   DollarSign, Plus, Edit2, Trash2, Loader2, Check, TrendingDown,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import TableScroll from '@/components/ui/TableScroll';
 import { posApi } from '@/services/api';
 import { cn, getApiError } from '@/utils';
 import type { Expense } from '@/types';
@@ -190,7 +191,7 @@ export default function ExpensesPage() {
         {isLoading ? (
           <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-brand-500" /></div>
         ) : (
-          <div className="overflow-x-auto">
+          <TableScroll>
             <table className="min-w-[720px] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-surface-400 border-b border-surface-200 dark:border-surface-800">
@@ -238,7 +239,7 @@ export default function ExpensesPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         )}
         {!isLoading && expenses.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-surface-400">

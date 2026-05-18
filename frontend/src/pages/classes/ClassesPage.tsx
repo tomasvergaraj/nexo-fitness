@@ -10,6 +10,7 @@ import ClassColorPicker from '@/components/ui/ClassColorPicker';
 import EmptyState from '@/components/ui/EmptyState';
 import { SkeletonCard, SkeletonList } from '@/components/ui/Skeleton';
 import Modal from '@/components/ui/Modal';
+import { useIsMobile } from '@/hooks/useMediaQuery';
 import Tooltip from '@/components/ui/Tooltip';
 import { branchesApi, checkinsApi, classesApi, clientsApi, plansApi, reservationsApi, staffApi } from '@/services/api';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
@@ -440,6 +441,7 @@ export default function ClassesPage() {
     return next;
   }, []);
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
   const [weekStartDate, setWeekStartDate] = useState(() => startOfWeek(new Date()));
   const [selectedDay, setSelectedDay] = useState(() => getWeekdayIndex(new Date()));
@@ -553,6 +555,14 @@ export default function ClassesPage() {
       setCalendarHourEnd(Math.min(calendarHourStart + 1, 24));
     }
   }, [calendarHourEnd, calendarHourStart]);
+
+  // En mobile el calendario semanal queda inutilizable (7 columnas × 20h × 72px).
+  // Forzamos a la vista de lista para que la página siga siendo usable.
+  useEffect(() => {
+    if (isMobile && viewMode === 'calendar') {
+      setViewMode('list');
+    }
+  }, [isMobile, viewMode]);
 
   useEffect(() => {
     if (!showCreateModal || form.branch_id || !defaultBranchId) {
@@ -1278,20 +1288,24 @@ export default function ClassesPage() {
       </motion.div>
 
       <motion.div variants={fadeInUp} className="flex w-fit items-center gap-1 rounded-xl bg-surface-100 p-1 dark:bg-surface-800">
-        {(['cards', 'list', 'calendar'] as const).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => handleViewModeChange(mode)}
-            className={cn(
-              'rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition-all duration-200',
-              viewMode === mode
-                ? 'bg-white text-surface-900 shadow-sm dark:bg-surface-700 dark:text-white'
-                : 'text-surface-500 hover:text-surface-700',
-            )}
-          >
-            {mode === 'cards' ? 'Tarjetas' : mode === 'list' ? 'Lista' : 'Calendario'}
-          </button>
-        ))}
+        {(['cards', 'list', 'calendar'] as const).map((mode) => {
+          const isCalendar = mode === 'calendar';
+          if (isCalendar && isMobile) return null;
+          return (
+            <button
+              key={mode}
+              onClick={() => handleViewModeChange(mode)}
+              className={cn(
+                'rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition-all duration-200',
+                viewMode === mode
+                  ? 'bg-white text-surface-900 shadow-sm dark:bg-surface-700 dark:text-white'
+                  : 'text-surface-500 hover:text-surface-700',
+              )}
+            >
+              {mode === 'cards' ? 'Tarjetas' : mode === 'list' ? 'Lista' : 'Calendario'}
+            </button>
+          );
+        })}
       </motion.div>
 
       <motion.div
