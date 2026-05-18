@@ -244,6 +244,57 @@ export default function TenantStorefrontPage() {
     enabled: isHostResolvedStorefront || Boolean(slug),
   });
 
+  // Inject per-tenant Open Graph / Twitter meta tags so links shared on social
+  // platforms render a rich preview (image + name + tagline) instead of the
+  // generic Nexo Fitness card. Crawlers that execute JS (Discord, LinkedIn,
+  // Slack with delay) read these; the backend `/share` endpoint handles the
+  // ones that don't (Facebook, WhatsApp).
+  useEffect(() => {
+    if (!data || typeof document === 'undefined') return;
+    const tenantSlug = data.tenant_slug || slug;
+    if (!tenantSlug) return;
+    const origin = window.location.origin;
+    const ogImage = `${origin}/api/v1/public/storefront/${tenantSlug}/og.png`;
+    const headline = data.branding?.marketplace_headline || `${data.tenant_name} · Compra tu plan online`;
+    const description = data.branding?.marketplace_description
+      || 'Reserva clases, compra tu plan y administra tu acceso desde un solo lugar.';
+    const canonical = window.location.href.split('?')[0];
+
+    const ensureMeta = (selector: string, attrs: Record<string, string>) => {
+      let el = document.head.querySelector<HTMLMetaElement>(selector);
+      if (!el) {
+        el = document.createElement('meta');
+        document.head.appendChild(el);
+      }
+      Object.entries(attrs).forEach(([k, v]) => el!.setAttribute(k, v));
+      return el;
+    };
+
+    const original = document.title;
+    document.title = `${data.tenant_name} · Nexo Fitness`;
+
+    const created: HTMLMetaElement[] = [];
+    created.push(ensureMeta('meta[property="og:type"]', { property: 'og:type', content: 'website' }));
+    created.push(ensureMeta('meta[property="og:site_name"]', { property: 'og:site_name', content: 'Nexo Fitness' }));
+    created.push(ensureMeta('meta[property="og:title"]', { property: 'og:title', content: headline }));
+    created.push(ensureMeta('meta[property="og:description"]', { property: 'og:description', content: description }));
+    created.push(ensureMeta('meta[property="og:url"]', { property: 'og:url', content: canonical }));
+    created.push(ensureMeta('meta[property="og:image"]', { property: 'og:image', content: ogImage }));
+    created.push(ensureMeta('meta[property="og:image:width"]', { property: 'og:image:width', content: '1200' }));
+    created.push(ensureMeta('meta[property="og:image:height"]', { property: 'og:image:height', content: '630' }));
+    created.push(ensureMeta('meta[name="twitter:card"]', { name: 'twitter:card', content: 'summary_large_image' }));
+    created.push(ensureMeta('meta[name="twitter:title"]', { name: 'twitter:title', content: headline }));
+    created.push(ensureMeta('meta[name="twitter:description"]', { name: 'twitter:description', content: description }));
+    created.push(ensureMeta('meta[name="twitter:image"]', { name: 'twitter:image', content: ogImage }));
+
+    return () => {
+      document.title = original;
+      // Leave the tags in place; they'll be overwritten by the next page that
+      // sets them, and removing them flashes generic previews if a user shares
+      // mid-navigation.
+    };
+  }, [data, slug]);
+
   const featuredPlans = (data?.featured_plans ?? []) as StorefrontPlan[];
   const defaultPlan = featuredPlans.find((plan) => plan.is_featured) ?? featuredPlans[0] ?? null;
   const selectedPlan = featuredPlans.find((plan) => plan.id === form.plan_id) ?? defaultPlan;

@@ -563,6 +563,379 @@ async def get_tenant_public_profile(slug: str, db: AsyncSession = Depends(get_db
     return await _build_tenant_public_profile_response(db, tenant)
 
 
+def _hex_to_rgb(value: str, fallback: tuple[int, int, int] = (15, 23, 42)) -> tuple[int, int, int]:
+    raw = (value or "").strip().lstrip("#")
+    if len(raw) == 3:
+        raw = "".join(ch * 2 for ch in raw)
+    if len(raw) != 6:
+        return fallback
+    try:
+        return int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
+    except ValueError:
+        return fallback
+
+
+def _render_storefront_og_image(
+    *,
+    gym_name: str,
+    headline: str,
+    primary_color: str,
+    secondary_color: str,
+    logo_bytes: Optional[bytes] = None,
+    logo_on_card: bool = True,
+    logo_size: int = 110,
+    eyebrow: str = "",  # accepted for compat; no longer rendered.
+    brand_tag: str = "Powered by Nexo Fitness",
+) -> bytes:
+    """Render a 1200×630 Open Graph image with three reserved zones:
+
+        header  y   0..170  → optional logo card (top-left)
+        body    y 210..540  → vertical accent bar + title + subtitle
+        footer  y 560..630  → divider + brand tag (bottom-right)
+
+    Decorative glow blobs live in the opposite corners (top-right, bottom-left)
+    so they never cross the text zone. The whole composition is anchored to a
+    16px-radius rounded inner card to feel less flat.
+    """
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    del eyebrow  # kept for backwards compatibility with the older signature.
+
+    width, height = 1200, 630
+    primary = _hex_to_rgb(primary_color, (14, 165, 233))
+    secondary = _hex_to_rgb(secondary_color, (139, 92, 246))
+
+    # Deep navy base.
+    img = Image.new("RGB", (width, height), (10, 14, 26)).convert("RGBA")
+
+    def _glow(center: tuple[int, int], radius: int, color: tuple[int, int, int], alpha: int, blur: int) -> None:
+        nonlocal img
+        layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        cx, cy = center
+        d.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=(*color, alpha))
+        layer = layer.filter(ImageFilter.GaussianBlur(radius=blur))
+        img = Image.alpha_composite(img, layer)
+
+    # Bigger, saturated glows in opposing corners. Stay outside the text zone.
+    _glow((width + 140, -160), 620, primary, 230, 130)
+    _glow((-160, height + 140), 640, secondary, 230, 140)
+    # Faint mid-right accent (deep in the corner, never crosses text).
+    _glow((width + 200, height // 2 - 60), 320, primary, 110, 120)
+
+    # Subtle dot pattern across the canvas (1px dots every 28px) — adds texture
+    # without the heavy-grid feel.
+    dot_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    dot_draw = ImageDraw.Draw(dot_layer)
+    for dx in range(20, width, 28):
+        for dy in range(20, height, 28):
+            dot_draw.point((dx, dy), fill=(255, 255, 255, 18))
+    img = Image.alpha_composite(img, dot_layer)
+
+    # Inner rounded card — gives the whole composition a hint of a frame.
+    card_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    card_draw = ImageDraw.Draw(card_layer)
+    card_draw.rounded_rectangle((20, 20, width - 20, height - 20), radius=28, outline=(255, 255, 255, 22), width=1)
+    img = Image.alpha_composite(img, card_layer)
+
+    draw = ImageDraw.Draw(img)
+
+    def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+        candidates = (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/local/lib/python3.11/site-packages/reportlab/fonts/VeraBd.ttf" if bold else "/usr/local/lib/python3.11/site-packages/reportlab/fonts/Vera.ttf",
+            "/usr/local/lib/python3.11/site-packages/reportlab/fonts/Vera.ttf",
+        )
+        for candidate in candidates:
+            try:
+                return ImageFont.truetype(candidate, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    def _wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int) -> list[str]:
+        words = (text or "").split()
+        lines: list[str] = []
+        current: list[str] = []
+        for word in words:
+            tentative = " ".join(current + [word])
+            bbox = draw.textbbox((0, 0), tentative, font=font)
+            if bbox[2] - bbox[0] <= max_width or not current:
+                current.append(word)
+            else:
+                lines.append(" ".join(current))
+                current = [word]
+        if current:
+            lines.append(" ".join(current))
+        if len(lines) > max_lines:
+            tail = lines[max_lines - 1]
+            while tail and draw.textbbox((0, 0), tail + "…", font=font)[2] > max_width:
+                tail = tail.rsplit(" ", 1)[0] if " " in tail else tail[:-1]
+            lines = lines[: max_lines - 1] + [tail + "…"]
+        return lines
+
+    # Layout dimensions.
+    bar_width = 8
+    bar_gap = 28
+    text_left = 80
+    bar_x = text_left
+    text_x = bar_x + bar_width + bar_gap
+    text_right = width - 80
+    max_text_width = text_right - text_x
+
+    # Title scales down if the heading is long.
+    name_len = len((gym_name or "").strip())
+    title_size = 96 if name_len <= 22 else 80 if name_len <= 36 else 66
+    title_font = _load_font(title_size, bold=True)
+    sub_font = _load_font(34, bold=False)
+    brand_font = _load_font(24, bold=True)
+
+    # Logo (top-left). When `logo_on_card` is True the logo sits on a soft white
+    # card (safest for arbitrary tenant logos). When False the logo is rendered
+    # directly on the dark background — used for the Nexo brand icon which is
+    # designed for dark surfaces.
+    logo_bottom = 0
+    if logo_bytes:
+        try:
+            logo = Image.open(BytesIO(logo_bytes)).convert("RGBA")
+            target = max(40, logo_size)
+            logo.thumbnail((target, target), Image.LANCZOS)
+            card_top = 60
+            if logo_on_card:
+                card_pad = 14
+                card_w = logo.width + card_pad * 2
+                card_h = logo.height + card_pad * 2
+                lcard_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                lcard_draw = ImageDraw.Draw(lcard_layer)
+                lcard_draw.rounded_rectangle(
+                    (text_left, card_top, text_left + card_w, card_top + card_h),
+                    radius=22,
+                    fill=(255, 255, 255, 245),
+                )
+                img = Image.alpha_composite(img, lcard_layer)
+                img.paste(logo, (text_left + card_pad, card_top + card_pad), logo)
+                logo_bottom = card_top + card_h
+            else:
+                img.paste(logo, (text_left, card_top), logo)
+                logo_bottom = card_top + logo.height
+            draw = ImageDraw.Draw(img)
+        except Exception:
+            logo_bottom = 0
+
+    # Wrap title + subtitle so we know the total text height.
+    title_lines = _wrap(gym_name or "Tu gimnasio", title_font, max_text_width, max_lines=2)
+    sub_lines = _wrap(headline or "", sub_font, max_text_width, max_lines=2)
+
+    title_line_h = title_font.getbbox("Hg")[3] - title_font.getbbox("Hg")[1]
+    sub_line_h = sub_font.getbbox("Hg")[3] - sub_font.getbbox("Hg")[1]
+    block_h = len(title_lines) * (title_line_h + 10) + (24 if sub_lines else 0) + len(sub_lines) * (sub_line_h + 6)
+
+    # Vertically center the text block in the body zone (210..540), but never
+    # below the logo card.
+    body_top = max(210, logo_bottom + 40)
+    body_bottom = 540
+    body_h = body_bottom - body_top
+    y_start = body_top + max(0, (body_h - block_h) // 2)
+
+    # Vertical accent bar (primary→secondary gradient) hugging the text block.
+    bar_top = y_start - 4
+    bar_bottom = y_start + block_h - 8
+    bar_layer = Image.new("RGBA", (bar_width, max(1, bar_bottom - bar_top)), (0, 0, 0, 0))
+    bar_h = bar_bottom - bar_top
+    for i in range(bar_h):
+        t = i / max(bar_h - 1, 1)
+        r = int(primary[0] * (1 - t) + secondary[0] * t)
+        g = int(primary[1] * (1 - t) + secondary[1] * t)
+        b = int(primary[2] * (1 - t) + secondary[2] * t)
+        for bxp in range(bar_width):
+            bar_layer.putpixel((bxp, i), (r, g, b, 255))
+    img.paste(bar_layer, (bar_x, bar_top), bar_layer)
+    draw = ImageDraw.Draw(img)
+
+    # Title.
+    y_cursor = y_start
+    for line in title_lines:
+        draw.text((text_x, y_cursor), line, font=title_font, fill=(255, 255, 255))
+        y_cursor += title_line_h + 10
+
+    if sub_lines:
+        y_cursor += 14
+        for line in sub_lines:
+            if y_cursor + sub_line_h > body_bottom:
+                break
+            draw.text((text_x, y_cursor), line, font=sub_font, fill=(214, 224, 240))
+            y_cursor += sub_line_h + 6
+
+    # Footer divider + brand tag bottom-right.
+    footer_top = 560
+    div_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    div_draw = ImageDraw.Draw(div_layer)
+    div_draw.line([(text_left, footer_top), (text_right, footer_top)], fill=(255, 255, 255, 30), width=1)
+    img = Image.alpha_composite(img, div_layer)
+    draw = ImageDraw.Draw(img)
+
+    bt_bbox = draw.textbbox((0, 0), brand_tag, font=brand_font)
+    bt_w = bt_bbox[2] - bt_bbox[0]
+    bt_h = bt_bbox[3] - bt_bbox[1]
+    bt_y = footer_top + (height - footer_top - bt_h) // 2 - 4
+    bt_x = text_right - bt_w
+    dot_radius = 5
+    dot_cy = bt_y + bt_h // 2
+    draw.ellipse(
+        (bt_x - 22 - dot_radius, dot_cy - dot_radius, bt_x - 22 + dot_radius, dot_cy + dot_radius),
+        fill=(*primary, 255),
+    )
+    draw.text((bt_x, bt_y), brand_tag, font=brand_font, fill=(255, 255, 255, 235))
+
+    buf = BytesIO()
+    img.convert("RGB").save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+_NEXO_BRAND_ICON_CANDIDATES = (
+    "/app/app/static/nexo-icon.png",
+    "/app/static/nexo-icon.png",
+    "/var/www/nexofitness/backend/app/static/nexo-icon.png",
+    "/var/www/nexofitness/landing/icons/icon-512.png",
+    "/var/www/nexofitness/landing/icons/icon-192.png",
+    "/var/www/nexofitness/landing/icon.png",
+    "/var/www/nexofitness/frontend/public/icon.png",
+)
+
+
+def _load_nexo_brand_icon() -> Optional[bytes]:
+    for path in _NEXO_BRAND_ICON_CANDIDATES:
+        try:
+            with open(path, "rb") as fh:
+                return fh.read()
+        except OSError:
+            continue
+    return None
+
+
+@public_router.get("/og/landing.png")
+async def get_landing_og_image():
+    """Branded Open Graph image for the public landing page (nexofitness.cl)."""
+    from fastapi.responses import Response
+
+    png = _render_storefront_og_image(
+        gym_name="Gestión integral para tu gimnasio",
+        headline="Vende planes, agenda clases, cobra online y fideliza miembros desde un solo lugar.",
+        primary_color="#0EA5E9",
+        secondary_color="#8B5CF6",
+        logo_bytes=_load_nexo_brand_icon(),
+        logo_on_card=False,
+        logo_size=140,
+        brand_tag="nexofitness.cl",
+    )
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400, s-maxage=86400"},
+    )
+
+
+@public_router.get("/storefront/{slug}/og.png")
+async def get_storefront_og_image(slug: str, db: AsyncSession = Depends(get_db)):
+    """Dynamic 1200x630 PNG used as og:image when sharing a gym's public URL."""
+    from fastapi.responses import Response
+    import httpx
+
+    tenant = await _get_public_tenant_or_404(db, slug)
+    features = _loads_dict(tenant.features)
+    headline = str(features.get("marketplace_headline") or "").strip()
+    if not headline:
+        headline = "Compra tu plan, reserva clases y administra tu acceso."
+
+    logo_bytes: Optional[bytes] = None
+    if tenant.logo_url:
+        try:
+            async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+                resp = await client.get(tenant.logo_url)
+                if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                    logo_bytes = resp.content
+        except Exception:
+            logo_bytes = None
+
+    png = _render_storefront_og_image(
+        gym_name=tenant.name,
+        headline=headline,
+        primary_color=tenant.primary_color or DEFAULT_PRIMARY_COLOR,
+        secondary_color=tenant.secondary_color or DEFAULT_SECONDARY_COLOR,
+        logo_bytes=logo_bytes,
+    )
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600, s-maxage=3600"},
+    )
+
+
+@public_router.get("/storefront/{slug}/share", response_class=HTMLResponse)
+async def get_storefront_share_page(slug: str, db: AsyncSession = Depends(get_db)):
+    """HTML page with full Open Graph meta tags so bots see rich previews.
+
+    Humans get auto-redirected to the real storefront URL; crawlers (Facebook,
+    WhatsApp, Twitter, etc.) read the tags before following the redirect.
+    """
+    tenant = await _get_public_tenant_or_404(db, slug)
+    features = _loads_dict(tenant.features)
+    headline = str(features.get("marketplace_headline") or f"{tenant.name} · Compra tu plan online").strip()
+    description = str(features.get("marketplace_description") or "Reserva clases, compra tu plan y administra tu acceso desde un solo lugar.").strip()
+
+    settings_obj = get_settings()
+    public_origin = (settings_obj.FRONTEND_URL or "").rstrip("/") or "https://app.nexofitness.cl"
+    try:
+        custom_domain = normalize_custom_domain(tenant.custom_domain)
+    except ValueError:
+        custom_domain = None
+    if custom_domain:
+        storefront_url = f"https://{custom_domain}"
+    else:
+        storefront_url = f"{public_origin}/s/{tenant.slug}"
+
+    # OG image URL — absolute so crawlers can fetch it.
+    api_origin = public_origin  # nginx proxies /api/v1 to backend on same origin.
+    og_image_url = f"{api_origin}/api/v1/public/storefront/{tenant.slug}/og.png"
+
+    safe_name = escape(tenant.name)
+    safe_headline = escape(headline)
+    safe_description = escape(description)
+    safe_storefront = escape(storefront_url, quote=True)
+    safe_image = escape(og_image_url, quote=True)
+
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>{safe_name}</title>
+<meta name="description" content="{safe_description}" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Nexo Fitness" />
+<meta property="og:title" content="{safe_headline}" />
+<meta property="og:description" content="{safe_description}" />
+<meta property="og:url" content="{safe_storefront}" />
+<meta property="og:image" content="{safe_image}" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="{safe_headline}" />
+<meta name="twitter:description" content="{safe_description}" />
+<meta name="twitter:image" content="{safe_image}" />
+<link rel="canonical" href="{safe_storefront}" />
+<meta http-equiv="refresh" content="0; url={safe_storefront}" />
+</head>
+<body>
+<p>Abriendo <a href="{safe_storefront}">{safe_name}</a>...</p>
+<script>window.location.replace({json.dumps(storefront_url)});</script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html, headers={"Cache-Control": "public, max-age=600"})
+
+
 @public_router.get("/storefront/profile", response_model=TenantPublicProfileResponse)
 async def get_storefront_public_profile(
     request: Request,
