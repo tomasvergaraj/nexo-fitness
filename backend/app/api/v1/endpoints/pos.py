@@ -245,14 +245,16 @@ async def create_product(
     )
     db.add(product)
 
-    # create inventory row (stock global = 0)
+    # create inventory row (stock global, opcionalmente con stock inicial)
+    initial_quantity = body.initial_stock or 0
+    initial_min_stock = body.min_stock or 0
     inventory = Inventory(
         id=uuid4(),
         tenant_id=ctx.tenant_id,
         product_id=product.id,
         branch_id=None,
-        quantity=0,
-        min_stock=0,
+        quantity=initial_quantity,
+        min_stock=initial_min_stock,
         updated_at=now,
     )
     db.add(inventory)
@@ -260,7 +262,7 @@ async def create_product(
     await db.commit()
     await db.refresh(product)
     data = ProductResponse.model_validate(product)
-    data.stock = 0
+    data.stock = initial_quantity
     return data
 
 

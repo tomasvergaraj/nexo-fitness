@@ -43,6 +43,8 @@ class ProductCreate(BaseModel):
     unit: str = "unit"
     category_id: Optional[UUID] = None
     image_url: Optional[str] = None
+    initial_stock: Optional[int] = Field(default=None, ge=0, description="Stock inicial; crea el row de inventario con esta cantidad")
+    min_stock: Optional[int] = Field(default=None, ge=0, description="Stock mínimo para alertas")
 
 
 class ProductUpdate(BaseModel):
