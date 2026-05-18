@@ -332,7 +332,7 @@ export interface PlatformBillingPayment {
   tax_amount: number;
   total_amount: number;
   currency: string;
-  payment_method: 'stripe' | 'fintoc' | 'webpay' | 'tuu' | 'transfer' | 'cash' | 'mercadopago' | 'other';
+  payment_method: 'stripe' | 'fintoc' | 'webpay' | 'tuu' | 'transfer' | 'cash' | 'mercadopago' | 'debit_card' | 'credit_card' | 'other';
   external_reference?: string | null;
   notes?: string | null;
   paid_at?: string | null;
@@ -717,7 +717,7 @@ export interface MembershipManualSaleRequest {
   plan_id: string;
   starts_at: string;
   expires_at?: string | null;
-  payment_method: 'cash' | 'transfer';
+  payment_method: 'cash' | 'transfer' | 'debit_card' | 'credit_card';
   amount?: number | null;
   currency: string;
   description?: string | null;

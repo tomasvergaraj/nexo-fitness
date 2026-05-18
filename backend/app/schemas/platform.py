@@ -96,7 +96,7 @@ class MembershipManualSaleRequest(BaseModel):
     plan_id: UUID
     starts_at: date
     expires_at: Optional[date] = None
-    payment_method: str = Field(pattern=r"^(cash|transfer)$")
+    payment_method: str = Field(pattern=r"^(cash|transfer|debit_card|credit_card)$")
     amount: Optional[Decimal] = Field(default=None, ge=0)
     currency: str = Field(default="CLP", min_length=3, max_length=3)
     description: Optional[str] = Field(default=None, max_length=255)

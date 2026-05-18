@@ -63,6 +63,8 @@ class PaymentMethod(str, enum.Enum):
     TUU = "tuu"
     CASH = "cash"
     TRANSFER = "transfer"
+    DEBIT_CARD = "debit_card"
+    CREDIT_CARD = "credit_card"
     OTHER = "other"
 
 

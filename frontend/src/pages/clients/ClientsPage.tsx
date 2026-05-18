@@ -121,7 +121,7 @@ type ManualSaleForm = {
   plan_id: string;
   starts_at: string;
   expires_at: string;
-  payment_method: 'cash' | 'transfer';
+  payment_method: 'cash' | 'transfer' | 'debit_card' | 'credit_card';
   amount: string;
   currency: string;
   description: string;
@@ -1540,6 +1540,8 @@ export default function ClientsPage() {
                     >
                       <option value="cash">Efectivo</option>
                       <option value="transfer">Transferencia directa</option>
+                      <option value="debit_card">Tarjeta de débito</option>
+                      <option value="credit_card">Tarjeta de crédito</option>
                     </select>
                   </div>
                 </div>
