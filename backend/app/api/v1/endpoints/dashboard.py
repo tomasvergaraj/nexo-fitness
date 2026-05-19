@@ -418,9 +418,9 @@ async def get_sidebar_counters(
         select(func.count()).where(
             Membership.tenant_id == tid,
             Membership.status == MembershipStatus.ACTIVE,
-            Membership.end_date.is_not(None),
-            Membership.end_date >= today_start,
-            Membership.end_date <= in_7_days,
+            Membership.expires_at.is_not(None),
+            Membership.expires_at >= today_start.date(),
+            Membership.expires_at <= in_7_days.date(),
         )
     )
     clients_expiring_soon = int(expiring_q.scalar() or 0)
