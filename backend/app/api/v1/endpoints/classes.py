@@ -41,11 +41,16 @@ from app.services.push_notification_service import create_and_dispatch_notificat
 logger = structlog.get_logger()
 
 router = APIRouter(tags=["Classes & Reservations"])
-SUSPICIOUS_QR_RULE = "qr_frequency"
-SUSPICIOUS_QR_WINDOW_THRESHOLD = 3
-SUSPICIOUS_QR_DAILY_THRESHOLD = 5
-SUSPICIOUS_QR_WINDOW_HOURS = 2
-CHECKIN_WINDOW_BEFORE_MINUTES = 60
+
+# Constantes movidas a services/checkin_helpers.py; mantengo aliases para
+# tests existentes que las importen desde aquí.
+from app.services.checkin_helpers import (  # noqa: E402
+    CHECKIN_WINDOW_BEFORE_MINUTES,
+    SUSPICIOUS_QR_DAILY_THRESHOLD,
+    SUSPICIOUS_QR_RULE,
+    SUSPICIOUS_QR_WINDOW_HOURS,
+    SUSPICIOUS_QR_WINDOW_THRESHOLD,
+)
 
 
 def _valid_program_class_filter(tenant_id: UUID):
@@ -84,191 +89,16 @@ from app.core.timezone import (  # noqa: E402
 )
 
 
-async def _build_checkin_history_items(
-    db: AsyncSession,
-    checkins: list[CheckIn],
-) -> list[CheckInHistoryItemResponse]:
-    if not checkins:
-        return []
-
-    user_ids = {checkin.user_id for checkin in checkins}
-    actor_ids = {checkin.checked_in_by for checkin in checkins if checkin.checked_in_by}
-    branch_ids = {checkin.branch_id for checkin in checkins if checkin.branch_id}
-    class_ids = {checkin.gym_class_id for checkin in checkins if checkin.gym_class_id}
-
-    users = (
-        await db.execute(select(User).where(User.id.in_(user_ids | actor_ids)))
-    ).scalars().all() if (user_ids or actor_ids) else []
-    branches = (
-        await db.execute(select(Branch).where(Branch.id.in_(branch_ids)))
-    ).scalars().all() if branch_ids else []
-    classes = (
-        await db.execute(select(GymClass).where(GymClass.id.in_(class_ids)))
-    ).scalars().all() if class_ids else []
-
-    users_by_id = {user.id: user for user in users}
-    branches_by_id = {branch.id: branch for branch in branches}
-    classes_by_id = {gym_class.id: gym_class for gym_class in classes}
-
-    return [
-        _checkin_history_response(
-            checkin,
-            user_name=users_by_id.get(checkin.user_id).full_name if users_by_id.get(checkin.user_id) else None,
-            branch_name=branches_by_id.get(checkin.branch_id).name if checkin.branch_id and branches_by_id.get(checkin.branch_id) else None,
-            gym_class_name=classes_by_id.get(checkin.gym_class_id).name if checkin.gym_class_id and classes_by_id.get(checkin.gym_class_id) else None,
-            checked_in_by_name=users_by_id.get(checkin.checked_in_by).full_name if checkin.checked_in_by and users_by_id.get(checkin.checked_in_by) else None,
-        )
-        for checkin in checkins
-    ]
-
-
-async def _build_checkin_case_items(
-    db: AsyncSession,
-    cases: list[CheckInInvestigationCase],
-) -> list[CheckInInvestigationCaseResponse]:
-    if not cases:
-        return []
-
-    user_ids = {case.user_id for case in cases}
-    reviewer_ids = {case.reviewed_by for case in cases if case.reviewed_by}
-    users = (
-        await db.execute(select(User).where(User.id.in_(user_ids | reviewer_ids)))
-    ).scalars().all() if (user_ids or reviewer_ids) else []
-    users_by_id = {user.id: user for user in users}
-
-    return [
-        _checkin_case_response(
-            case,
-            user=users_by_id.get(case.user_id),
-            reviewer=users_by_id.get(case.reviewed_by) if case.reviewed_by else None,
-        )
-        for case in cases
-    ]
-
-
-async def _build_checkin_case_detail(
-    db: AsyncSession,
-    ctx: TenantContext,
-    case: CheckInInvestigationCase,
-) -> CheckInInvestigationCaseDetailResponse:
-    zone = _tenant_zone(ctx)
-    day_start_utc, day_end_utc = _tenant_local_day_bounds(case.local_day, zone)
-    related_checkins = (
-        await db.execute(
-            select(CheckIn)
-            .where(
-                CheckIn.tenant_id == ctx.tenant_id,
-                CheckIn.user_id == case.user_id,
-                CheckIn.check_type == "qr",
-                CheckIn.checked_in_at >= day_start_utc,
-                CheckIn.checked_in_at < day_end_utc,
-            )
-            .order_by(CheckIn.checked_in_at.desc())
-        )
-    ).scalars().all()
-    related_items = await _build_checkin_history_items(db, related_checkins)
-
-    users = (
-        await db.execute(
-            select(User).where(
-                User.id.in_({case.user_id} | ({case.reviewed_by} if case.reviewed_by else set()))
-            )
-        )
-    ).scalars().all()
-    users_by_id = {user.id: user for user in users}
-    summary = _checkin_case_response(
-        case,
-        user=users_by_id.get(case.user_id),
-        reviewer=users_by_id.get(case.reviewed_by) if case.reviewed_by else None,
-    )
-
-    return CheckInInvestigationCaseDetailResponse(
-        **summary.model_dump(),
-        related_checkins=related_items,
-    )
-
-
-async def _detect_qr_frequency_case(
-    db: AsyncSession,
-    ctx: TenantContext,
-    checkin: CheckIn,
-) -> Optional[CheckInInvestigationCase]:
-    if not ctx.tenant or checkin.check_type != "qr":
-        return None
-
-    zone = _tenant_zone(ctx)
-    local_day = checkin.checked_in_at.astimezone(zone).date()
-    day_start_utc, day_end_utc = _tenant_local_day_bounds(local_day, zone)
-    window_start_utc = checkin.checked_in_at - timedelta(hours=SUSPICIOUS_QR_WINDOW_HOURS)
-
-    daily_qr_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(CheckIn)
-            .where(
-                CheckIn.tenant_id == ctx.tenant_id,
-                CheckIn.user_id == checkin.user_id,
-                CheckIn.check_type == "qr",
-                CheckIn.checked_in_at >= day_start_utc,
-                CheckIn.checked_in_at < day_end_utc,
-            )
-        )
-    ).scalar() or 0
-
-    window_qr_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(CheckIn)
-            .where(
-                CheckIn.tenant_id == ctx.tenant_id,
-                CheckIn.user_id == checkin.user_id,
-                CheckIn.check_type == "qr",
-                CheckIn.checked_in_at >= window_start_utc,
-                CheckIn.checked_in_at <= checkin.checked_in_at,
-            )
-        )
-    ).scalar() or 0
-
-    if daily_qr_count < SUSPICIOUS_QR_DAILY_THRESHOLD and window_qr_count < SUSPICIOUS_QR_WINDOW_THRESHOLD:
-        return None
-
-    case = (
-        await db.execute(
-            select(CheckInInvestigationCase).where(
-                CheckInInvestigationCase.tenant_id == ctx.tenant_id,
-                CheckInInvestigationCase.user_id == checkin.user_id,
-                CheckInInvestigationCase.local_day == local_day,
-                CheckInInvestigationCase.rule_code == SUSPICIOUS_QR_RULE,
-            )
-        )
-    ).scalar_one_or_none()
-
-    if case is None:
-        case = CheckInInvestigationCase(
-            tenant_id=ctx.tenant_id,
-            user_id=checkin.user_id,
-            trigger_checkin_id=checkin.id,
-            status="open",
-            rule_code=SUSPICIOUS_QR_RULE,
-            local_day=local_day,
-            first_triggered_at=checkin.checked_in_at,
-            last_triggered_at=checkin.checked_in_at,
-            daily_qr_count=daily_qr_count,
-            window_qr_count=window_qr_count,
-        )
-        db.add(case)
-    else:
-        case.trigger_checkin_id = checkin.id
-        case.last_triggered_at = checkin.checked_in_at
-        case.daily_qr_count = daily_qr_count
-        case.window_qr_count = window_qr_count
-        if case.status != "confirmed":
-            case.status = "open"
-            case.reviewed_by = None
-            case.reviewed_at = None
-
-    await db.flush()
-    return case
+# Async helpers de check-in movidos a services/checkin_helpers.py.
+from app.services.checkin_helpers import (  # noqa: E402
+    build_checkin_case_detail as _build_checkin_case_detail,
+    build_checkin_case_items as _build_checkin_case_items,
+    build_checkin_history_items as _build_checkin_history_items,
+    create_checkin_record as _create_checkin_record,
+    detect_qr_frequency_case as _detect_qr_frequency_case,
+    get_checkin_client as _get_checkin_client,
+    resolve_eligible_reservation as _resolve_eligible_reservation,
+)
 
 
 def _build_class_reservation_detail_response(
@@ -295,160 +125,6 @@ def _build_class_reservation_detail_response(
         attended_at=reservation.attended_at,
         created_at=reservation.created_at,
     )
-
-
-async def _get_checkin_client(
-    db: AsyncSession,
-    tenant_id: UUID,
-    user_id: UUID,
-) -> User:
-    result = await db.execute(
-        select(User).where(
-            User.id == user_id,
-            User.tenant_id == tenant_id,
-            User.is_active == True,
-            User.role == UserRole.CLIENT,
-        )
-    )
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="No encontramos un cliente activo para registrar el ingreso")
-    return user
-
-
-async def _resolve_eligible_reservation(
-    db: AsyncSession,
-    tenant_id: UUID,
-    user_id: UUID,
-    now_utc: datetime,
-    explicit_gym_class_id: Optional[UUID] = None,
-) -> Optional[Reservation]:
-    """Find the best reservation to link to a check-in.
-
-    If explicit_gym_class_id is given, look for a reservation for that class.
-    Otherwise auto-resolve by schedule proximity within the eligibility window.
-    Only in_person and hybrid classes qualify (not online).
-    Window: [start_time - 60min, end_time] inclusive.
-    """
-    window_open = now_utc - timedelta(minutes=CHECKIN_WINDOW_BEFORE_MINUTES)
-    eligible_statuses = [ReservationStatus.CONFIRMED, ReservationStatus.NO_SHOW]
-    eligible_modalities = [ClassModality.IN_PERSON, ClassModality.HYBRID]
-
-    if explicit_gym_class_id:
-        result = await db.execute(
-            select(Reservation)
-            .join(GymClass, GymClass.id == Reservation.gym_class_id)
-            .where(
-                Reservation.user_id == user_id,
-                Reservation.gym_class_id == explicit_gym_class_id,
-                Reservation.status.in_(eligible_statuses),
-                GymClass.tenant_id == tenant_id,
-                GymClass.modality.in_(eligible_modalities),
-                GymClass.start_time >= window_open,
-                GymClass.end_time >= now_utc,
-            )
-        )
-        return result.scalar_one_or_none()
-
-    # Return (Reservation, GymClass.start_time) rows so we can sort without lazy loading
-    rows = (await db.execute(
-        select(Reservation, GymClass.start_time)
-        .join(GymClass, GymClass.id == Reservation.gym_class_id)
-        .where(
-            Reservation.user_id == user_id,
-            Reservation.tenant_id == tenant_id,
-            Reservation.status.in_(eligible_statuses),
-            GymClass.tenant_id == tenant_id,
-            GymClass.modality.in_(eligible_modalities),
-            GymClass.start_time >= window_open,
-            GymClass.end_time >= now_utc,
-        )
-        .order_by(GymClass.start_time.asc())
-    )).all()
-    if not rows:
-        return None
-    # Pick closest to now; ties already broken by asc order (earliest start_time)
-    best_reservation, _ = min(rows, key=lambda row: abs((row[1] - now_utc).total_seconds()))
-    return best_reservation
-
-
-async def _create_checkin_record(
-    db: AsyncSession,
-    tenant_id: UUID,
-    checked_in_by: UUID,
-    user_id: UUID,
-    gym_class_id: Optional[UUID],
-    branch_id: Optional[UUID],
-    check_type: str,
-    reservation: Optional[Reservation] = None,
-) -> tuple[CheckIn, str]:
-    """Create a check-in record and optionally link it to a reservation.
-
-    Returns (checkin, attendance_resolution) where resolution is one of:
-      "linked"           — new attendance recorded
-      "already_attended" — reservation was already attended; idempotent response
-      "none"             — general check-in, no class linked
-    """
-    now_utc = datetime.now(timezone.utc)
-
-    if reservation is not None:
-        if reservation.status == ReservationStatus.ATTENDED:
-            # Idempotent: find existing linked check-in if present
-            existing_result = await db.execute(
-                select(CheckIn).where(CheckIn.reservation_id == reservation.id)
-            )
-            existing = existing_result.scalar_one_or_none()
-            if existing:
-                return existing, "already_attended"
-            # Legacy attended reservation without a linked checkin — create one but don't re-attend
-            checkin = CheckIn(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                gym_class_id=reservation.gym_class_id,
-                reservation_id=reservation.id,
-                branch_id=branch_id,
-                check_type=check_type,
-                checked_in_by=checked_in_by,
-                checked_in_at=now_utc,
-            )
-            db.add(checkin)
-            await db.flush()
-            await db.refresh(checkin)
-            return checkin, "already_attended"
-
-        # Link check-in to reservation and mark attended
-        checkin = CheckIn(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            gym_class_id=reservation.gym_class_id,
-            reservation_id=reservation.id,
-            branch_id=branch_id,
-            check_type=check_type,
-            checked_in_by=checked_in_by,
-            checked_in_at=now_utc,
-        )
-        db.add(checkin)
-        reservation.status = ReservationStatus.ATTENDED
-        reservation.attended_at = now_utc
-        await db.flush()
-        await db.refresh(checkin)
-        return checkin, "linked"
-
-    # General check-in — no class association
-    checkin = CheckIn(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        gym_class_id=gym_class_id,
-        reservation_id=None,
-        branch_id=branch_id,
-        check_type=check_type,
-        checked_in_by=checked_in_by,
-        checked_in_at=now_utc,
-    )
-    db.add(checkin)
-    await db.flush()
-    await db.refresh(checkin)
-    return checkin, "none"
 
 
 # ─── Classes ──────────────────────────────────────────────────────────────────
