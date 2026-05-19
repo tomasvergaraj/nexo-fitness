@@ -196,6 +196,7 @@ export const platformAdminApi = {
 export const dashboardApi = {
   getMetrics: () => api.get('/dashboard/metrics'),
   getToday: () => api.get('/dashboard/today'),
+  getSidebarCounters: () => api.get('/dashboard/sidebar-counters'),
 };
 
 export const classesApi = {

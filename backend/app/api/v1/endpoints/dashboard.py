@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles
 from app.models.business import (
-    GymClass, Reservation, CheckIn, Payment, Membership, MembershipStatus,
+    Campaign, CampaignStatus, GymClass, Reservation, CheckIn, Payment, Membership, MembershipStatus,
     PaymentStatus, ClassStatus, TrainingProgram,
 )
 from app.models.user import User, UserRole
@@ -381,4 +381,59 @@ async def get_day_panel(
         birthdays=day_birthdays,
         checkins_count=checkins_count,
         revenue_today=revenue_today,
+    )
+
+
+class SidebarCounters(BaseModel):
+    classes_today: int
+    clients_expiring_soon: int
+    marketing_scheduled: int
+
+
+@router.get("/sidebar-counters", response_model=SidebarCounters)
+async def get_sidebar_counters(
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    """Contadores livianos para mostrar badges junto a items del sidebar."""
+    tid = ctx.tenant_id
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today_start + timedelta(days=1)
+    in_7_days = today_start + timedelta(days=7)
+
+    classes_today_q = await db.execute(
+        select(func.count()).where(
+            GymClass.tenant_id == tid,
+            GymClass.status == ClassStatus.SCHEDULED,
+            GymClass.start_time >= today_start,
+            GymClass.start_time < tomorrow,
+        )
+    )
+    classes_today = int(classes_today_q.scalar() or 0)
+
+    expiring_q = await db.execute(
+        select(func.count()).where(
+            Membership.tenant_id == tid,
+            Membership.status == MembershipStatus.ACTIVE,
+            Membership.end_date.is_not(None),
+            Membership.end_date >= today_start,
+            Membership.end_date <= in_7_days,
+        )
+    )
+    clients_expiring_soon = int(expiring_q.scalar() or 0)
+
+    scheduled_q = await db.execute(
+        select(func.count()).where(
+            Campaign.tenant_id == tid,
+            Campaign.status == CampaignStatus.SCHEDULED,
+        )
+    )
+    marketing_scheduled = int(scheduled_q.scalar() or 0)
+
+    return SidebarCounters(
+        classes_today=classes_today,
+        clients_expiring_soon=clients_expiring_soon,
+        marketing_scheduled=marketing_scheduled,
     )

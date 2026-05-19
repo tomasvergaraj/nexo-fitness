@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard, CalendarDays, Users, CreditCard,
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
@@ -10,7 +11,14 @@ import {
 import NexoBrand, { NEXO_BRAND_SLOGAN } from '@/components/branding/NexoBrand';
 import { canAccessDashboard, cn, getDefaultRouteForRole } from '@/utils';
 import { useAuthStore } from '@/stores/authStore';
+import { dashboardApi } from '@/services/api';
 import type { UserRole } from '@/types';
+
+interface SidebarCounters {
+  classes_today: number;
+  clients_expiring_soon: number;
+  marketing_scheduled: number;
+}
 
 interface SidebarProps {
   isOpen: boolean;
@@ -22,6 +30,7 @@ interface NavItemDef {
   path: string;
   icon: React.ReactNode;
   roles?: UserRole[];
+  counterKey?: keyof SidebarCounters;
 }
 
 interface NavGroupDef {
@@ -54,8 +63,8 @@ const tenantNavGroups: NavGroupDef[] = [
     key: 'operacion',
     label: 'Operación',
     items: [
-      { label: 'Clases', path: '/classes', icon: <CalendarDays size={16} />, roles: ['owner', 'admin', 'reception', 'trainer'] },
-      { label: 'Clientes', path: '/clients', icon: <Users size={16} />, roles: ['owner', 'admin', 'reception', 'trainer'] },
+      { label: 'Clases', path: '/classes', icon: <CalendarDays size={16} />, roles: ['owner', 'admin', 'reception', 'trainer'], counterKey: 'classes_today' },
+      { label: 'Clientes', path: '/clients', icon: <Users size={16} />, roles: ['owner', 'admin', 'reception', 'trainer'], counterKey: 'clients_expiring_soon' },
       { label: 'Check-in', path: '/checkin', icon: <UserCheck size={16} />, roles: ['owner', 'admin', 'reception'] },
       { label: 'Programas', path: '/programs', icon: <Dumbbell size={16} />, roles: ['owner', 'admin', 'trainer'] },
       { label: 'Soporte', path: '/support', icon: <HelpCircle size={16} />, roles: ['owner', 'admin', 'reception'] },
@@ -68,7 +77,7 @@ const tenantNavGroups: NavGroupDef[] = [
       { label: 'Planes', path: '/plans', icon: <CreditCard size={16} />, roles: ['owner', 'admin'] },
       { label: 'Caja POS', path: '/pos', icon: <ShoppingCart size={16} />, roles: ['owner', 'admin', 'reception'] },
       { label: 'Códigos Promo', path: '/promo-codes', icon: <Tag size={16} />, roles: ['owner', 'admin'] },
-      { label: 'Marketing', path: '/marketing', icon: <Megaphone size={16} />, roles: ['owner', 'admin', 'marketing'] },
+      { label: 'Marketing', path: '/marketing', icon: <Megaphone size={16} />, roles: ['owner', 'admin', 'marketing'], counterKey: 'marketing_scheduled' },
     ],
   },
   {
@@ -140,6 +149,7 @@ function NavGroup({
   isOpen,
   onToggle,
   onNavigate,
+  counters,
 }: {
   group: NavGroupDef;
   userRole?: UserRole | null;
@@ -147,11 +157,16 @@ function NavGroup({
   isOpen: boolean;
   onToggle: () => void;
   onNavigate: () => void;
+  counters?: SidebarCounters | null;
 }) {
   const visibleItems = group.items.filter(
     (item) => !item.roles || (userRole && item.roles.includes(userRole)),
   );
   if (visibleItems.length === 0) return null;
+
+  const groupCount = counters
+    ? visibleItems.reduce((acc, item) => acc + (item.counterKey ? (counters[item.counterKey] || 0) : 0), 0)
+    : 0;
 
   const hasActive = visibleItems.some((item) => isPathActive(item.path, pathname, userRole));
 
@@ -168,6 +183,11 @@ function NavGroup({
         )}
       >
         <span className="flex-1 text-left">{group.label}</span>
+        {!isOpen && groupCount > 0 ? (
+          <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-white">
+            {groupCount > 99 ? '99+' : groupCount}
+          </span>
+        ) : null}
         <ChevronRight
           size={12}
           className={cn('shrink-0 transition-transform duration-200', isOpen && 'rotate-90')}
@@ -187,6 +207,7 @@ function NavGroup({
               {visibleItems.map((item) => {
                 const resolvedPath = resolveNavPath(item.path, userRole);
                 const isActive = isPathActive(item.path, pathname, userRole);
+                const count = item.counterKey && counters ? counters[item.counterKey] : 0;
                 return (
                   <NavLink
                     key={item.path}
@@ -206,13 +227,25 @@ function NavGroup({
                       {item.icon}
                     </span>
                     <span className="truncate">{item.label}</span>
-                    {isActive && (
+                    {count > 0 ? (
+                      <span
+                        title={
+                          item.counterKey === 'classes_today' ? 'Clases programadas hoy'
+                          : item.counterKey === 'clients_expiring_soon' ? 'Membresías que vencen en los próximos 7 días'
+                          : item.counterKey === 'marketing_scheduled' ? 'Campañas agendadas'
+                          : undefined
+                        }
+                        className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand-100 px-1.5 text-[10px] font-bold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
+                      >
+                        {count > 99 ? '99+' : count}
+                      </span>
+                    ) : isActive ? (
                       <motion.div
                         layoutId="sidebar-indicator"
                         className="ml-auto h-1.5 w-1.5 rounded-full bg-brand-500"
                         transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                       />
-                    )}
+                    ) : null}
                   </NavLink>
                 );
               })}
@@ -266,6 +299,15 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
 
   const isSuperadmin = userRole === 'superadmin';
   const isDashboardRouteActive = location.pathname === '/dashboard' && !canAccessDashboard(userRole);
+
+  const canSeeCounters = !isSuperadmin && (userRole === 'owner' || userRole === 'admin' || userRole === 'reception');
+  const { data: counters } = useQuery<SidebarCounters>({
+    queryKey: ['sidebar-counters'],
+    queryFn: async () => (await dashboardApi.getSidebarCounters()).data,
+    enabled: canSeeCounters,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
 
   const visiblePinnedTop = pinnedTopItems.filter(
     (item) => !item.roles || (userRole && item.roles.includes(userRole)),
@@ -369,6 +411,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
                     isOpen={!!openGroups[group.key]}
                     onToggle={() => toggleGroup(group.key)}
                     onNavigate={handleNavigate}
+                    counters={counters ?? null}
                   />
                 ))}
               </div>
