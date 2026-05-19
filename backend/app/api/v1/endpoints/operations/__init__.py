@@ -169,7 +169,21 @@ from app.services.webpay_checkout_service import (
     sanitize_payment_account_metadata,
 )
 
-branches_router = APIRouter(prefix="/branches", tags=["Branches"])
+# Routers extracted to sub-modules (Phase A)
+from .branches import branches_router
+from .upload import upload_router
+from .promo_codes import promo_codes_router
+from .progress import progress_router
+from .personal_records import personal_records_router
+
+# Shared helpers and constants used by remaining in-place routers
+from ._common import (
+    _PNG_MAGIC,
+    _UPLOADS_ROOT,
+    _measurement_to_response,
+    _pr_to_response,
+)
+
 memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
 campaigns_router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 support_router = APIRouter(prefix="/support/interactions", tags=["Support"])
@@ -188,15 +202,11 @@ def _valid_program_class_filter(tenant_id: UUID):
         .exists(),
     )
 staff_router = APIRouter(prefix="/staff", tags=["Staff"])
-upload_router = APIRouter(prefix="/upload", tags=["Upload"])
 settings_router = APIRouter(prefix="/settings", tags=["Settings"])
 reports_router = APIRouter(prefix="/reports", tags=["Reports"])
 notifications_router = APIRouter(prefix="/notifications", tags=["Notifications"])
 payment_accounts_router = APIRouter(prefix="/payment-provider/accounts", tags=["Payment Accounts"])
 mobile_router = APIRouter(prefix="/mobile", tags=["Mobile"])
-promo_codes_router = APIRouter(prefix="/promo-codes", tags=["Promo Codes"])
-progress_router = APIRouter(prefix="/progress", tags=["Progress"])
-personal_records_router = APIRouter(prefix="/personal-records", tags=["Personal Records"])
 settings = get_settings()
 logger = structlog.get_logger()
 _SUPPORT_STAFF_ROLES = (
@@ -1031,62 +1041,6 @@ def _mobile_payment_payload(
         membership_expires_at_snapshot=payment.membership_expires_at_snapshot or (membership.expires_at if membership else None),
         membership_status_snapshot=payment.membership_status_snapshot or membership_status_value(membership.status if membership else None),
     )
-
-
-@branches_router.get("", response_model=list[BranchResponse])
-async def list_branches(
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
-):
-    result = await db.execute(
-        select(Branch).where(Branch.tenant_id == ctx.tenant_id).order_by(Branch.created_at.asc())
-    )
-    return [BranchResponse.model_validate(branch) for branch in result.scalars().all()]
-
-
-@branches_router.post("", response_model=BranchResponse, status_code=201)
-async def create_branch(
-    data: BranchCreate,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    if not ctx.tenant:
-        raise HTTPException(status_code=403, detail="No hay tenant activo para crear sucursales")
-
-    await assert_can_create_branch(db, ctx.tenant)
-    branch = Branch(tenant_id=ctx.tenant_id, **data.model_dump())
-    db.add(branch)
-    await db.flush()
-    await db.refresh(branch)
-    return BranchResponse.model_validate(branch)
-
-
-@branches_router.patch("/{branch_id}", response_model=BranchResponse)
-async def update_branch(
-    branch_id: UUID,
-    data: BranchUpdate,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    branch = await db.get(Branch, branch_id)
-    if not branch or branch.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Sede no encontrada")
-
-    update_data = data.model_dump(exclude_unset=True)
-    if update_data.get("is_active") is True and not branch.is_active:
-        if not ctx.tenant:
-            raise HTTPException(status_code=403, detail="No hay tenant activo para reactivar sucursales")
-        await assert_can_create_branch(db, ctx.tenant)
-
-    for field, value in update_data.items():
-        setattr(branch, field, value)
-
-    await db.flush()
-    await db.refresh(branch)
-    return BranchResponse.model_validate(branch)
 
 
 @memberships_router.get("", response_model=PaginatedResponse)
@@ -1963,39 +1917,6 @@ async def hard_delete_staff(
         raise HTTPException(status_code=404, detail="Miembro del equipo no encontrado.")
 
     await purge_user_account(db, user=staff, actor=current_user, tenant_id=ctx.tenant_id)
-
-
-# ─── Upload Router ────────────────────────────────────────────────────────────
-
-_UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "uploads"))
-_MAX_LOGO_BYTES = 4 * 1024 * 1024  # 4 MB raw limit (client resizes before upload)
-_PNG_MAGIC = b"\x89PNG"
-
-
-@upload_router.post("/logo")
-async def upload_logo(
-    file: UploadFile = File(...),
-    tenant: Tenant = Depends(get_current_tenant),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    """Upload a PNG logo for the tenant. Returns the public URL."""
-    content = await file.read()
-
-    if len(content) > _MAX_LOGO_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el tamaño maximo de 4 MB.")
-
-    if not content.startswith(_PNG_MAGIC):
-        raise HTTPException(status_code=400, detail="Solo se aceptan imagenes en formato PNG.")
-
-    tenant_dir = _UPLOADS_ROOT / "logos" / str(tenant.id)
-    tenant_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"{uuid4().hex}.png"
-    dest = tenant_dir / filename
-    dest.write_bytes(content)
-
-    url = f"/uploads/logos/{tenant.id}/{filename}"
-    return {"url": url}
 
 
 # ─── Programs Router ──────────────────────────────────────────────────────────
@@ -3859,184 +3780,8 @@ async def update_mobile_membership(
 
 
 # ---------------------------------------------------------------------------
-# Promo Codes
+# Progress — body measurements (member self-service via mobile)
 # ---------------------------------------------------------------------------
-
-def _promo_to_response(promo: PromoCode) -> PromoCodeResponse:
-    return PromoCodeResponse(
-        id=promo.id,
-        tenant_id=promo.tenant_id,
-        code=promo.code,
-        name=promo.name,
-        description=promo.description,
-        discount_type=promo.discount_type,
-        discount_value=promo.discount_value,
-        max_uses=promo.max_uses,
-        uses_count=promo.uses_count,
-        expires_at=promo.expires_at,
-        is_active=promo.is_active,
-        plan_ids=json.loads(promo.plan_ids) if promo.plan_ids else None,
-        created_at=promo.created_at,
-        updated_at=promo.updated_at,
-    )
-
-
-@promo_codes_router.get("", response_model=list[PromoCodeResponse])
-async def list_promo_codes(
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
-) -> list[PromoCodeResponse]:
-    result = await db.execute(
-        select(PromoCode)
-        .where(PromoCode.tenant_id == tenant.id)
-        .order_by(PromoCode.created_at.desc())
-    )
-    promos = result.scalars().all()
-    return [_promo_to_response(p) for p in promos]
-
-
-@promo_codes_router.post("", response_model=PromoCodeResponse, status_code=201)
-async def create_promo_code(
-    body: PromoCodeCreate,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
-) -> PromoCodeResponse:
-    # Check uniqueness within tenant
-    existing = await db.execute(
-        select(PromoCode).where(
-            PromoCode.tenant_id == tenant.id,
-            PromoCode.code == body.code.upper(),
-        )
-    )
-    if existing.scalars().first():
-        raise HTTPException(status_code=409, detail="Ya existe un código promocional con ese código para este gimnasio.")
-
-    promo = PromoCode(
-        id=uuid4(),
-        tenant_id=tenant.id,
-        code=body.code.upper().strip(),
-        name=body.name,
-        description=body.description,
-        discount_type=body.discount_type,
-        discount_value=Decimal(str(body.discount_value)),
-        max_uses=body.max_uses,
-        uses_count=0,
-        expires_at=body.expires_at,
-        is_active=True,
-        plan_ids=json.dumps([str(p) for p in body.plan_ids]) if body.plan_ids else None,
-    )
-    db.add(promo)
-    await db.commit()
-    await db.refresh(promo)
-    return _promo_to_response(promo)
-
-
-@promo_codes_router.patch("/{promo_id}", response_model=PromoCodeResponse)
-async def update_promo_code(
-    promo_id: UUID,
-    body: PromoCodeUpdate,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
-) -> PromoCodeResponse:
-    result = await db.execute(
-        select(PromoCode).where(PromoCode.id == promo_id, PromoCode.tenant_id == tenant.id)
-    )
-    promo = result.scalars().first()
-    if not promo:
-        raise HTTPException(status_code=404, detail="Código promocional no encontrado.")
-
-    if body.name is not None:
-        promo.name = body.name
-    if body.description is not None:
-        promo.description = body.description
-    if body.discount_type is not None:
-        promo.discount_type = body.discount_type
-    if body.discount_value is not None:
-        promo.discount_value = Decimal(str(body.discount_value))
-    if body.max_uses is not None:
-        promo.max_uses = body.max_uses
-    if body.expires_at is not None:
-        promo.expires_at = body.expires_at
-    if body.is_active is not None:
-        promo.is_active = body.is_active
-    if body.plan_ids is not None:
-        promo.plan_ids = json.dumps([str(p) for p in body.plan_ids]) if body.plan_ids else None
-
-    promo.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(promo)
-    return _promo_to_response(promo)
-
-
-@promo_codes_router.delete("/{promo_id}", status_code=204)
-async def delete_promo_code(
-    promo_id: UUID,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN)),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    result = await db.execute(
-        select(PromoCode).where(PromoCode.id == promo_id, PromoCode.tenant_id == tenant.id)
-    )
-    promo = result.scalars().first()
-    if not promo:
-        raise HTTPException(status_code=404, detail="Código promocional no encontrado.")
-    await db.delete(promo)
-    await db.commit()
-
-
-@promo_codes_router.post("/validate", response_model=PromoCodeValidateResponse)
-async def validate_promo_code(
-    body: PromoCodeValidateRequest,
-    tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> PromoCodeValidateResponse:
-    """Validate a promo code for a given plan. Returns discount info if valid."""
-    pricing = await resolve_tenant_promo_pricing(
-        db,
-        tenant_id=tenant.id,
-        plan_id=body.plan_id,
-        promo_code=body.code,
-    )
-    if not pricing.valid or pricing.promo is None:
-        return PromoCodeValidateResponse(valid=False, reason=pricing.reason)
-
-    promo = pricing.promo
-    return PromoCodeValidateResponse(
-        valid=True,
-        promo_code_id=promo.id,
-        discount_type=promo.discount_type,
-        discount_value=float(promo.discount_value),
-        discount_amount=float(pricing.promo_discount_amount or 0),
-        final_price=float(pricing.final_price or 0),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Progress — body measurements (member self-service + owner view)
-# ---------------------------------------------------------------------------
-
-def _measurement_to_response(m: BodyMeasurement) -> BodyMeasurementResponse:
-    return BodyMeasurementResponse(
-        id=m.id,
-        user_id=m.user_id,
-        tenant_id=m.tenant_id,
-        recorded_at=m.recorded_at,
-        weight_kg=m.weight_kg,
-        body_fat_pct=m.body_fat_pct,
-        muscle_mass_kg=m.muscle_mass_kg,
-        chest_cm=m.chest_cm,
-        waist_cm=m.waist_cm,
-        hip_cm=m.hip_cm,
-        arm_cm=m.arm_cm,
-        thigh_cm=m.thigh_cm,
-        notes=m.notes,
-        created_at=m.created_at,
-    )
 
 
 # Member: own measurements via /mobile/progress
@@ -4103,36 +3848,7 @@ async def mobile_delete_measurement(
     await db.commit()
 
 
-# Owner: view any client's measurements
-@progress_router.get("/{user_id}", response_model=list[BodyMeasurementResponse])
-async def owner_list_measurements(
-    user_id: UUID,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN, UserRole.TRAINER)),
-    db: AsyncSession = Depends(get_db),
-) -> list[BodyMeasurementResponse]:
-    result = await db.execute(
-        select(BodyMeasurement)
-        .where(BodyMeasurement.user_id == user_id, BodyMeasurement.tenant_id == tenant.id)
-        .order_by(BodyMeasurement.recorded_at.desc())
-    )
-    return [_measurement_to_response(m) for m in result.scalars().all()]
-
-
 # ─── Personal Records ─────────────────────────────────────────────────────────
-
-def _pr_to_response(pr: PersonalRecord) -> PersonalRecordResponse:
-    return PersonalRecordResponse(
-        id=pr.id,
-        user_id=pr.user_id,
-        tenant_id=pr.tenant_id,
-        exercise_name=pr.exercise_name,
-        record_value=pr.record_value,
-        unit=pr.unit,
-        recorded_at=pr.recorded_at,
-        notes=pr.notes,
-        created_at=pr.created_at,
-    )
 
 
 # Member: list own PRs
@@ -4197,22 +3913,6 @@ async def delete_personal_record(
         raise HTTPException(status_code=404, detail="Récord no encontrado.")
     await db.delete(pr)
     await db.commit()
-
-
-# Owner: list any client's PRs
-@personal_records_router.get("/{user_id}", response_model=list[PersonalRecordResponse])
-async def owner_list_personal_records(
-    user_id: UUID,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_roles(UserRole.OWNER, UserRole.ADMIN, UserRole.TRAINER)),
-    db: AsyncSession = Depends(get_db),
-) -> list[PersonalRecordResponse]:
-    result = await db.execute(
-        select(PersonalRecord)
-        .where(PersonalRecord.user_id == user_id, PersonalRecord.tenant_id == tenant.id)
-        .order_by(PersonalRecord.recorded_at.desc())
-    )
-    return [_pr_to_response(pr) for pr in result.scalars().all()]
 
 
 # ─── Progress Photos ──────────────────────────────────────────────────────────
