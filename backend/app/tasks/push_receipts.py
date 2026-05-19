@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-from app.core.database import async_session_factory
 from app.services.push_notification_service import refresh_push_receipts
 from app.tasks import celery
+from app.tasks._db import task_session
 
 
 async def _refresh_pending_push_receipts() -> int:
-    async with async_session_factory() as db:
+    async with task_session() as db:
         updated = await refresh_push_receipts(db)
         await db.commit()
         return updated

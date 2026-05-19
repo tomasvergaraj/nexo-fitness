@@ -298,11 +298,18 @@ async def dispatch_campaign_broadcast(
         raise
 
 
-async def run_due_campaigns(*, batch_size: int | None = None) -> int:
+async def run_due_campaigns(
+    *,
+    batch_size: int | None = None,
+    session_factory=None,
+) -> int:
+    """Procesa campañas vencidas. `session_factory` permite inyectar uno con NullPool
+    cuando se invoca desde Celery (ver app/tasks/campaigns.py)."""
     limit = batch_size or settings.CAMPAIGN_SCHEDULER_BATCH_SIZE
     now = datetime.now(timezone.utc)
+    factory = session_factory or async_session_factory
 
-    async with async_session_factory() as db:
+    async with factory() as db:
         result = await db.execute(
             select(Campaign)
             .where(
@@ -328,7 +335,7 @@ async def run_due_campaigns(*, batch_size: int | None = None) -> int:
 
     processed = 0
     for campaign_id in due_campaign_ids:
-        async with async_session_factory() as db:
+        async with factory() as db:
             campaign = await db.get(Campaign, campaign_id)
             if campaign is None or campaign.status != CampaignStatus.SENDING:
                 continue

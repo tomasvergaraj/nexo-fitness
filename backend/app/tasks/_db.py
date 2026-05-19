@@ -10,7 +10,7 @@ a un loop anterior. Para evitarlo, cada task crea su propio engine con
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -28,5 +28,18 @@ async def task_session() -> AsyncIterator[AsyncSession]:
     try:
         async with Session() as session:
             yield session
+    finally:
+        await engine.dispose()
+
+
+@asynccontextmanager
+async def task_session_factory() -> AsyncIterator[Callable[[], AsyncSession]]:
+    """Yield una factory de AsyncSession (engine NullPool) para servicios que abren
+    múltiples sesiones cortas. El engine se disposea al salir del contexto."""
+    settings = get_settings()
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield factory
     finally:
         await engine.dispose()
