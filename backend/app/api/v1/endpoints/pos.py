@@ -18,7 +18,9 @@ from app.integrations.storage.r2_client import R2ConfigError
 from app.services.image_service import (
     ImageTooLargeError,
     InvalidImageError,
+    delete_expense_receipt,
     delete_product_image,
+    upload_expense_receipt,
     upload_product_image,
 )
 from app.models.pos import (
@@ -1295,5 +1297,80 @@ async def delete_expense(
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    receipt_url = expense.receipt_url
     await db.delete(expense)
     await db.commit()
+    if receipt_url:
+        await run_in_threadpool(delete_expense_receipt, receipt_url)
+
+
+# ─── Expense receipt upload (Cloudflare R2) ──────────────────────────────────
+
+
+@pos_router.post("/expenses/{expense_id}/receipt", response_model=ExpenseResponse)
+async def upload_expense_receipt_endpoint(
+    expense_id: UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    if file.content_type not in _ALLOWED_IMAGE_MIME:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Use JPG, PNG o WebP.")
+
+    result = await db.execute(
+        select(Expense).where(Expense.id == expense_id, Expense.tenant_id == ctx.tenant_id)
+    )
+    expense = result.scalar_one_or_none()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+
+    previous_url = expense.receipt_url
+
+    try:
+        url = await run_in_threadpool(upload_expense_receipt, ctx.tenant_id, expense_id, raw)
+    except ImageTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except InvalidImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except R2ConfigError as exc:
+        raise HTTPException(status_code=503, detail=f"Almacenamiento no configurado: {exc}") from exc
+
+    expense.receipt_url = url
+    expense.updated_at = _now()
+    await db.commit()
+    await db.refresh(expense)
+
+    if previous_url and previous_url != expense.receipt_url:
+        await run_in_threadpool(delete_expense_receipt, previous_url)
+
+    return expense
+
+
+@pos_router.delete("/expenses/{expense_id}/receipt", response_model=ExpenseResponse)
+async def delete_expense_receipt_endpoint(
+    expense_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    result = await db.execute(
+        select(Expense).where(Expense.id == expense_id, Expense.tenant_id == ctx.tenant_id)
+    )
+    expense = result.scalar_one_or_none()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    previous_url = expense.receipt_url
+    expense.receipt_url = None
+    expense.updated_at = _now()
+    await db.commit()
+    await db.refresh(expense)
+
+    if previous_url:
+        await run_in_threadpool(delete_expense_receipt, previous_url)
+
+    return expense

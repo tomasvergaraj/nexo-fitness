@@ -502,6 +502,14 @@ export const posApi = {
   createExpense: (data: Record<string, unknown>) => api.post('/pos/expenses', data),
   updateExpense: (id: string, data: Record<string, unknown>) => api.put(`/pos/expenses/${id}`, data),
   deleteExpense: (id: string) => api.delete(`/pos/expenses/${id}`),
+  uploadExpenseReceipt: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post(`/pos/expenses/${id}/receipt`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  deleteExpenseReceipt: (id: string) => api.delete(`/pos/expenses/${id}/receipt`),
   exportExpenses: (params?: Record<string, unknown>) =>
     api.get('/pos/expenses/export', { params, responseType: 'blob' }),
 };

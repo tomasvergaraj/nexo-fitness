@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   DollarSign, Plus, Edit2, Trash2, Loader2, Check, TrendingDown, Download,
+  ImagePlus, ImageOff, Receipt,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import TableScroll from '@/components/ui/TableScroll';
@@ -73,6 +74,41 @@ export default function ExpensesPage() {
     onSuccess: () => { toast.success('Gasto eliminado'); queryClient.invalidateQueries({ queryKey: ['pos-expenses'] }); },
     onError: (err) => toast.error(getApiError(err)),
   });
+
+  const uploadReceiptMutation = useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => posApi.uploadExpenseReceipt(id, file),
+    onSuccess: (res) => {
+      const updated = res.data as Expense;
+      setEditing(prev => (prev && prev.id === updated.id ? { ...prev, receipt_url: updated.receipt_url } : prev));
+      setForm(f => ({ ...f, receipt_url: updated.receipt_url || '' }));
+      toast.success('Recibo subido');
+      queryClient.invalidateQueries({ queryKey: ['pos-expenses'] });
+    },
+    onError: (err) => toast.error(getApiError(err)),
+  });
+
+  const deleteReceiptMutation = useMutation({
+    mutationFn: (id: string) => posApi.deleteExpenseReceipt(id),
+    onSuccess: (res) => {
+      const updated = res.data as Expense;
+      setEditing(prev => (prev && prev.id === updated.id ? { ...prev, receipt_url: null } : prev));
+      setForm(f => ({ ...f, receipt_url: '' }));
+      toast.success('Recibo eliminado');
+      queryClient.invalidateQueries({ queryKey: ['pos-expenses'] });
+    },
+    onError: (err) => toast.error(getApiError(err)),
+  });
+
+  function handleReceiptPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !editing) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Archivo excede 5 MB');
+      return;
+    }
+    uploadReceiptMutation.mutate({ id: editing.id, file });
+  }
 
   const [isExporting, setIsExporting] = useState(false);
   async function handleExport() {
@@ -312,12 +348,67 @@ export default function ExpensesPage() {
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               className="input w-full" placeholder="Arriendo mes de abril" />
           </div>
-          <div>
-            <label className="text-xs text-surface-500 block mb-1">URL recibo (opcional)</label>
-            <input type="url" value={form.receipt_url}
-              onChange={e => setForm(f => ({ ...f, receipt_url: e.target.value }))}
-              className="input w-full" placeholder="https://..." />
-          </div>
+          {editing ? (
+            <div className="rounded-xl border border-surface-200 dark:border-surface-700 p-3 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-surface-100 dark:bg-surface-800 flex items-center justify-center">
+                  {form.receipt_url ? (
+                    <img src={form.receipt_url} alt="Recibo" className="h-full w-full object-cover" />
+                  ) : (
+                    <Receipt size={24} className="text-surface-400" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-surface-500">Recibo</p>
+                  <p className="text-[11px] text-surface-400">JPG, PNG o WebP · máx 5 MB · se optimiza automáticamente</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <label className="btn-secondary cursor-pointer text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5">
+                      {uploadReceiptMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <ImagePlus size={13} />}
+                      {form.receipt_url ? 'Cambiar' : 'Subir'}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleReceiptPick}
+                        disabled={uploadReceiptMutation.isPending}
+                        className="hidden"
+                      />
+                    </label>
+                    {form.receipt_url && (
+                      <>
+                        <a
+                          href={form.receipt_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-secondary text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5"
+                        >
+                          Ver
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => editing && deleteReceiptMutation.mutate(editing.id)}
+                          disabled={deleteReceiptMutation.isPending}
+                          className="btn-secondary text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5 text-red-500"
+                        >
+                          {deleteReceiptMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <ImageOff size={13} />}
+                          Quitar
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-surface-500 block mb-1">o pega URL externa</label>
+                <input type="url" value={form.receipt_url}
+                  onChange={e => setForm(f => ({ ...f, receipt_url: e.target.value }))}
+                  className="input w-full" placeholder="https://..." />
+              </div>
+            </div>
+          ) : (
+            <p className="text-[11px] text-surface-400 rounded-lg bg-surface-50 dark:bg-surface-800/40 px-3 py-2">
+              Crea el gasto primero; luego podrás adjuntar el recibo editándolo.
+            </p>
+          )}
           <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row">
             <button onClick={() => setModalOpen(false)} className="flex-1 btn-secondary text-sm py-2.5">Cancelar</button>
             <button onClick={handleSubmit}

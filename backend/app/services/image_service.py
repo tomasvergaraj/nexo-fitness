@@ -50,57 +50,82 @@ def _encode_webp(img: Image.Image, max_size: tuple[int, int], quality: int) -> b
     return buf.getvalue()
 
 
-def optimize_product_image(raw_bytes: bytes) -> tuple[bytes, bytes]:
-    """Devuelve (main_webp, thumb_webp). Lanza ImageTooLargeError / InvalidImageError."""
+def _optimize(raw_bytes: bytes, generate_thumb: bool) -> tuple[bytes, Optional[bytes]]:
+    """Devuelve (main_webp, thumb_webp|None). Lanza ImageTooLargeError / InvalidImageError."""
     max_bytes = get_settings().MAX_IMAGE_UPLOAD_BYTES
     if len(raw_bytes) > max_bytes:
         raise ImageTooLargeError(f"Imagen excede {max_bytes // (1024 * 1024)} MB")
 
     img = _open_image(raw_bytes)
     main = _encode_webp(img, MAIN_MAX_SIZE, MAIN_QUALITY)
-    thumb = _encode_webp(img, THUMB_MAX_SIZE, THUMB_QUALITY)
+    thumb = _encode_webp(img, THUMB_MAX_SIZE, THUMB_QUALITY) if generate_thumb else None
     return main, thumb
 
 
-def _build_keys(tenant_id: UUID, product_id: UUID) -> tuple[str, str]:
+def _build_keys(prefix: str, generate_thumb: bool) -> tuple[str, Optional[str]]:
     uid = uuid.uuid4().hex
-    base = f"tenants/{tenant_id}/products/{product_id}/{uid}"
-    return f"{base}.webp", f"{base}_thumb.webp"
+    base = f"{prefix.rstrip('/')}/{uid}"
+    return f"{base}.webp", (f"{base}_thumb.webp" if generate_thumb else None)
+
+
+def upload_optimized_image(
+    prefix: str,
+    raw_bytes: bytes,
+    generate_thumb: bool = True,
+) -> dict[str, Optional[str]]:
+    """Optimiza + sube. Retorna {image_url, thumb_url|None}. Rollback si falla el thumb."""
+    main_bytes, thumb_bytes = _optimize(raw_bytes, generate_thumb)
+    main_key, thumb_key = _build_keys(prefix, generate_thumb)
+
+    main_url = r2_client.upload_bytes(main_key, main_bytes, "image/webp")
+    thumb_url: Optional[str] = None
+    if thumb_key and thumb_bytes is not None:
+        try:
+            thumb_url = r2_client.upload_bytes(thumb_key, thumb_bytes, "image/webp")
+        except Exception:
+            r2_client.delete_key(main_key)
+            raise
+    return {"image_url": main_url, "thumb_url": thumb_url}
+
+
+def delete_optimized_image(image_url: Optional[str], has_thumb: bool = True) -> None:
+    """Borra main (+ thumb si corresponde) a partir de la URL principal. Best-effort."""
+    if not image_url:
+        return
+    main_key = r2_client.key_from_public_url(image_url)
+    if not main_key:
+        return
+    r2_client.delete_key(main_key)
+    if has_thumb and main_key.endswith(".webp"):
+        r2_client.delete_key(main_key[: -len(".webp")] + "_thumb.webp")
 
 
 def upload_product_image(
     tenant_id: UUID,
     product_id: UUID,
     raw_bytes: bytes,
-) -> dict[str, str]:
-    """Optimiza + sube imagen principal y thumbnail. Retorna {image_url, thumb_url}."""
-    main_bytes, thumb_bytes = optimize_product_image(raw_bytes)
-    main_key, thumb_key = _build_keys(tenant_id, product_id)
-
-    main_url = r2_client.upload_bytes(main_key, main_bytes, "image/webp")
-    try:
-        thumb_url = r2_client.upload_bytes(thumb_key, thumb_bytes, "image/webp")
-    except Exception:
-        # rollback main si falla thumb
-        r2_client.delete_key(main_key)
-        raise
-    return {"image_url": main_url, "thumb_url": thumb_url}
+) -> dict[str, Optional[str]]:
+    return upload_optimized_image(f"tenants/{tenant_id}/products/{product_id}", raw_bytes, generate_thumb=True)
 
 
 def delete_product_image(image_url: Optional[str]) -> None:
-    """Borra main + thumb a partir de la URL principal. Best-effort, no levanta."""
-    if not image_url:
-        return
-    main_key = r2_client.key_from_public_url(image_url)
-    if not main_key:
-        return
-    if main_key.endswith(".webp"):
-        thumb_key = main_key[: -len(".webp")] + "_thumb.webp"
-    else:
-        thumb_key = None
-    r2_client.delete_key(main_key)
-    if thumb_key:
-        r2_client.delete_key(thumb_key)
+    delete_optimized_image(image_url, has_thumb=True)
+
+
+def upload_expense_receipt(
+    tenant_id: UUID,
+    expense_id: UUID,
+    raw_bytes: bytes,
+) -> str:
+    """Optimiza + sube recibo (sin thumb). Retorna URL pública."""
+    result = upload_optimized_image(
+        f"tenants/{tenant_id}/expenses/{expense_id}", raw_bytes, generate_thumb=False
+    )
+    return result["image_url"]  # type: ignore[return-value]
+
+
+def delete_expense_receipt(image_url: Optional[str]) -> None:
+    delete_optimized_image(image_url, has_thumb=False)
 
 
 def derive_thumb_url(image_url: Optional[str]) -> Optional[str]:
