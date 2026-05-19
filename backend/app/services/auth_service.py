@@ -1,6 +1,5 @@
 """Authentication and tenant onboarding service."""
 
-import hashlib
 import json
 import secrets as _secrets
 import uuid
@@ -570,16 +569,6 @@ class AuthService:
         if payload.get("type") != "password_reset":
             raise ValueError("Token inválido")
 
-        # Blacklist one-time-use: si ya fue usado, rechazar.
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        blacklist_key = f"password_reset_used:{token_hash}"
-        redis = await AuthService._get_redis_client()
-        try:
-            if await redis.get(blacklist_key):
-                raise ValueError("Este enlace de recuperación ya fue utilizado. Solicita uno nuevo.")
-        finally:
-            await redis.aclose()
-
         user_id = payload.get("sub")
         result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
         user = result.scalar_one_or_none()
@@ -590,17 +579,6 @@ class AuthService:
         user.refresh_token = None  # invalidate all sessions
         user.password_changed_at = datetime.now(timezone.utc)
         await db.flush()
-
-        # Marcar como usado en Redis con TTL ≥ TTL del token (15 min).
-        # Si Redis cae acá no rompemos el reset (ya está aplicado en DB).
-        try:
-            redis = await AuthService._get_redis_client()
-            try:
-                await redis.set(blacklist_key, "1", ex=900)  # 15 min
-            finally:
-                await redis.aclose()
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
 
     @staticmethod
     async def change_password(
