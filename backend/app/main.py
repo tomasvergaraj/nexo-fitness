@@ -19,7 +19,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import engine
 from app.core.exceptions import ActionRequiredError, PlanLimitReachedError
-from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, external, operations, public, pos
+from app.api.v1.endpoints import auth, billing, dashboard, classes, clients, external, operations, public, pos, retention
 from app.middleware.tenant import TenantMiddleware
 
 settings = get_settings()
@@ -181,6 +181,7 @@ prefix = settings.API_V1_PREFIX
 app.include_router(auth.router, prefix=prefix)
 app.include_router(billing.router, prefix=prefix)
 app.include_router(dashboard.router, prefix=prefix)
+app.include_router(retention.retention_router, prefix=prefix)
 app.include_router(classes.router, prefix=prefix)
 app.include_router(clients.clients_router, prefix=prefix)
 app.include_router(clients.plans_router, prefix=prefix)

@@ -200,6 +200,11 @@ export const dashboardApi = {
   getOnboardingChecklist: () => api.get('/dashboard/onboarding-checklist'),
 };
 
+export const retentionApi = {
+  getDashboard: (months: number = 6) =>
+    api.get('/retention/dashboard', { params: { months } }),
+};
+
 export const classesApi = {
   list: (params?: Record<string, unknown>) => api.get('/classes', { params }),
   get: (id: string) => api.get(`/classes/${id}`),

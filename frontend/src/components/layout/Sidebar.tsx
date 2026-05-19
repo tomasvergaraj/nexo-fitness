@@ -6,7 +6,7 @@ import {
   LayoutDashboard, CalendarDays, Users, CreditCard,
   Megaphone, BarChart3, Settings, Dumbbell, UserCheck, HelpCircle,
   ChevronLeft, ChevronRight, ShieldCheck, WalletCards, CalendarCheck2, Tag,
-  ShoppingCart, Package, TrendingDown, Lightbulb, Receipt,
+  ShoppingCart, Package, TrendingDown, Lightbulb, Receipt, Heart,
 } from 'lucide-react';
 import NexoBrand, { NEXO_BRAND_SLOGAN } from '@/components/branding/NexoBrand';
 import { canAccessDashboard, cn, getDefaultRouteForRole } from '@/utils';
@@ -87,6 +87,7 @@ const tenantNavGroups: NavGroupDef[] = [
       { label: 'Inventario', path: '/inventory', icon: <Package size={16} />, roles: ['owner', 'admin'] },
       { label: 'Gastos', path: '/expenses', icon: <TrendingDown size={16} />, roles: ['owner', 'admin'] },
       { label: 'Reportes', path: '/reports', icon: <BarChart3 size={16} />, roles: ['owner', 'admin'] },
+      { label: 'Retención', path: '/retention', icon: <Heart size={16} />, roles: ['owner', 'admin'] },
     ],
   },
 ];

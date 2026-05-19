@@ -24,6 +24,7 @@ import ReceptionCheckInPage from '@/pages/checkin/ReceptionCheckInPage';
 import ProgramsPage from '@/pages/programs/ProgramsPage';
 import MarketingPage from '@/pages/marketing/MarketingPage';
 import ReportsPage from '@/pages/reports/ReportsPage';
+import RetentionPage from '@/pages/retention/RetentionPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
 import SubscriptionPage from '@/pages/subscription/SubscriptionPage';
 import SupportPage from '@/pages/support/SupportPage';
@@ -150,6 +151,7 @@ export const router = createBrowserRouter([
       { path: 'programs', element: <ProgramsPage /> },
       { path: 'marketing', element: <MarketingPage /> },
       { path: 'reports', element: <ReportsPage /> },
+      { path: 'retention', element: <RetentionPage /> },
       {
         path: 'pos',
         element: (
