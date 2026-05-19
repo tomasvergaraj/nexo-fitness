@@ -69,14 +69,22 @@ Shared database, shared schema. Every domain table has a `tenant_id` column. Iso
 
 ```
 endpoints/   → thin route handlers, input validation, call one service
-services/    → all business logic; 22+ service files, one per domain
+services/    → all business logic; 25+ service files, one per domain
+core/        → cross-cutting helpers (database, config, dependencies, timezone)
 models/      → SQLAlchemy ORM (async); files: tenant, user, business, platform, pos
 schemas/     → Pydantic v2 request/response models
-integrations/→ email (Resend), payments (Stripe/WebPay/Fintoc/MercadoPago), WhatsApp
-tasks/       → Celery background jobs (auto_renewal, notifications)
+integrations/→ email (Resend), payments (Stripe/WebPay/TUU/MercadoPago), WhatsApp, storage (R2)
+tasks/       → Celery background jobs (auto_renewal, notifications) — use `task_session*` helpers from app/tasks/_db.py for NullPool engines
 ```
 
-`operations.py` and `classes.py` are the largest endpoint files (~163KB and ~91KB). Prefer searching them rather than assuming structure.
+`operations.py` (~163KB) is still a monolito con 18 routers (branches, memberships, campaigns, support, feedback, staff, settings, reports, payment_accounts, mobile, promo_codes, progress, personal_records, etc.) — prefer searching by grep, no asumir estructura.
+
+`classes.py` (~1847 líneas tras refactor 2026-05-19) — helpers extraídos a:
+- `services/class_bulk_service.py` — bulk cancel + bulk reassign instructor
+- `services/checkin_helpers.py` — check-in helpers (history, cases, QR fraud detection, reservation linking)
+- `core/timezone.py` — `tenant_zone`, `tenant_local_day_bounds`, `shift_in_zone` (DST-safe)
+
+Re-exports con prefijo `_` se mantienen en `classes.py` para retrocompat con tests.
 
 ### Frontend layers
 
