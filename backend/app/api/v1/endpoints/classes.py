@@ -653,106 +653,21 @@ def _next_occurrence(base: datetime, repeat_type: str, step: int) -> datetime:
     raise ValueError(f"Unknown repeat_type: {repeat_type}")
 
 
-# Helpers puros movidos a services/class_bulk_service.py.
+# Helpers movidos a services/class_bulk_service.py.
 # Aliases con prefijo `_` se mantienen para retrocompatibilidad con tests.
 from app.services.class_bulk_service import (  # noqa: E402
+    build_bulk_cancel_items as _build_bulk_cancel_items,
     build_bulk_cancel_notification_message as _build_bulk_cancel_notification_message,
+    build_bulk_cancel_preview_response as _build_bulk_cancel_preview_response,
+    build_bulk_reassign_items as _build_bulk_reassign_items,
     bulk_cancel_date_bounds as _bulk_cancel_date_bounds,
     class_overlaps_bulk_cancel_window as _class_overlaps_bulk_cancel_window,
+    load_bulk_cancel_active_reservations as _load_bulk_cancel_active_reservations,
+    resolve_bulk_cancel_classes as _resolve_bulk_cancel_classes,
+    resolve_bulk_reassign_classes as _resolve_bulk_reassign_classes,
     summarize_bulk_cancel_reservations as _summarize_bulk_cancel_reservations,
     validate_bulk_cancel_request as _validate_bulk_cancel_request,
 )
-
-
-async def _resolve_bulk_cancel_classes(
-    db: AsyncSession,
-    ctx: TenantContext,
-    data: BulkClassCancelRequest,
-) -> list[GymClass]:
-    _validate_bulk_cancel_request(data)
-    zone = _tenant_zone(ctx)
-    now_utc = datetime.now(timezone.utc)
-    range_start_utc, range_end_utc = _bulk_cancel_date_bounds(data, zone)
-
-    query = select(GymClass).where(
-        GymClass.tenant_id == ctx.tenant_id,
-        GymClass.status == ClassStatus.SCHEDULED,
-        GymClass.start_time > now_utc,
-        GymClass.start_time >= range_start_utc,
-        GymClass.start_time < range_end_utc,
-    )
-    if data.branch_id:
-        query = query.where(GymClass.branch_id == data.branch_id)
-    if data.instructor_id:
-        query = query.where(GymClass.instructor_id == data.instructor_id)
-
-    classes = (
-        await db.execute(query.order_by(GymClass.start_time.asc()))
-    ).scalars().all()
-
-    return [
-        gym_class for gym_class in classes
-        if _class_overlaps_bulk_cancel_window(gym_class, zone, data.time_from, data.time_to)
-    ]
-
-
-async def _load_bulk_cancel_active_reservations(
-    db: AsyncSession,
-    tenant_id: UUID,
-    class_ids: list[UUID],
-) -> list[Reservation]:
-    if not class_ids:
-        return []
-
-    result = await db.execute(
-        select(Reservation).where(
-            Reservation.tenant_id == tenant_id,
-            Reservation.gym_class_id.in_(class_ids),
-            Reservation.status.in_([ReservationStatus.CONFIRMED, ReservationStatus.WAITLISTED]),
-        )
-    )
-    return result.scalars().all()
-
-
-async def _build_bulk_cancel_items(
-    db: AsyncSession,
-    classes: list[GymClass],
-) -> list[BulkCancelableClassItem]:
-    if not classes:
-        return []
-
-    class_responses = await build_gym_class_responses(db, classes)
-    return [
-        BulkCancelableClassItem(
-            id=gym_class.id,
-            name=gym_class.name,
-            start_time=gym_class.start_time,
-            end_time=gym_class.end_time,
-            branch_name=gym_class.branch_name,
-            instructor_name=gym_class.instructor_name,
-            current_bookings=gym_class.current_bookings,
-        )
-        for gym_class in class_responses
-    ]
-
-
-async def _build_bulk_cancel_preview_response(
-    db: AsyncSession,
-    ctx: TenantContext,
-    data: BulkClassCancelRequest,
-) -> BulkClassCancelPreviewResponse:
-    classes = await _resolve_bulk_cancel_classes(db, ctx, data)
-    reservations = await _load_bulk_cancel_active_reservations(db, ctx.tenant_id, [gym_class.id for gym_class in classes])
-    confirmed_count, waitlisted_count, user_ids = _summarize_bulk_cancel_reservations(reservations)
-    items = await _build_bulk_cancel_items(db, classes)
-
-    return BulkClassCancelPreviewResponse(
-        matched_classes=len(classes),
-        confirmed_reservations=confirmed_count,
-        waitlisted_reservations=waitlisted_count,
-        notified_users=len(user_ids),
-        items=items,
-    )
 
 
 @router.post("/classes", response_model=GymClassResponse, status_code=201)
@@ -1180,72 +1095,6 @@ async def bulk_cancel_classes(
 
 
 # ─── Bulk reassign instructor ────────────────────────────────────────────────
-
-
-async def _resolve_bulk_reassign_classes(
-    db: AsyncSession,
-    ctx: TenantContext,
-    data: BulkReassignInstructorRequest,
-) -> tuple[list[GymClass], User]:
-    if data.from_instructor_id == data.to_instructor_id:
-        raise HTTPException(status_code=400, detail="El instructor origen y destino deben ser distintos")
-
-    target = (
-        await db.execute(
-            select(User).where(
-                User.id == data.to_instructor_id,
-                User.tenant_id == ctx.tenant_id,
-                User.role.in_([UserRole.TRAINER, UserRole.OWNER, UserRole.ADMIN]),
-                User.is_active.is_(True),
-            )
-        )
-    ).scalar_one_or_none()
-    if target is None:
-        raise HTTPException(status_code=404, detail="Instructor destino no encontrado o inactivo")
-
-    zone = _tenant_zone(ctx)
-    now_utc = datetime.now(timezone.utc)
-    today_local = now_utc.astimezone(zone).date()
-    date_from = data.date_from or today_local
-    date_to = data.date_to or (today_local + timedelta(days=90))
-    if date_to < date_from:
-        raise HTTPException(status_code=400, detail="date_to no puede ser anterior a date_from")
-
-    range_start_utc = datetime.combine(date_from, time(0, 0), tzinfo=zone).astimezone(timezone.utc)
-    range_end_utc = datetime.combine(date_to + timedelta(days=1), time(0, 0), tzinfo=zone).astimezone(timezone.utc)
-
-    query = select(GymClass).where(
-        GymClass.tenant_id == ctx.tenant_id,
-        GymClass.status == ClassStatus.SCHEDULED,
-        GymClass.start_time > now_utc,
-        GymClass.start_time >= range_start_utc,
-        GymClass.start_time < range_end_utc,
-        GymClass.instructor_id == data.from_instructor_id,
-    )
-    if data.branch_id:
-        query = query.where(GymClass.branch_id == data.branch_id)
-
-    classes = (await db.execute(query.order_by(GymClass.start_time.asc()))).scalars().all()
-    return list(classes), target
-
-
-async def _build_bulk_reassign_items(
-    db: AsyncSession,
-    classes: list[GymClass],
-) -> list[BulkReassignableClassItem]:
-    if not classes:
-        return []
-    enriched = await build_gym_class_responses(db, classes)
-    return [
-        BulkReassignableClassItem(
-            id=c.id,
-            name=c.name,
-            start_time=c.start_time,
-            branch_name=c.branch_name,
-            current_bookings=c.current_bookings,
-        )
-        for c in enriched
-    ]
 
 
 @router.post(
