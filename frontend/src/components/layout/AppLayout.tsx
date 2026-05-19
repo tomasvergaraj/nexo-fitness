@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2 } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import ImpersonationBanner from './ImpersonationBanner';
@@ -160,7 +161,15 @@ export default function AppLayout() {
         >
           <div className="max-w-[1600px] mx-auto px-4 lg:px-6 py-6">
             <ErrorBoundary>
-              <Outlet />
+              <Suspense
+                fallback={
+                  <div className="flex justify-center py-16">
+                    <Loader2 size={24} className="animate-spin text-brand-500" />
+                  </div>
+                }
+              >
+                <Outlet />
+              </Suspense>
             </ErrorBoundary>
           </div>
         </motion.main>

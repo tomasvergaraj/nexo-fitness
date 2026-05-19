@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import PlatformSidebar from './PlatformSidebar';
 import PlatformTopbar from './PlatformTopbar';
 import PlatformCommandPalette from './PlatformCommandPalette';
@@ -60,7 +61,15 @@ export default function PlatformLayout() {
         />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1500px] px-4 py-5 lg:px-6 lg:py-6">
-            <Outlet />
+            <Suspense
+              fallback={
+                <div className="flex justify-center py-16">
+                  <Loader2 size={24} className="animate-spin text-brand-500" />
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>

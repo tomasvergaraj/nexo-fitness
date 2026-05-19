@@ -1,49 +1,58 @@
+import { lazy } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import PlatformLayout from '@/components/layout/platform/PlatformLayout';
-import PlatformDashboardPage from '@/pages/platform/PlatformDashboardPage';
-import PlatformAuditLogPage from '@/pages/platform/PlatformAuditLogPage';
-import PlatformEmailTemplatesPage from '@/pages/platform/PlatformEmailTemplatesPage';
 import AuthGuard from '@/components/auth/AuthGuard';
 import LoginPage from '@/pages/auth/LoginPage';
-import MfaVerifyPage from '@/pages/auth/MfaVerifyPage';
-import Setup2faPage from '@/pages/auth/Setup2faPage';
-import RegisterPage from '@/pages/auth/RegisterPage';
-import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
-import ResetPasswordPage from '@/pages/auth/ResetPasswordPage';
-import AcceptInvitationPage from '@/pages/auth/AcceptInvitationPage';
-import BillingWallPage from '@/pages/billing/BillingWallPage';
-import DashboardPage from '@/pages/dashboard/DashboardPage';
-import ClassesPage from '@/pages/classes/ClassesPage';
-import ClientsPage from '@/pages/clients/ClientsPage';
-import PlansPage from '@/pages/plans/PlansPage';
-import PromoCodesPage from '@/pages/promo/PromoCodesPage';
-import ApiClientsPage from '@/pages/developer/ApiClientsPage';
-import CheckInPage from '@/pages/checkin/CheckInPage';
-import ReceptionCheckInPage from '@/pages/checkin/ReceptionCheckInPage';
-import ProgramsPage from '@/pages/programs/ProgramsPage';
-import MarketingPage from '@/pages/marketing/MarketingPage';
-import ReportsPage from '@/pages/reports/ReportsPage';
-import RetentionPage from '@/pages/retention/RetentionPage';
-import SettingsPage from '@/pages/settings/SettingsPage';
-import SubscriptionPage from '@/pages/subscription/SubscriptionPage';
-import SupportPage from '@/pages/support/SupportPage';
-import FeedbackPage from '@/pages/feedback/FeedbackPage';
-import PlatformTenantsPage from '@/pages/platform/PlatformTenantsPage';
-import PlatformPlansPage from '@/pages/platform/PlatformPlansPage';
-import PlatformLeadsPage from '@/pages/platform/PlatformLeadsPage';
-import PlatformFeedbackPage from '@/pages/platform/PlatformFeedbackPage';
-import PlatformPromoCodesPage from '@/pages/platform/PlatformPromoCodesPage';
-import TenantStorefrontPage from '@/pages/public/TenantStorefrontPage';
-import StorefrontPage from '@/pages/storefront/StorefrontPage';
-import MemberAppPage from '@/pages/member/MemberAppPage';
-import POSPage from '@/pages/pos/POSPage';
-import InventoryPage from '@/pages/inventory/InventoryPage';
-import ExpensesPage from '@/pages/expenses/ExpensesPage';
-import TermsPage from '@/pages/legal/TermsPage';
-import PrivacyPage from '@/pages/legal/PrivacyPage';
 import { useAuthStore } from '@/stores/authStore';
 import { getDefaultRouteForRole, isCustomStorefrontHost } from '@/utils';
+
+// Páginas auth — comunes pero no críticas: lazy
+const MfaVerifyPage = lazy(() => import('@/pages/auth/MfaVerifyPage'));
+const Setup2faPage = lazy(() => import('@/pages/auth/Setup2faPage'));
+const RegisterPage = lazy(() => import('@/pages/auth/RegisterPage'));
+const ForgotPasswordPage = lazy(() => import('@/pages/auth/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('@/pages/auth/ResetPasswordPage'));
+const AcceptInvitationPage = lazy(() => import('@/pages/auth/AcceptInvitationPage'));
+const BillingWallPage = lazy(() => import('@/pages/billing/BillingWallPage'));
+
+// Tenant app pages
+const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
+const ClassesPage = lazy(() => import('@/pages/classes/ClassesPage'));
+const ClientsPage = lazy(() => import('@/pages/clients/ClientsPage'));
+const PlansPage = lazy(() => import('@/pages/plans/PlansPage'));
+const PromoCodesPage = lazy(() => import('@/pages/promo/PromoCodesPage'));
+const ApiClientsPage = lazy(() => import('@/pages/developer/ApiClientsPage'));
+const CheckInPage = lazy(() => import('@/pages/checkin/CheckInPage'));
+const ReceptionCheckInPage = lazy(() => import('@/pages/checkin/ReceptionCheckInPage'));
+const ProgramsPage = lazy(() => import('@/pages/programs/ProgramsPage'));
+const MarketingPage = lazy(() => import('@/pages/marketing/MarketingPage'));
+const ReportsPage = lazy(() => import('@/pages/reports/ReportsPage'));
+const RetentionPage = lazy(() => import('@/pages/retention/RetentionPage'));
+const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+const SubscriptionPage = lazy(() => import('@/pages/subscription/SubscriptionPage'));
+const SupportPage = lazy(() => import('@/pages/support/SupportPage'));
+const FeedbackPage = lazy(() => import('@/pages/feedback/FeedbackPage'));
+const POSPage = lazy(() => import('@/pages/pos/POSPage'));
+const InventoryPage = lazy(() => import('@/pages/inventory/InventoryPage'));
+const ExpensesPage = lazy(() => import('@/pages/expenses/ExpensesPage'));
+
+// Platform (superadmin) — pesado y casi nunca cargado por usuarios normales
+const PlatformDashboardPage = lazy(() => import('@/pages/platform/PlatformDashboardPage'));
+const PlatformAuditLogPage = lazy(() => import('@/pages/platform/PlatformAuditLogPage'));
+const PlatformEmailTemplatesPage = lazy(() => import('@/pages/platform/PlatformEmailTemplatesPage'));
+const PlatformTenantsPage = lazy(() => import('@/pages/platform/PlatformTenantsPage'));
+const PlatformPlansPage = lazy(() => import('@/pages/platform/PlatformPlansPage'));
+const PlatformLeadsPage = lazy(() => import('@/pages/platform/PlatformLeadsPage'));
+const PlatformFeedbackPage = lazy(() => import('@/pages/platform/PlatformFeedbackPage'));
+const PlatformPromoCodesPage = lazy(() => import('@/pages/platform/PlatformPromoCodesPage'));
+
+// Públicas / legales
+const TenantStorefrontPage = lazy(() => import('@/pages/public/TenantStorefrontPage'));
+const StorefrontPage = lazy(() => import('@/pages/storefront/StorefrontPage'));
+const MemberAppPage = lazy(() => import('@/pages/member/MemberAppPage'));
+const TermsPage = lazy(() => import('@/pages/legal/TermsPage'));
+const PrivacyPage = lazy(() => import('@/pages/legal/PrivacyPage'));
 
 function RootEntry() {
   if (isCustomStorefrontHost()) {
