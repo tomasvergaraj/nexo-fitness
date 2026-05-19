@@ -143,7 +143,7 @@ def test_activate_tenant_subscription_sets_expiration_and_limits() -> None:
         ("monthly", LicenseType.MONTHLY, datetime(2026, 1, 31, tzinfo=timezone.utc)),
         ("quarterly", LicenseType.QUARTERLY, datetime(2026, 4, 1, tzinfo=timezone.utc)),
         ("semi_annual", LicenseType.SEMI_ANNUAL, datetime(2026, 6, 30, tzinfo=timezone.utc)),
-        ("annual", LicenseType.ANNUAL, datetime(2026, 12, 31, tzinfo=timezone.utc)),
+        ("annual", LicenseType.ANNUAL, datetime(2027, 1, 1, tzinfo=timezone.utc)),
     ],
 )
 def test_activate_tenant_subscription_uses_starts_at_for_expiration(
