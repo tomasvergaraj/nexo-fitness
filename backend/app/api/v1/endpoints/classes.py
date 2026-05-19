@@ -75,31 +75,13 @@ from app.services.checkin_helpers import (  # noqa: E402
 )
 
 
-def _tenant_zone(ctx: TenantContext) -> ZoneInfo:
-    tenant_timezone = ctx.tenant.timezone if ctx.tenant and ctx.tenant.timezone else "UTC"
-    try:
-        return ZoneInfo(tenant_timezone)
-    except ZoneInfoNotFoundError:
-        return ZoneInfo("UTC")
-
-
-def _tenant_local_day_bounds(day: date, zone: ZoneInfo) -> tuple[datetime, datetime]:
-    day_start_local = datetime.combine(day, time.min, tzinfo=zone)
-    next_day_local = day_start_local + timedelta(days=1)
-    return day_start_local.astimezone(timezone.utc), next_day_local.astimezone(timezone.utc)
-
-
-def _shift_in_zone(dt_utc: datetime, days_delta: int, zone: ZoneInfo) -> datetime:
-    """Shift a UTC datetime by N days while preserving the wall-clock time in `zone`.
-
-    Why: timedelta(days=N) on a UTC datetime is exact 24h shifts, so when a DST
-    transition lies between source and target the local clock time drifts by 1h.
-    Recomputing the date in local time keeps a 20:00 class at 20:00 across DST.
-    """
-    local = dt_utc.astimezone(zone)
-    new_date = local.date() + timedelta(days=days_delta)
-    new_local = datetime.combine(new_date, local.time(), tzinfo=zone)
-    return new_local.astimezone(timezone.utc)
+# Timezone helpers movidos a app/core/timezone.py.
+# Aliases con prefijo `_` se mantienen para retrocompatibilidad con tests.
+from app.core.timezone import (  # noqa: E402
+    shift_in_zone as _shift_in_zone,
+    tenant_local_day_bounds as _tenant_local_day_bounds,
+    tenant_zone as _tenant_zone,
+)
 
 
 async def _build_checkin_history_items(

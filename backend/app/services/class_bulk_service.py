@@ -9,13 +9,14 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import TenantContext
+from app.core.timezone import tenant_zone
 from app.models.business import ClassStatus, GymClass, Reservation, ReservationStatus
 from app.models.user import User, UserRole
 from app.schemas.business import (
@@ -26,14 +27,6 @@ from app.schemas.business import (
     BulkReassignInstructorRequest,
 )
 from app.services.class_service import build_gym_class_responses
-
-
-def tenant_zone(ctx: TenantContext) -> ZoneInfo:
-    tenant_timezone = ctx.tenant.timezone if ctx.tenant and ctx.tenant.timezone else "UTC"
-    try:
-        return ZoneInfo(tenant_timezone)
-    except ZoneInfoNotFoundError:
-        return ZoneInfo("UTC")
 
 
 def validate_bulk_cancel_request(data: BulkClassCancelRequest) -> None:
