@@ -30,7 +30,7 @@ from app.schemas.auth import (
 )
 from app.integrations.email.email_service import email_service
 from app.services.auth_service import AuthService
-from app.services import totp_service
+from app.services import audit_service, totp_service
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = structlog.get_logger()
@@ -38,13 +38,20 @@ settings = get_settings()
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        return await AuthService.login(db, data)
+        result = await AuthService.login(db, data)
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
+        await audit_service.log_audit(
+            db,
+            action="login_failed",
+            details={"email": data.email, "reason": str(e)},
+            request=request,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+    return result
 
 
 @router.post("/refresh")
@@ -115,7 +122,7 @@ async def forgot_password(data: PasswordResetRequest, db: AsyncSession = Depends
 
 
 @router.post("/reset-password")
-async def reset_password(data: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
+async def reset_password(data: PasswordResetConfirm, request: Request, db: AsyncSession = Depends(get_db)):
     token_hash = hashlib.sha256(data.token.encode()).hexdigest()
     redis = await _get_redis()
     already_used = await redis.exists(f"pwd_reset_used:{token_hash}")
@@ -133,12 +140,19 @@ async def reset_password(data: PasswordResetConfirm, db: AsyncSession = Depends(
     # Burn the token — TTL matches the 15-min expiry of the JWT
     await redis.set(f"pwd_reset_used:{token_hash}", "1", ex=900)
     await redis.aclose()
+    await audit_service.log_audit(
+        db,
+        action="password_reset_confirm",
+        details={"token_hash_prefix": token_hash[:16]},
+        request=request,
+    )
     return {"detail": "Contraseña actualizada correctamente. Ya puedes iniciar sesión."}
 
 
 @router.post("/change-password", response_model=PasswordChangeResponse)
 async def change_password(
     data: PasswordChangeRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -151,6 +165,13 @@ async def change_password(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    await audit_service.log_audit(
+        db,
+        action="password_change",
+        actor=current_user,
+        request=request,
+    )
 
     return PasswordChangeResponse(
         detail="Contraseña actualizada correctamente.",

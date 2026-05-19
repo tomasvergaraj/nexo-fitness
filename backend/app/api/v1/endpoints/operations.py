@@ -1877,6 +1877,7 @@ async def cancel_invitation(
 async def update_staff(
     staff_id: UUID,
     data: StaffUpdateRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     current_user=Depends(require_roles("owner", "admin")),
@@ -1892,9 +1893,14 @@ async def update_staff(
     if staff.role == UserRole.OWNER and getattr(current_user.role, "value", str(current_user.role)) != "owner":
         raise HTTPException(status_code=403, detail="Solo el propietario puede modificar su propio rol.")
 
+    role_before = staff.role.value if hasattr(staff.role, "value") else str(staff.role)
+    role_changed = False
+
     if data.role is not None:
         if data.role not in _STAFF_ROLES and data.role != "owner":
             raise HTTPException(status_code=400, detail=f"Rol inválido.")
+        if staff.role != UserRole(data.role):
+            role_changed = True
         staff.role = UserRole(data.role)
     if data.first_name is not None:
         staff.first_name = data.first_name
@@ -1904,6 +1910,19 @@ async def update_staff(
         staff.is_active = data.is_active
 
     await db.flush()
+
+    if role_changed:
+        from app.services import audit_service
+        await audit_service.log_audit(
+            db,
+            action="role_change",
+            actor=current_user,
+            entity_type="user",
+            entity_id=str(staff.id),
+            details={"from": role_before, "to": staff.role.value, "target_email": staff.email},
+            request=request,
+        )
+
     return {"id": str(staff.id), "full_name": staff.full_name, "role": staff.role.value, "email": staff.email, "is_active": staff.is_active}
 
 

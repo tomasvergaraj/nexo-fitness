@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_, cast, Date, extract
@@ -768,6 +768,7 @@ async def update_client(
 @clients_router.delete("/{client_id}/hard-delete", status_code=204)
 async def hard_delete_client(
     client_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     current_user=Depends(require_roles("owner", "admin")),
@@ -783,7 +784,20 @@ async def hard_delete_client(
     if not client:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+    client_email = client.email
+    client_name = client.full_name if hasattr(client, "full_name") else None
     await purge_user_account(db, user=client, actor=current_user, tenant_id=ctx.tenant_id)
+
+    from app.services import audit_service
+    await audit_service.log_audit(
+        db,
+        action="client_hard_delete",
+        actor=current_user,
+        entity_type="user",
+        entity_id=str(client_id),
+        details={"email": client_email, "name": client_name},
+        request=request,
+    )
 
 
 @clients_router.post("/{client_id}/reset-password", status_code=204)
