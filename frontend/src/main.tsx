@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import App from './App';
 import { registerPwaServiceWorker } from './lib/pwa';
+import { initAnalytics } from './utils/analytics';
 import './styles/globals.css';
 
 if (import.meta.env.VITE_SENTRY_DSN) {
@@ -14,6 +15,8 @@ if (import.meta.env.VITE_SENTRY_DSN) {
     sendDefaultPii: false,
   });
 }
+
+initAnalytics();
 
 registerPwaServiceWorker();
 

@@ -17,6 +17,7 @@ import { staggerContainer, fadeInUp } from '@/utils/animations';
 import {
   classStatusColor, cn, formatDateTime, formatTime, getApiError, occupancyColor,
 } from '@/utils';
+import { capture } from '@/utils/analytics';
 import type {
   Branch,
   BulkClassCancelResponse,
@@ -721,6 +722,7 @@ export default function ClassesPage() {
     },
     onSuccess: () => {
       toast.success('Clase creada');
+      capture('class_created', { repeat_type: form.repeat_type, modality: form.modality });
       setShowCreateModal(false);
       setCreateModalDate(null);
       setForm(createInitialForm(selectedDate, defaultBranchId));
@@ -938,6 +940,7 @@ export default function ClassesPage() {
     },
     onSuccess: () => {
       toast.success('Cliente inscrito');
+      capture('reservation_created', { source: 'staff' });
       setEnrollClientId('');
       setClientSearch('');
       queryClient.invalidateQueries({ queryKey: ['class-reservations', selectedClass?.id] });

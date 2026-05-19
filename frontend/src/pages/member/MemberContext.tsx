@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { browserSupportsWebPush, ensureWebPushSubscription, subscriptionToApiPayload } from '@/lib/webPush';
 import { authApi, classesApi, mobileApi, notificationsApi, programBookingsApi, publicApi, reservationsApi } from '@/services/api';
+import { capture } from '@/utils/analytics';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import type {
@@ -416,6 +417,7 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
     mutationFn: async (gymClassId: string) => reservationsApi.create({ gym_class_id: gymClassId }),
     onSuccess: async (response) => {
       const status = response?.data?.status;
+      capture('reservation_created', { source: 'member', status });
       if (status === 'waitlisted') {
         const pos = response?.data?.waitlist_position;
         toast.success(

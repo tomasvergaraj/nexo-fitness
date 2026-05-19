@@ -256,6 +256,7 @@ export interface User {
   role: UserRole;
   is_active: boolean;
   is_verified: boolean;
+  tenant_id?: string;
   created_at: string;
   date_of_birth?: string;
   gender?: string;

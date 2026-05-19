@@ -47,6 +47,7 @@ import { billingApi, clientsApi, membershipsApi, notificationsApi, plansApi } fr
 import { useAuthStore } from '@/stores/authStore';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatCurrency, formatDate, formatDateTime, formatDurationLabel, getInitials, getApiError, getPlanLimitError, parseApiNumber, type PlanLimitErrorPayload } from '@/utils';
+import { capture } from '@/utils/analytics';
 import type { AppNotification, MembershipManualSaleResult, NotificationDispatchResponse, PaginatedResponse, Plan, PushDelivery, SaaSPlan, TenantBilling, User, UserRole } from '@/types';
 
 const filters = [
@@ -452,6 +453,7 @@ export default function ClientsPage() {
     },
     onSuccess: () => {
       toast.success('Cliente creado correctamente');
+      capture('client_created');
       setPlanLimitError(null);
       setShowCreateModal(false);
       setForm(emptyForm);

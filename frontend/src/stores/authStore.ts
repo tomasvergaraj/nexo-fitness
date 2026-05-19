@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@/types';
 import { queryClient } from '@/lib/queryClient';
+import { identifyUser, resetAnalytics, capture } from '@/utils/analytics';
 
 interface AuthState {
   user: User | null;
@@ -26,6 +27,8 @@ export const useAuthStore = create<AuthState>()(
         // Limpiar caché de datos del usuario anterior antes de guardar el nuevo
         queryClient.clear();
         set({ user, accessToken, refreshToken, isAuthenticated: true });
+        identifyUser({ id: user.id, email: user.email, role: user.role, tenant_id: user.tenant_id });
+        capture('login_success', { role: user.role });
       },
 
       setTokens: (accessToken, refreshToken) =>
@@ -34,6 +37,8 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user) => set({ user }),
 
       logout: () => {
+        capture('logout');
+        resetAnalytics();
         queryClient.clear();
         set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
       },
