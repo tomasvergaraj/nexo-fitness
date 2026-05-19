@@ -52,3 +52,36 @@ export function capture(event: string, properties?: Record<string, unknown>) {
   if (!initialized) return;
   posthog.capture(event, properties);
 }
+
+/**
+ * Devuelve el valor del feature flag para el usuario identificado.
+ * - `true | false` para boolean flags
+ * - `string` para multivariate (ej. 'control' | 'variant_a' | 'variant_b')
+ * - `undefined` si PostHog no está inicializado o el flag no fue cargado aún
+ */
+export function getFeatureFlag(flagKey: string): boolean | string | undefined {
+  if (!initialized) return undefined;
+  return posthog.getFeatureFlag(flagKey) as boolean | string | undefined;
+}
+
+export function isFeatureEnabled(flagKey: string): boolean {
+  if (!initialized) return false;
+  return Boolean(posthog.isFeatureEnabled(flagKey));
+}
+
+/**
+ * Re-fetch de feature flags desde PostHog. PostHog ya los carga al identify,
+ * pero esta función permite forzar refresh manual (ej. tras un cambio de
+ * tenant en impersonation). Acepta un callback opcional para acciones post-load.
+ */
+export function reloadFeatureFlags(onLoaded?: () => void) {
+  if (!initialized) {
+    onLoaded?.();
+    return;
+  }
+  posthog.reloadFeatureFlags();
+  if (onLoaded) {
+    // PostHog v1.x dispara onFeatureFlags como evento global
+    posthog.onFeatureFlags(onLoaded);
+  }
+}
