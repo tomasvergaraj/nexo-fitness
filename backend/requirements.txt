@@ -41,6 +41,9 @@ phonenumbers==8.13.39
 # Image processing
 Pillow>=10.4,<11.0
 
+# Object storage (Cloudflare R2 — S3-compatible)
+boto3==1.34.131
+
 # Export
 openpyxl==3.1.5
 reportlab==4.2.2

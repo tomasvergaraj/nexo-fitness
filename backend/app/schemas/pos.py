@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ─── ProductCategory ──────────────────────────────────────────────────────────
@@ -72,11 +72,18 @@ class ProductResponse(BaseModel):
     category_id: Optional[UUID] = None
     category_name: Optional[str] = None
     image_url: Optional[str] = None
+    thumb_url: Optional[str] = None
     is_active: bool
     stock: Optional[int] = None   # inyectado desde inventory al listar
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _populate_thumb_url(self) -> "ProductResponse":
+        if self.image_url and not self.thumb_url and self.image_url.endswith(".webp"):
+            self.thumb_url = self.image_url[: -len(".webp")] + "_thumb.webp"
+        return self
 
 
 # ─── Inventory ────────────────────────────────────────────────────────────────

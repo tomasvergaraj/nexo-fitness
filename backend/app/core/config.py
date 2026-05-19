@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "us-east-1"
 
+    # Cloudflare R2 (object storage, S3-compatible)
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET: str = "nexofitness-uploads"
+    R2_PUBLIC_BASE_URL: str = ""  # ej. https://cdn.nexofitness.cl
+    MAX_IMAGE_UPLOAD_BYTES: int = 5 * 1024 * 1024  # 5 MB raw
+
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
 

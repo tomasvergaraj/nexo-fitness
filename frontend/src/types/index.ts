@@ -1252,6 +1252,7 @@ export interface Product {
   category_id?: string | null;
   category_name?: string | null;
   image_url?: string | null;
+  thumb_url?: string | null;
   is_active: boolean;
   stock?: number | null;
   created_at: string;

@@ -5,7 +5,8 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,13 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import TenantContext, get_tenant_context, require_roles
+from app.integrations.storage.r2_client import R2ConfigError
+from app.services.image_service import (
+    ImageTooLargeError,
+    InvalidImageError,
+    delete_product_image,
+    upload_product_image,
+)
 from app.models.pos import (
     Expense,
     Inventory,
@@ -339,6 +347,69 @@ async def delete_product(
     product.is_active = False
     product.updated_at = _now()
     await db.commit()
+
+
+# ─── Product image upload (Cloudflare R2) ─────────────────────────────────────
+
+_ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp"}
+
+
+@pos_router.post("/products/{product_id}/image", response_model=ProductResponse)
+async def upload_product_image_endpoint(
+    product_id: UUID,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    if file.content_type not in _ALLOWED_IMAGE_MIME:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Use JPG, PNG o WebP.")
+
+    product = await _get_product_or_404(db, product_id, ctx.tenant_id)
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+
+    previous_url = product.image_url
+
+    try:
+        urls = await run_in_threadpool(upload_product_image, ctx.tenant_id, product_id, raw)
+    except ImageTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except InvalidImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except R2ConfigError as exc:
+        raise HTTPException(status_code=503, detail=f"Almacenamiento no configurado: {exc}") from exc
+
+    product.image_url = urls["image_url"]
+    product.updated_at = _now()
+    await db.commit()
+    await db.refresh(product)
+
+    if previous_url and previous_url != product.image_url:
+        await run_in_threadpool(delete_product_image, previous_url)
+
+    return ProductResponse.model_validate(product)
+
+
+@pos_router.delete("/products/{product_id}/image", response_model=ProductResponse)
+async def delete_product_image_endpoint(
+    product_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    product = await _get_product_or_404(db, product_id, ctx.tenant_id)
+    previous_url = product.image_url
+    product.image_url = None
+    product.updated_at = _now()
+    await db.commit()
+    await db.refresh(product)
+
+    if previous_url:
+        await run_in_threadpool(delete_product_image, previous_url)
+
+    return ProductResponse.model_validate(product)
 
 
 # ─── Inventory ────────────────────────────────────────────────────────────────

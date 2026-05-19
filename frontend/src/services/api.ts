@@ -464,6 +464,14 @@ export const posApi = {
   createProduct: (data: Record<string, unknown>) => api.post('/pos/products', data),
   updateProduct: (id: string, data: Record<string, unknown>) => api.put(`/pos/products/${id}`, data),
   deleteProduct: (id: string) => api.delete(`/pos/products/${id}`),
+  uploadProductImage: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post(`/pos/products/${id}/image`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  deleteProductImage: (id: string) => api.delete(`/pos/products/${id}/image`),
 
   // Inventory
   listInventory: (params?: Record<string, unknown>) => api.get('/pos/inventory', { params }),
