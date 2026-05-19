@@ -1843,9 +1843,14 @@ export default function SettingsPage() {
               disabled={isEditingAccount}
               onChange={(event) => setAccountForm((current) => ({ ...current, provider: event.target.value as AccountForm['provider'] }))}
             >
-              <option value="fintoc">Fintoc (transferencia bancaria)</option>
-              <option value="tuu">TUU Pago Online</option>
+              {/* Fintoc oculto para nuevas cuentas (soft-disable 2026-05-19);
+                  se sigue mostrando si la cuenta ya existe con ese provider para
+                  permitir edición. */}
+              {isEditingAccount && accountForm.provider === 'fintoc' ? (
+                <option value="fintoc">Fintoc (transferencia bancaria)</option>
+              ) : null}
               <option value="webpay">Webpay</option>
+              <option value="tuu">TUU Pago Online</option>
               <option value="mercadopago">MercadoPago</option>
               <option value="stripe">Stripe</option>
               <option value="manual">Manual</option>

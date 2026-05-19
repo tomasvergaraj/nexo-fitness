@@ -583,8 +583,12 @@ export default function PlatformPlansPage() {
               >
                 <option value="none">Solo trial / sin checkout</option>
                 <option value="stripe">Stripe</option>
-                <option value="fintoc">Fintoc</option>
                 <option value="webpay">Webpay</option>
+                {/* Fintoc oculto del selector — sólo aparece si el plan ya viene
+                    con fintoc seleccionado (soft-disable 2026-05-19). */}
+                {form.checkout_provider === 'fintoc' ? (
+                  <option value="fintoc">Fintoc (legacy)</option>
+                ) : null}
               </select>
             </div>
 

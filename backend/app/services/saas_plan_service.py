@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.integrations.payments.stripe_service import stripe_service
-from app.integrations.payments.fintoc_service import fintoc_service
 from app.integrations.payments.webpay_service import webpay_service
 from app.models.platform import SaaSPlan
 from app.models.tenant import LicenseType
@@ -96,18 +95,17 @@ class SaaSPlanDefinition:
 
     @property
     def checkout_enabled(self) -> bool:
+        # Fintoc deshabilitado vía soft-disable 2026-05-19: el field fintoc_enabled
+        # se preserva en DB pero no participa del checkout para nuevos pagos.
         stripe_ok = bool(self.stripe_price_id and stripe_service.is_configured())
-        fintoc_ok = bool(self.fintoc_enabled and fintoc_service.is_configured())
         webpay_ok = bool(self.webpay_enabled and webpay_service.is_configured())
-        return stripe_ok or fintoc_ok or webpay_ok
+        return stripe_ok or webpay_ok
 
     @property
     def checkout_provider(self) -> Optional[str]:
         """Returns the active checkout provider for this plan."""
         if self.webpay_enabled and webpay_service.is_configured():
             return "webpay"
-        if self.fintoc_enabled and fintoc_service.is_configured():
-            return "fintoc"
         if self.stripe_price_id and stripe_service.is_configured():
             return "stripe"
         return None
