@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles
 from app.models.business import (
-    Campaign, CampaignStatus, GymClass, Reservation, CheckIn, Payment, Membership, MembershipStatus,
+    Branch, Campaign, CampaignStatus, GymClass, Plan, Reservation, CheckIn, Payment, Membership, MembershipStatus,
     PaymentStatus, ClassStatus, TrainingProgram,
 )
+from app.models.tenant import TenantStatus
 from app.models.user import User, UserRole
 from app.schemas.business import CheckInResponse, DashboardMetrics
 from app.services.membership_sale_service import resolve_membership_timeline
@@ -436,4 +437,86 @@ async def get_sidebar_counters(
         classes_today=classes_today,
         clients_expiring_soon=clients_expiring_soon,
         marketing_scheduled=marketing_scheduled,
+    )
+
+
+class OnboardingItem(BaseModel):
+    key: str
+    label: str
+    description: str
+    done: bool
+    action_url: str
+
+
+class OnboardingChecklist(BaseModel):
+    items: list[OnboardingItem]
+    completed_count: int
+    total: int
+    all_done: bool
+
+
+@router.get("/onboarding-checklist", response_model=OnboardingChecklist)
+async def get_onboarding_checklist(
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Estado de los primeros pasos del gimnasio para guiar el onboarding."""
+    tid = ctx.tenant_id
+    tenant = ctx.tenant
+
+    branches_count = int((await db.execute(
+        select(func.count()).where(Branch.tenant_id == tid, Branch.is_active.is_(True))
+    )).scalar() or 0)
+    plans_count = int((await db.execute(
+        select(func.count()).where(Plan.tenant_id == tid, Plan.is_active.is_(True))
+    )).scalar() or 0)
+    classes_count = int((await db.execute(
+        select(func.count()).where(GymClass.tenant_id == tid)
+    )).scalar() or 0)
+    clients_count = int((await db.execute(
+        select(func.count()).where(User.tenant_id == tid, User.role == UserRole.CLIENT)
+    )).scalar() or 0)
+
+    has_logo = bool(tenant and tenant.logo_url)
+    has_active_subscription = bool(tenant and tenant.status == TenantStatus.ACTIVE)
+
+    items = [
+        OnboardingItem(
+            key="branch", label="Crea tu sucursal",
+            description="Define al menos una sede física u online.",
+            done=branches_count > 0, action_url="/settings?tab=branches",
+        ),
+        OnboardingItem(
+            key="plan", label="Configura un plan",
+            description="Define precios y duraciones para tus membresías.",
+            done=plans_count > 0, action_url="/plans",
+        ),
+        OnboardingItem(
+            key="class", label="Programa tu primera clase",
+            description="Agrega clases al calendario para que los clientes puedan reservar.",
+            done=classes_count > 0, action_url="/classes",
+        ),
+        OnboardingItem(
+            key="client", label="Agrega un cliente",
+            description="Importa tu cartera o crea clientes manualmente.",
+            done=clients_count > 0, action_url="/clients",
+        ),
+        OnboardingItem(
+            key="branding", label="Sube el logo del gimnasio",
+            description="Tu logo se mostrará a los clientes en la app y en la landing.",
+            done=has_logo, action_url="/settings?tab=branding",
+        ),
+        OnboardingItem(
+            key="subscription", label="Activa tu suscripción",
+            description="Pasa de prueba a activa para mantener el acceso completo.",
+            done=has_active_subscription, action_url="/subscription",
+        ),
+    ]
+    completed = sum(1 for i in items if i.done)
+    return OnboardingChecklist(
+        items=items,
+        completed_count=completed,
+        total=len(items),
+        all_done=completed == len(items),
     )

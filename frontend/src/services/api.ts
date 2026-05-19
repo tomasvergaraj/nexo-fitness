@@ -197,6 +197,7 @@ export const dashboardApi = {
   getMetrics: () => api.get('/dashboard/metrics'),
   getToday: () => api.get('/dashboard/today'),
   getSidebarCounters: () => api.get('/dashboard/sidebar-counters'),
+  getOnboardingChecklist: () => api.get('/dashboard/onboarding-checklist'),
 };
 
 export const classesApi = {
