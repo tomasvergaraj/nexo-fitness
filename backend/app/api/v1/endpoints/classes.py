@@ -21,8 +21,9 @@ from app.models.business import (
 from app.models.user import User, UserRole
 from app.schemas.business import (
     BranchResponse, BulkCancelableClassItem, BulkClassCancelPreviewResponse, BulkClassCancelRequest,
-    BulkClassCancelResponse, CheckInContextResponse, CheckInCreate, CheckInHistoryItemResponse,
-    CheckInInvestigationCaseDetailResponse, CheckInInvestigationCaseResponse,
+    BulkClassCancelResponse, BulkReassignableClassItem, BulkReassignInstructorPreviewResponse,
+    BulkReassignInstructorRequest, BulkReassignInstructorResponse, CheckInContextResponse, CheckInCreate,
+    CheckInHistoryItemResponse, CheckInInvestigationCaseDetailResponse, CheckInInvestigationCaseResponse,
     CheckInInvestigationCaseUpdateRequest, CheckInResponse, CheckInScanRequest, ClassReservationDetailResponse,
     GymClassCreate, GymClassResponse, GymClassUpdate, PaginatedResponse, ProgramBookingCancelRequest,
     ProgramBookingCreate, ProgramBookingOut, ReservationCreate, ReservationResponse,
@@ -1215,6 +1216,116 @@ async def bulk_cancel_classes(
         cancelled_reservations=cancelled_reservations,
         notification_failures=notification_failures,
         skipped_classes=skipped_classes,
+    )
+
+
+# ─── Bulk reassign instructor ────────────────────────────────────────────────
+
+
+async def _resolve_bulk_reassign_classes(
+    db: AsyncSession,
+    ctx: TenantContext,
+    data: BulkReassignInstructorRequest,
+) -> tuple[list[GymClass], User]:
+    if data.from_instructor_id == data.to_instructor_id:
+        raise HTTPException(status_code=400, detail="El instructor origen y destino deben ser distintos")
+
+    target = (
+        await db.execute(
+            select(User).where(
+                User.id == data.to_instructor_id,
+                User.tenant_id == ctx.tenant_id,
+                User.role.in_([UserRole.TRAINER, UserRole.OWNER, UserRole.ADMIN]),
+                User.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Instructor destino no encontrado o inactivo")
+
+    zone = _tenant_zone(ctx)
+    now_utc = datetime.now(timezone.utc)
+    today_local = now_utc.astimezone(zone).date()
+    date_from = data.date_from or today_local
+    date_to = data.date_to or (today_local + timedelta(days=90))
+    if date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to no puede ser anterior a date_from")
+
+    range_start_utc = datetime.combine(date_from, time(0, 0), tzinfo=zone).astimezone(timezone.utc)
+    range_end_utc = datetime.combine(date_to + timedelta(days=1), time(0, 0), tzinfo=zone).astimezone(timezone.utc)
+
+    query = select(GymClass).where(
+        GymClass.tenant_id == ctx.tenant_id,
+        GymClass.status == ClassStatus.SCHEDULED,
+        GymClass.start_time > now_utc,
+        GymClass.start_time >= range_start_utc,
+        GymClass.start_time < range_end_utc,
+        GymClass.instructor_id == data.from_instructor_id,
+    )
+    if data.branch_id:
+        query = query.where(GymClass.branch_id == data.branch_id)
+
+    classes = (await db.execute(query.order_by(GymClass.start_time.asc()))).scalars().all()
+    return list(classes), target
+
+
+async def _build_bulk_reassign_items(
+    db: AsyncSession,
+    classes: list[GymClass],
+) -> list[BulkReassignableClassItem]:
+    if not classes:
+        return []
+    enriched = await build_gym_class_responses(db, classes)
+    return [
+        BulkReassignableClassItem(
+            id=c.id,
+            name=c.name,
+            start_time=c.start_time,
+            branch_name=c.branch_name,
+            current_bookings=c.current_bookings,
+        )
+        for c in enriched
+    ]
+
+
+@router.post(
+    "/classes/bulk-reassign-instructor/preview",
+    response_model=BulkReassignInstructorPreviewResponse,
+)
+async def preview_bulk_reassign_instructor(
+    data: BulkReassignInstructorRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    classes, _target = await _resolve_bulk_reassign_classes(db, ctx, data)
+    items = await _build_bulk_reassign_items(db, classes)
+    return BulkReassignInstructorPreviewResponse(matched_classes=len(classes), items=items)
+
+
+@router.post(
+    "/classes/bulk-reassign-instructor",
+    response_model=BulkReassignInstructorResponse,
+)
+async def bulk_reassign_instructor(
+    data: BulkReassignInstructorRequest,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    classes, target = await _resolve_bulk_reassign_classes(db, ctx, data)
+    now_utc = datetime.now(timezone.utc)
+    reassigned = 0
+    for gym_class in classes:
+        gym_class.instructor_id = target.id
+        gym_class.updated_at = now_utc
+        reassigned += 1
+    await db.flush()
+    items = await _build_bulk_reassign_items(db, classes)
+    return BulkReassignInstructorResponse(
+        matched_classes=len(classes),
+        items=items,
+        reassigned_classes=reassigned,
     )
 
 

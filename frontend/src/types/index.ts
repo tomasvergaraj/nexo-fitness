@@ -471,6 +471,31 @@ export interface BulkClassCancelResponse extends BulkClassCancelPreviewResponse 
   skipped_classes: number;
 }
 
+export interface BulkReassignInstructorRequest {
+  from_instructor_id: string;
+  to_instructor_id: string;
+  date_from?: string;
+  date_to?: string;
+  branch_id?: string;
+}
+
+export interface BulkReassignableClassItem {
+  id: string;
+  name: string;
+  start_time: string;
+  branch_name?: string;
+  current_bookings: number;
+}
+
+export interface BulkReassignInstructorPreviewResponse {
+  matched_classes: number;
+  items: BulkReassignableClassItem[];
+}
+
+export interface BulkReassignInstructorResponse extends BulkReassignInstructorPreviewResponse {
+  reassigned_classes: number;
+}
+
 /* ─── Reservation ────────────────────────────────────────────── */
 
 export interface Reservation {

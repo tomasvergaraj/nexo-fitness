@@ -22,6 +22,8 @@ import type {
   BulkClassCancelResponse,
   BulkClassCancelPreviewResponse,
   BulkClassCancelRequest,
+  BulkReassignInstructorPreviewResponse,
+  BulkReassignInstructorResponse,
   ClassReservationDetail,
   GymClass,
   PaginatedResponse,
@@ -469,6 +471,17 @@ export default function ClassesPage() {
   const [bulkCancelForm, setBulkCancelForm] = useState<BulkCancelFormState>(() => createInitialBulkCancelForm(buildWeekDays(new Date()), 6, 23));
   const [bulkCancelPreview, setBulkCancelPreview] = useState<BulkClassCancelPreviewResponse | null>(null);
 
+  // Bulk reassign instructor
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [reassignForm, setReassignForm] = useState({
+    from_instructor_id: '',
+    to_instructor_id: '',
+    date_from: '',
+    date_to: '',
+    branch_id: '',
+  });
+  const [reassignPreview, setReassignPreview] = useState<BulkReassignInstructorPreviewResponse | null>(null);
+
   // Replicate modal
   type ReplicateMode = 'day' | 'week' | 'month';
   const [showReplicateModal, setShowReplicateModal] = useState(false);
@@ -802,6 +815,75 @@ export default function ClassesPage() {
       toast.error(getApiError(error, 'No se pudo ejecutar la cancelación masiva'));
     },
   });
+
+  // ── Bulk reassign instructor ─────────────────────────────────────────────
+  const buildReassignPayload = () => ({
+    from_instructor_id: reassignForm.from_instructor_id,
+    to_instructor_id: reassignForm.to_instructor_id,
+    ...(reassignForm.date_from ? { date_from: reassignForm.date_from } : {}),
+    ...(reassignForm.date_to ? { date_to: reassignForm.date_to } : {}),
+    ...(reassignForm.branch_id ? { branch_id: reassignForm.branch_id } : {}),
+  });
+
+  const reassignValid = Boolean(
+    reassignForm.from_instructor_id
+    && reassignForm.to_instructor_id
+    && reassignForm.from_instructor_id !== reassignForm.to_instructor_id,
+  );
+
+  const previewReassign = useMutation({
+    mutationFn: async () => {
+      const response = await classesApi.previewBulkReassignInstructor(buildReassignPayload());
+      return response.data as BulkReassignInstructorPreviewResponse;
+    },
+    onSuccess: (data) => setReassignPreview(data),
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo previsualizar la reasignación')),
+  });
+
+  useEffect(() => {
+    if (!showReassignModal) return;
+    if (!reassignValid) {
+      setReassignPreview(null);
+      return;
+    }
+    const handle = setTimeout(() => previewReassign.mutate(), 300);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    showReassignModal,
+    reassignForm.from_instructor_id,
+    reassignForm.to_instructor_id,
+    reassignForm.date_from,
+    reassignForm.date_to,
+    reassignForm.branch_id,
+  ]);
+
+  const executeReassign = useMutation({
+    mutationFn: async () => {
+      const response = await classesApi.bulkReassignInstructor(buildReassignPayload());
+      return response.data as BulkReassignInstructorResponse;
+    },
+    onSuccess: (data) => {
+      toast.success(`${data.reassigned_classes} clase${data.reassigned_classes !== 1 ? 's' : ''} reasignada${data.reassigned_classes !== 1 ? 's' : ''}`);
+      setShowReassignModal(false);
+      setReassignPreview(null);
+      setReassignForm({ from_instructor_id: '', to_instructor_id: '', date_from: '', date_to: '', branch_id: '' });
+      queryClient.invalidateQueries({ queryKey: ['classes'] });
+      queryClient.invalidateQueries({ queryKey: ['classes-calendar'] });
+    },
+    onError: (error: any) => toast.error(getApiError(error, 'No se pudo reasignar')),
+  });
+
+  const openReassignModal = () => {
+    setReassignForm({ from_instructor_id: '', to_instructor_id: '', date_from: '', date_to: '', branch_id: '' });
+    setReassignPreview(null);
+    setShowReassignModal(true);
+  };
+
+  const instructorOptions = useMemo(
+    () => staffList.filter((s) => ['trainer', 'owner', 'admin'].includes(s.role)),
+    [staffList],
+  );
 
   const updateClass = useMutation({
     mutationFn: async () => {
@@ -1456,6 +1538,14 @@ export default function ClassesPage() {
               className="btn-secondary flex items-center gap-1.5 text-sm"
             >
               <Copy size={14} /> Replicar
+            </button>
+
+            <button
+              type="button"
+              onClick={openReassignModal}
+              className="btn-secondary flex items-center gap-1.5 text-sm"
+            >
+              <Users size={14} /> Reasignar instructor
             </button>
 
             <button
@@ -3152,6 +3242,134 @@ export default function ClassesPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={showReassignModal}
+        title="Reasignar instructor"
+        description="Mueve todas las clases futuras de un instructor a otro. No notifica a los miembros (el horario no cambia)."
+        size="lg"
+        onClose={() => {
+          setShowReassignModal(false);
+          setReassignPreview(null);
+        }}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs text-surface-500 block mb-1">Instructor actual *</label>
+              <select
+                className="input w-full"
+                value={reassignForm.from_instructor_id}
+                onChange={(e) => setReassignForm((f) => ({ ...f, from_instructor_id: e.target.value }))}
+              >
+                <option value="">Selecciona…</option>
+                {instructorOptions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.full_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-surface-500 block mb-1">Nuevo instructor *</label>
+              <select
+                className="input w-full"
+                value={reassignForm.to_instructor_id}
+                onChange={(e) => setReassignForm((f) => ({ ...f, to_instructor_id: e.target.value }))}
+              >
+                <option value="">Selecciona…</option>
+                {instructorOptions
+                  .filter((s) => s.id !== reassignForm.from_instructor_id)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>{s.full_name}</option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-surface-500 block mb-1">Desde (opcional)</label>
+              <input
+                type="date"
+                className="input w-full"
+                value={reassignForm.date_from}
+                onChange={(e) => setReassignForm((f) => ({ ...f, date_from: e.target.value }))}
+              />
+              <p className="mt-1 text-[11px] text-surface-400">Por defecto: hoy</p>
+            </div>
+            <div>
+              <label className="text-xs text-surface-500 block mb-1">Hasta (opcional)</label>
+              <input
+                type="date"
+                className="input w-full"
+                value={reassignForm.date_to}
+                onChange={(e) => setReassignForm((f) => ({ ...f, date_to: e.target.value }))}
+              />
+              <p className="mt-1 text-[11px] text-surface-400">Por defecto: hoy + 90 días</p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-surface-500 block mb-1">Sucursal (opcional)</label>
+              <select
+                className="input w-full"
+                value={reassignForm.branch_id}
+                onChange={(e) => setReassignForm((f) => ({ ...f, branch_id: e.target.value }))}
+              >
+                <option value="">Todas las sucursales</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-200 bg-surface-50 p-4 dark:border-surface-800 dark:bg-surface-950/30">
+            {!reassignValid ? (
+              <p className="text-sm text-surface-500">Selecciona instructor actual y destino para ver la previa.</p>
+            ) : previewReassign.isPending ? (
+              <p className="text-sm text-surface-500">Calculando…</p>
+            ) : reassignPreview ? (
+              <>
+                <p className="text-sm">
+                  <span className="font-semibold text-surface-900 dark:text-white">{reassignPreview.matched_classes}</span> clase
+                  {reassignPreview.matched_classes !== 1 ? 's' : ''} futura{reassignPreview.matched_classes !== 1 ? 's' : ''} se reasignarán.
+                </p>
+                {reassignPreview.items.length > 0 ? (
+                  <ul className="mt-3 max-h-56 space-y-1.5 overflow-y-auto text-xs text-surface-600 dark:text-surface-300">
+                    {reassignPreview.items.slice(0, 50).map((c) => (
+                      <li key={c.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-2.5 py-1.5 dark:bg-surface-900">
+                        <span className="truncate">{c.name}</span>
+                        <span className="text-surface-400 whitespace-nowrap">
+                          {new Date(c.start_time).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}
+                          {c.branch_name ? ` · ${c.branch_name}` : ''}
+                        </span>
+                      </li>
+                    ))}
+                    {reassignPreview.items.length > 50 ? (
+                      <li className="text-surface-400">…y {reassignPreview.items.length - 50} más</li>
+                    ) : null}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-sm text-surface-500">Sin previsualización.</p>
+            )}
+          </div>
+
+          <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => { setShowReassignModal(false); setReassignPreview(null); }}
+              className="btn-secondary text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => executeReassign.mutate()}
+              disabled={!reassignValid || !reassignPreview || reassignPreview.matched_classes === 0 || executeReassign.isPending}
+              className="btn-primary text-sm disabled:opacity-60"
+            >
+              {executeReassign.isPending ? 'Reasignando…' : `Reasignar ${reassignPreview?.matched_classes ?? 0} clase${(reassignPreview?.matched_classes ?? 0) !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </div>
       </Modal>
 
       <Modal

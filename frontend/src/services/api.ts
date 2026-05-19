@@ -1,6 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/stores/authStore';
-import type { BulkClassCancelRequest } from '@/types';
+import type { BulkClassCancelRequest, BulkReassignInstructorRequest } from '@/types';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
@@ -206,6 +206,10 @@ export const classesApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/classes/${id}`, data),
   previewBulkCancel: (data: BulkClassCancelRequest) => api.post('/classes/bulk-cancel/preview', data),
   bulkCancel: (data: BulkClassCancelRequest) => api.post('/classes/bulk-cancel', data),
+  previewBulkReassignInstructor: (data: BulkReassignInstructorRequest) =>
+    api.post('/classes/bulk-reassign-instructor/preview', data),
+  bulkReassignInstructor: (data: BulkReassignInstructorRequest) =>
+    api.post('/classes/bulk-reassign-instructor', data),
   cancel: (id: string, options?: { cancelReason?: string; series?: boolean }) =>
     api.delete(`/classes/${id}`, {
       params: {

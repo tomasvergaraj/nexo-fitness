@@ -201,6 +201,31 @@ class BulkClassCancelResponse(BulkClassCancelPreviewResponse):
     skipped_classes: int
 
 
+class BulkReassignInstructorRequest(BaseModel):
+    from_instructor_id: UUID
+    to_instructor_id: UUID
+    date_from: Optional[date] = None  # default: hoy en zona del tenant
+    date_to: Optional[date] = None    # default: +90 días
+    branch_id: Optional[UUID] = None
+
+
+class BulkReassignableClassItem(BaseModel):
+    id: UUID
+    name: str
+    start_time: datetime
+    branch_name: Optional[str] = None
+    current_bookings: int
+
+
+class BulkReassignInstructorPreviewResponse(BaseModel):
+    matched_classes: int
+    items: List[BulkReassignableClassItem] = []
+
+
+class BulkReassignInstructorResponse(BulkReassignInstructorPreviewResponse):
+    reassigned_classes: int
+
+
 # ─── Reservation ──────────────────────────────────────────────────────────────
 
 class ReservationCreate(BaseModel):
