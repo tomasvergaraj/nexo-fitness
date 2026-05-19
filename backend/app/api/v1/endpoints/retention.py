@@ -68,6 +68,42 @@ def _add_months(d: date, n: int) -> date:
     return date(y, m, 1)
 
 
+def _compute_cohort_matrix(
+    cohort_data: dict[date, list[tuple[date, Optional[datetime]]]],
+    cohort_starts: list[date],
+    current_month_start: date,
+    months: int,
+) -> list[CohortRow]:
+    """Construye la matriz de retención por cohorte de altas mensuales.
+
+    Para cada cohorte (mes de alta), calcula cuántos miembros seguían activos
+    al final de cada mes-offset posterior. Un miembro está retenido en el
+    offset M si: cancelled_at is None  OR  cancelled_at >= checkpoint_end (M+1).
+    """
+    matrix: list[CohortRow] = []
+    for c in cohort_starts:
+        members = cohort_data.get(c, [])
+        size = len(members)
+        cells: list[CohortCell] = []
+        max_offset = months - cohort_starts.index(c)
+        for offset in range(max_offset):
+            checkpoint_end = _add_months(c, offset + 1)
+            if checkpoint_end > _add_months(current_month_start, 1):
+                break
+            retained = 0
+            for _starts, cancelled_at in members:
+                if cancelled_at is None:
+                    retained += 1
+                    continue
+                cancelled_date = cancelled_at.date() if cancelled_at else None
+                if cancelled_date and cancelled_date >= checkpoint_end:
+                    retained += 1
+            pct = (retained / size * 100) if size else 0.0
+            cells.append(CohortCell(month_index=offset, retained=retained, pct=round(pct, 1)))
+        matrix.append(CohortRow(cohort_month=c.strftime("%Y-%m"), cohort_size=size, cells=cells))
+    return matrix
+
+
 def _compute_risk(membership: Optional[Membership], last_checkin: Optional[datetime], now: datetime) -> str:
     if not membership:
         return "high"
@@ -118,29 +154,7 @@ async def get_retention_dashboard(
         if cohort_month in cohort_data:
             cohort_data[cohort_month].append((starts_at, cancelled_at))
 
-    cohort_matrix: list[CohortRow] = []
-    for c in cohort_starts:
-        members = cohort_data[c]
-        size = len(members)
-        cells: list[CohortCell] = []
-        max_offset = months - cohort_starts.index(c)
-        for offset in range(max_offset):
-            checkpoint_end = _add_months(c, offset + 1)  # fin del mes "offset"
-            if checkpoint_end > _add_months(current_month_start, 1):
-                break
-            retained = 0
-            for _starts, cancelled_at in members:
-                if cancelled_at is None:
-                    retained += 1
-                else:
-                    cancelled_date = cancelled_at.date() if cancelled_at else None
-                    if cancelled_date and cancelled_date >= checkpoint_end:
-                        retained += 1
-            pct = (retained / size * 100) if size else 0.0
-            cells.append(CohortCell(month_index=offset, retained=retained, pct=round(pct, 1)))
-        cohort_matrix.append(
-            CohortRow(cohort_month=c.strftime("%Y-%m"), cohort_size=size, cells=cells)
-        )
+    cohort_matrix = _compute_cohort_matrix(cohort_data, cohort_starts, current_month_start, months)
 
     # ── Churn mensual ────────────────────────────────────────────────────────
     churn_monthly: list[ChurnMonth] = []
