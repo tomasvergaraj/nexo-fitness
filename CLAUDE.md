@@ -77,7 +77,7 @@ integrations/→ email (Resend), payments (Stripe/WebPay/TUU/MercadoPago), Whats
 tasks/       → Celery background jobs (auto_renewal, notifications) — use `task_session*` helpers from app/tasks/_db.py for NullPool engines
 ```
 
-`operations.py` (~163KB) is still a monolito con 18 routers (branches, memberships, campaigns, support, feedback, staff, settings, reports, payment_accounts, mobile, promo_codes, progress, personal_records, etc.) — prefer searching by grep, no asumir estructura.
+`operations/` — paquete con 16 routers extraídos (refactor Fases A-E, 2026-05-20): branches.py, campaigns.py, feedback.py, memberships.py, mobile.py, notifications.py, payment_accounts.py, personal_records.py, programs.py, progress.py, promo_codes.py, reports.py, settings.py, staff.py, support.py, upload.py. `__init__.py` (22 L) sólo re-exporta los routers. `_common.py` contiene helpers compartidos (payloads, photo utils, feature flags, notification dispatch, program counts, support helpers).
 
 `classes.py` (~1847 líneas tras refactor 2026-05-19) — helpers extraídos a:
 - `services/class_bulk_service.py` — bulk cancel + bulk reassign instructor
