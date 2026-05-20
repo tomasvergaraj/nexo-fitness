@@ -7,17 +7,20 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.business import (
     BodyMeasurement,
+    GymClass,
     Membership,
     Notification,
     PersonalRecord,
     Plan,
     PromoCode,
     SupportInteraction,
+    TrainingProgram,
+    TrainingProgramEnrollment,
 )
 from app.models.business import Payment as _Payment  # alias to avoid type confusion
 from app.models.tenant import Tenant
@@ -31,6 +34,7 @@ from app.schemas.platform import (
     PromoCodeResponse,
     PushDeliveryResponse,
     SupportInteractionResponse,
+    TrainingProgramResponse,
 )
 from app.services.membership_sale_service import membership_status_value
 from app.services.push_notification_service import NotificationDispatchResult
@@ -233,6 +237,73 @@ def _notification_dispatch_payload(result: NotificationDispatchResult) -> Notifi
             for delivery in result.deliveries
         ],
     )
+
+
+def _program_payload(
+    program: TrainingProgram,
+    trainer: Optional[User],
+    *,
+    enrolled_count: int = 0,
+    enrollment_id: Optional[UUID] = None,
+    linked_class_count: int = 0,
+) -> TrainingProgramResponse:
+    return TrainingProgramResponse(
+        id=program.id,
+        name=program.name,
+        description=program.description,
+        trainer_id=program.trainer_id,
+        program_type=program.program_type,
+        duration_weeks=program.duration_weeks,
+        schedule=_loads_list(program.schedule_json),
+        is_active=program.is_active,
+        created_at=program.created_at,
+        updated_at=program.updated_at,
+        trainer_name=trainer.full_name if trainer else None,
+        enrolled_count=enrolled_count,
+        linked_class_count=linked_class_count,
+        is_enrolled=enrollment_id is not None,
+        enrollment_id=enrollment_id,
+    )
+
+
+async def _get_program_enrollment_counts(
+    db: AsyncSession,
+    tenant_id: UUID,
+    program_ids: list[UUID],
+) -> dict[UUID, int]:
+    if not program_ids:
+        return {}
+
+    rows = await db.execute(
+        select(
+            TrainingProgramEnrollment.program_id,
+            func.count().label("count"),
+        )
+        .where(
+            TrainingProgramEnrollment.tenant_id == tenant_id,
+            TrainingProgramEnrollment.program_id.in_(program_ids),
+        )
+        .group_by(TrainingProgramEnrollment.program_id)
+    )
+    return {row.program_id: row.count for row in rows}
+
+
+async def _get_program_linked_class_counts(
+    db: AsyncSession,
+    tenant_id: UUID,
+    program_ids: list[UUID],
+) -> dict[UUID, int]:
+    if not program_ids:
+        return {}
+    rows = await db.execute(
+        select(GymClass.program_id, func.count().label("count"))
+        .where(
+            GymClass.tenant_id == tenant_id,
+            GymClass.program_id.in_(program_ids),
+        )
+        .group_by(GymClass.program_id)
+    )
+    return {row.program_id: row.count for row in rows}
 
 
 async def _get_support_related_users(

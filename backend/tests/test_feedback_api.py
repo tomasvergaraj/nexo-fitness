@@ -167,9 +167,9 @@ def build_client(
     async def override_tenant_context():
         return TenantContext(tenant=tenant, user=current_user)
 
-    app.dependency_overrides[operations.get_db] = override_db
-    app.dependency_overrides[operations.get_current_user] = override_current_user
-    app.dependency_overrides[operations.get_tenant_context] = override_tenant_context
+    app.dependency_overrides[feedback_module.get_db] = override_db
+    app.dependency_overrides[feedback_module.get_current_user] = override_current_user
+    app.dependency_overrides[feedback_module.get_tenant_context] = override_tenant_context
 
     return TestClient(app)
 

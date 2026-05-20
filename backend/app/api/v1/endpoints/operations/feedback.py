@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import (
     TenantContext,
+    get_current_user,  # noqa: F401 — re-exported so tests can override the dependency
     get_tenant_context,
     require_roles,
 )
