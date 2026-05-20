@@ -13,6 +13,7 @@ import { cn, formatCurrency, formatDurationLabel, parseApiNumber, getApiError } 
 import type { PaginatedResponse, Plan } from '@/types';
 
 type DurationPreset = 'monthly' | 'quarterly' | 'semiannual' | 'annual' | 'perpetual' | 'custom';
+type PlanKind = 'subscription' | 'punch_pass' | 'drop_in';
 
 type PlanFormState = {
   id?: string;
@@ -20,6 +21,8 @@ type PlanFormState = {
   description: string;
   price: string;
   discount_pct: string;
+  plan_kind: PlanKind;
+  total_uses: string;
   duration_preset: DurationPreset;
   duration_days: string;
   max_reservations_per_week: string;
@@ -29,6 +32,12 @@ type PlanFormState = {
   auto_renew: boolean;
   is_active: boolean;
 };
+
+const planKindOptions: Array<{ value: PlanKind; label: string; description: string }> = [
+  { value: 'subscription', label: 'Suscripción', description: 'Acceso por tiempo, con renovación.' },
+  { value: 'punch_pass', label: 'Pack de clases', description: 'Cantidad fija de clases (ej. 10 sesiones).' },
+  { value: 'drop_in', label: 'Pase del día', description: 'Una clase, válido 24 hrs.' },
+];
 
 function applyDiscount(price: number, discountPct: number | null | undefined): number {
   if (!discountPct) return price;
@@ -140,6 +149,8 @@ const emptyForm: PlanFormState = {
   description: '',
   price: '29990',
   discount_pct: '',
+  plan_kind: 'subscription',
+  total_uses: '',
   duration_preset: 'monthly',
   duration_days: '',
   max_reservations_per_week: '',
@@ -161,6 +172,8 @@ function toFormState(plan?: Plan): PlanFormState {
     description: plan.description ?? '',
     price: String(parseApiNumber(plan.price)),
     discount_pct: plan.discount_pct ? String(plan.discount_pct) : '',
+    plan_kind: (plan.plan_kind as PlanKind) ?? 'subscription',
+    total_uses: plan.total_uses ? String(plan.total_uses) : '',
     duration_preset: resolveDurationPreset(plan.duration_type, plan.duration_days),
     duration_days: plan.duration_days ? String(plan.duration_days) : '',
     max_reservations_per_week: plan.max_reservations_per_week ? String(plan.max_reservations_per_week) : '',
@@ -189,18 +202,33 @@ export default function PlansPage() {
   const createPlan = useMutation({
     mutationFn: async () => {
       const duration = resolveDurationPayload(form);
+      const isPunchPass = form.plan_kind === 'punch_pass';
+      const isDropIn = form.plan_kind === 'drop_in';
+      const totalUses = isDropIn ? 1 : isPunchPass && form.total_uses ? Number(form.total_uses) : null;
+      // Para drop-in: ventana 24h. Para punch_pass: default 90d si no se especifica.
+      const finalDurationDays = isDropIn
+        ? 1
+        : isPunchPass
+          ? form.duration_days
+            ? Number(form.duration_days)
+            : 90
+          : duration.duration_days;
+      const finalDurationType = isDropIn || isPunchPass ? ('custom' as const) : duration.duration_type;
+
       const response = await plansApi.create({
         name: form.name,
         description: form.description || null,
         price: Number(form.price),
         discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
-        duration_type: duration.duration_type,
-        duration_days: duration.duration_days,
+        plan_kind: form.plan_kind,
+        total_uses: totalUses,
+        duration_type: finalDurationType,
+        duration_days: finalDurationDays,
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
         max_reservations_per_month: form.max_reservations_per_month ? Number(form.max_reservations_per_month) : null,
         is_featured: form.is_featured,
         is_trial: form.is_trial,
-        auto_renew: duration.auto_renew,
+        auto_renew: isDropIn || isPunchPass ? false : duration.auto_renew,
       });
       return response.data;
     },
@@ -219,19 +247,32 @@ export default function PlansPage() {
     mutationFn: async () => {
       if (!form.id) throw new Error('Plan sin identificador');
       const duration = resolveDurationPayload(form);
+      const isPunchPass = form.plan_kind === 'punch_pass';
+      const isDropIn = form.plan_kind === 'drop_in';
+      const totalUses = isDropIn ? 1 : isPunchPass && form.total_uses ? Number(form.total_uses) : null;
+      const finalDurationDays = isDropIn
+        ? 1
+        : isPunchPass
+          ? form.duration_days
+            ? Number(form.duration_days)
+            : 90
+          : duration.duration_days;
+      const finalDurationType = isDropIn || isPunchPass ? ('custom' as const) : duration.duration_type;
 
       const response = await plansApi.update(form.id, {
         name: form.name,
         description: form.description || null,
         price: Number(form.price),
         discount_pct: form.discount_pct ? Number(form.discount_pct) : null,
-        duration_type: duration.duration_type,
-        duration_days: duration.duration_days,
+        plan_kind: form.plan_kind,
+        total_uses: totalUses,
+        duration_type: finalDurationType,
+        duration_days: finalDurationDays,
         max_reservations_per_week: form.max_reservations_per_week ? Number(form.max_reservations_per_week) : null,
         max_reservations_per_month: form.max_reservations_per_month ? Number(form.max_reservations_per_month) : null,
         is_featured: form.is_featured,
         is_trial: form.is_trial,
-        auto_renew: duration.auto_renew,
+        auto_renew: isDropIn || isPunchPass ? false : duration.auto_renew,
         is_active: form.is_active,
       });
       return response.data;
@@ -408,7 +449,11 @@ export default function PlansPage() {
                 </div>
               )}
               <p className={cn('mt-1 text-sm', plan.id === featuredPlanId ? 'text-white/65' : 'text-surface-400')}>
-                {formatDurationLabel(plan.duration_type, plan.duration_days)}
+                {plan.plan_kind === 'punch_pass'
+                  ? `Pack de ${plan.total_uses ?? 0} clases`
+                  : plan.plan_kind === 'drop_in'
+                    ? 'Pase del día (24h)'
+                    : formatDurationLabel(plan.duration_type, plan.duration_days)}
               </p>
             </div>
 
@@ -571,6 +616,69 @@ export default function PlansPage() {
 
           <div className="space-y-3 rounded-2xl border border-surface-200 bg-surface-50/70 p-4 dark:border-surface-800 dark:bg-surface-950/30">
             <div>
+              <p className="text-sm font-semibold text-surface-900 dark:text-white">Tipo de plan</p>
+              <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
+                Define cómo se cobra y se consume el plan.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {planKindOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setForm((current) => ({ ...current, plan_kind: option.value }))}
+                  className={cn(
+                    'rounded-2xl border px-4 py-4 text-left transition-all',
+                    form.plan_kind === option.value
+                      ? 'border-brand-300 bg-brand-50 shadow-sm dark:border-brand-700 dark:bg-brand-950/20'
+                      : 'border-surface-200 bg-white hover:border-surface-300 dark:border-surface-800 dark:bg-surface-900/70',
+                  )}
+                >
+                  <p className="text-sm font-semibold text-surface-900 dark:text-white">{option.label}</p>
+                  <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">{option.description}</p>
+                </button>
+              ))}
+            </div>
+            {form.plan_kind === 'punch_pass' ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                    Cantidad de pases <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="input"
+                    value={form.total_uses}
+                    onChange={(event) => setForm((current) => ({ ...current, total_uses: event.target.value }))}
+                    placeholder="ej. 10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-surface-700 dark:text-surface-300">
+                    Días de validez (opcional)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="input"
+                    value={form.duration_days}
+                    onChange={(event) => setForm((current) => ({ ...current, duration_days: event.target.value }))}
+                    placeholder="90"
+                  />
+                </div>
+              </div>
+            ) : null}
+            {form.plan_kind === 'drop_in' ? (
+              <p className="rounded-xl border border-brand-200 bg-brand-50/60 px-3 py-2 text-xs text-brand-700 dark:border-brand-800 dark:bg-brand-950/20 dark:text-brand-300">
+                Pase de 1 clase, válido 24 hrs desde la compra.
+              </p>
+            ) : null}
+          </div>
+
+          {form.plan_kind === 'subscription' ? (
+          <div className="space-y-3 rounded-2xl border border-surface-200 bg-surface-50/70 p-4 dark:border-surface-800 dark:bg-surface-950/30">
+            <div>
               <p className="text-sm font-semibold text-surface-900 dark:text-white">Duración del plan</p>
               <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
                 Elige la duración que quieres ofrecer. Si necesitas otro plazo, puedes ingresarlo más abajo.
@@ -637,6 +745,7 @@ export default function PlansPage() {
               </div>
             ) : null}
           </div>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl border border-surface-200 bg-white px-4 py-4 dark:border-surface-800 dark:bg-surface-950/30">
