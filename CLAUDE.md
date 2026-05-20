@@ -8,10 +8,24 @@ NexoFitness — SaaS multitenant platform for gym management. Stack: FastAPI + S
 
 ## Branching y releases
 
-- **main** → producción. Cada merge gatillea deploy en VPS (manual: `git pull && docker compose -f docker-compose.prod.yml up -d --build && cd frontend && node_modules/.bin/vite build`).
+- **main** → producción. Deploy via `./deploy.sh` en el VPS.
 - **develop** → integración. Feature branches salen de develop, PR a develop. Merge develop → main = release.
 - Tag semver en cada release (`v1.0.0` = primer release 2026-05-20). `vX.Y.Z`: X=breaking, Y=feature, Z=hotfix.
 - **NUNCA** commitear directo en main excepto hotfixes; hacerlo desde branch `hotfix/<desc>` → PR a main + cherry-pick a develop.
+
+### Ciclo end-to-end
+
+1. **Local (laptop)** en `develop`: implementar feature, levantar `docker compose up`, probar.
+2. **Push develop**: `git push origin develop`.
+3. **Merge a main** (cuando feature terminada): desde GitHub PR `develop → main` o local `git checkout main && git merge develop --no-ff && git push`. Tag opcional: `git tag -a v1.1.0 -m "..." && git push --tags`.
+4. **Deploy en VPS**:
+   ```bash
+   ssh root@vps && cd /var/www/nexofitness
+   ./deploy.sh                    # pull + build + migrations + vite build
+   ./deploy.sh --skip-build       # backend-only (sin tocar frontend)
+   ./deploy.sh --skip-migrations  # rebuild rápido sin alembic
+   ```
+   Sin staging — pruebas en local, deploy directo. Rollback: `git reset --hard <sha>` + `./deploy.sh`.
 
 ## Local development (laptop, no VPS)
 
