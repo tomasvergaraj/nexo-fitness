@@ -25,7 +25,8 @@ BACKUPS_DIR="${PROJECT_ROOT}/backups"
 LOG_FILE="/var/log/nexofitness-backup.log"
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.prod.yml"
 R2_REMOTE="r2-backups"
-R2_PATH="postgres"
+R2_BUCKET="nexofitness-backups"
+R2_PATH="${R2_BUCKET}/postgres"
 LOCAL_RETENTION_DAYS=7
 REMOTE_RETENTION_DAYS=30
 

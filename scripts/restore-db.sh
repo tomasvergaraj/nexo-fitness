@@ -15,7 +15,8 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUPS_DIR="${PROJECT_ROOT}/backups"
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.prod.yml"
 R2_REMOTE="r2-backups"
-R2_PATH="postgres"
+R2_BUCKET="nexofitness-backups"
+R2_PATH="${R2_BUCKET}/postgres"
 
 if [ $# -lt 1 ]; then
     echo "Uso: $0 <ruta-dump | latest | r2:NOMBRE>"
