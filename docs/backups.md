@@ -12,30 +12,35 @@ Scripts en `scripts/backup-db.sh` (corre en cron) y `scripts/restore-db.sh` (man
 
 ### 1. Configurar rclone remote para R2
 
-```bash
-rclone config
+**Importante:** generar un token API R2 con scope solo al bucket `nexofitness-backups` (Cloudflare → R2 → "Manage R2 API tokens" → Create → Object Read & Write → Specify bucket → `nexofitness-backups`).
 
-# Pasos en el wizard:
-#   n) New remote
-#   name> r2-backups
-#   Storage> s3
-#   provider> Cloudflare
-#   env_auth> false
-#   access_key_id> <R2 token con permisos R/W al bucket>
-#   secret_access_key> <secret del token>
-#   region> auto
-#   endpoint> https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-#   location_constraint> (vacío)
-#   acl> private
+Setup non-interactive (más rápido que el wizard):
+
+```bash
+rclone config create r2-backups s3 \
+    provider Cloudflare \
+    access_key_id <R2_ACCESS_KEY> \
+    secret_access_key <R2_SECRET_KEY> \
+    region auto \
+    endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com \
+    acl private \
+    --non-interactive
+
+# Flag crítico: tokens bucket-scoped no pueden ListBuckets ni CreateBucket.
+# rclone hace CreateBucket pre-flight por default → 403. Lo deshabilitamos:
+rclone config update r2-backups no_check_bucket true --non-interactive
 ```
 
 Verificar:
 ```bash
-rclone listremotes              # debe incluir "r2-backups:"
-rclone lsd r2-backups:          # debe listar buckets accesibles
+echo "test" > /tmp/r2-test.txt
+rclone copy /tmp/r2-test.txt r2-backups:nexofitness-backups/
+rclone ls r2-backups:nexofitness-backups/        # debe mostrar el test
+rclone delete r2-backups:nexofitness-backups/r2-test.txt
+rm /tmp/r2-test.txt
 ```
 
-Crear bucket `nexofitness-backups` desde el dashboard de Cloudflare R2 si no existe. Activar **Object Lifecycle Rule** opcional para borrar objetos >35d como fallback al cleanup del script.
+(Opcional) En el dashboard de Cloudflare R2 activar Object Lifecycle Rule para borrar objetos >35d como fallback al cleanup del script.
 
 ### 2. Permisos del script
 
