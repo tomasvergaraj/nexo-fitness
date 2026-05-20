@@ -41,7 +41,11 @@ Objetivo: aumentar conversión, retención y diferenciación con cambios chicos 
 
 ---
 
-### 6.2 — Punch passes + Drop-in ⭐⭐⭐⭐⭐ · M
+### 6.2 — Punch passes + Drop-in ⭐⭐⭐⭐⭐ · M — **DONE v1.1.0 (2026-05-20, SHA 68e88df)**
+
+Modelo `Plan.plan_kind` (SUBSCRIPTION | PUNCH_PASS | DROP_IN) + `Plan.total_uses` + `Membership.uses_remaining`. Check-in decrementa y marca EXPIRED al agotar. UI PlansPage con selector de 3 tipos. 11 tests nuevos.
+
+**Descripción original:**
 
 **Problema:** Solo se venden membresías mensuales. Pierdes mercado de:
 - Cliente que quiere probar 1 día.
@@ -83,7 +87,11 @@ Lo que existe:
 
 ---
 
-### 6.4 — Member referral codes ⭐⭐⭐⭐ · S
+### 6.4 — Member referral codes ⭐⭐⭐⭐ · S — **DONE v1.2.0 (2026-05-20, SHA 23299a9)**
+
+`users.referral_code` (NOMBRE-XXXXX, generado al primer pago COMPLETED) + `users.referrer_user_id` (FK self). `GET /api/v1/mobile/refer` retorna code/share_url/referred_count. Storefront captura `?ref=CODE` y lo envía al checkout. ProfileTab MemberApp tiene card "Invita y gana" con copy + share API. **Pendiente Fase 6.4b**: aplicación automática de crédito al referrer (hoy es manual).
+
+**Descripción original:**
 
 **Problema:** Hoy no hay incentivo para que clientes traigan amigos. CAC es 100% pagado.
 
@@ -355,6 +363,12 @@ Objetivo: features que mueven NexoFitness de "otro software de gym" a "el más m
 
 ## Fase 9 — Deuda técnica (transversal, ongoing)
 
+### 9.6 — Backups automáticos Postgres — **DONE v1.0.0 (2026-05-20)**
+
+`scripts/backup-db.sh` corre diario 03:00 via cron. Doble destino: local `/var/www/nexofitness/backups/` (retención 7d) + Cloudflare R2 `nexofitness-backups/postgres/` (retención 30d). Rclone remote `r2-backups` configurado con token bucket-scoped (`no_check_bucket=true`). `scripts/restore-db.sh` con confirmación. Docs en `docs/backups.md`.
+
+**Descripción original:**
+
 Estas no son features pero son críticas para sostener el ritmo a 1 año.
 
 ### 9.1 — Tests para mobile.py ⭐⭐⭐ · M
@@ -452,16 +466,26 @@ Estas no son features pero son críticas para sostener el ritmo a 1 año.
 
 | Fase | Items | Esfuerzo total | Cuándo |
 |------|-------|----------------|--------|
-| 6 — Quick wins comerciales | 7 | ~3 semanas | Próximo sprint |
+| 6 — Quick wins comerciales | 7 (3 done) | ~3 semanas | Próximo sprint |
 | 7 — Plataforma + B2B | 9 | ~2 meses | Q3 2026 |
 | 8 — AI + integraciones | 5 | ~3-4 meses | Q4 2026 / Q1 2027 |
-| 9 — Deuda técnica | 8 | ongoing | Intercalado con cada fase |
+| 9 — Deuda técnica | 8 (1 done) | ongoing | Intercalado con cada fase |
 
-## Top-3 para empezar **mañana**
+## Estado Fase 6
 
-1. **9.6 — Backups automáticos** (S, urgente, riesgo catastrófico si falta).
-2. **6.1 — WhatsApp transaccional** (M, valor ⭐⭐⭐⭐⭐, retención directa).
-3. **6.2 — Punch passes + Drop-in** (M, abre TAM nuevo, diferenciador comercial).
+- 6.1 WhatsApp — pendiente (necesita Twilio/Meta).
+- **6.2 Punch passes + Drop-in — DONE v1.1.0**.
+- **6.3 Waitlist — DONE (pre-v1.0.0)**.
+- **6.4 Member referral codes — DONE v1.2.0** (6.4b crédito auto pendiente).
+- 6.5 NPS post-clase — pendiente (recomendado siguiente, sin deps).
+- 6.6 Gift cards — pendiente.
+- 6.7 Booking widget — pendiente.
+
+## Próximos candidatos
+
+1. **6.5 NPS post-clase** (S, ⭐⭐⭐⭐, sin deps externas).
+2. **6.4b** crédito auto al referrer cuando el referido completa primer pago.
+3. **6.1 WhatsApp transaccional** (bloqueado por setup Twilio/Meta).
 
 ## Cómo usar este doc
 
