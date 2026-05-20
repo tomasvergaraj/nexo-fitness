@@ -184,7 +184,7 @@ def test_create_feedback_submission_without_image(monkeypatch) -> None:
     session = FakeAsyncSession(users=[current_user])
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
-    monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
+    monkeypatch.setattr(feedback_module.email_service, "send_feedback_submission", _send_feedback_ok)
 
     response = client.post(
         "/api/v1/feedback/submissions",
@@ -206,7 +206,7 @@ def test_create_feedback_submission_with_image(monkeypatch, tmp_path) -> None:
     session = FakeAsyncSession(users=[current_user])
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
-    monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
+    monkeypatch.setattr(feedback_module.email_service, "send_feedback_submission", _send_feedback_ok)
     monkeypatch.setattr(feedback_module, "_UPLOADS_ROOT", tmp_path)
 
     response = client.post(
@@ -229,7 +229,7 @@ def test_create_feedback_submission_rejects_invalid_image_type(monkeypatch) -> N
     session = FakeAsyncSession(users=[current_user])
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
-    monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
+    monkeypatch.setattr(feedback_module.email_service, "send_feedback_submission", _send_feedback_ok)
 
     response = client.post(
         "/api/v1/feedback/submissions",
@@ -247,7 +247,7 @@ def test_create_feedback_submission_rejects_oversized_image(monkeypatch) -> None
     session = FakeAsyncSession(users=[current_user])
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
-    monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
+    monkeypatch.setattr(feedback_module.email_service, "send_feedback_submission", _send_feedback_ok)
     monkeypatch.setattr(feedback_module, "_MAX_PHOTO_BYTES", 10)
 
     response = client.post(
@@ -266,7 +266,7 @@ def test_create_feedback_submission_rejects_long_message(monkeypatch) -> None:
     session = FakeAsyncSession(users=[current_user])
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
-    monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
+    monkeypatch.setattr(feedback_module.email_service, "send_feedback_submission", _send_feedback_ok)
 
     response = client.post(
         "/api/v1/feedback/submissions",
@@ -317,7 +317,7 @@ def test_create_feedback_submission_succeeds_even_if_email_fails(monkeypatch) ->
     async def failing_email(**_kwargs) -> bool:
         raise RuntimeError("smtp down")
 
-    monkeypatch.setattr(operations.email_service, "send_feedback_submission", failing_email)
+    monkeypatch.setattr(feedback_module.email_service, "send_feedback_submission", failing_email)
 
     response = client.post(
         "/api/v1/feedback/submissions",

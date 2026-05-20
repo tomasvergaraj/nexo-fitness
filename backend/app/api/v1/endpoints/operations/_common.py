@@ -20,6 +20,7 @@ from app.models.business import (
     SupportInteraction,
 )
 from app.models.business import Payment as _Payment  # alias to avoid type confusion
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.platform import (
     BodyMeasurementResponse,
@@ -76,6 +77,16 @@ def _loads_dict(raw_value: Optional[str]) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _feature_map(tenant: Tenant) -> dict[str, Any]:
+    return _loads_dict(tenant.features)
+
+
+def _save_feature_map(tenant: Tenant, values: dict[str, Any]) -> None:
+    current = _feature_map(tenant)
+    current.update(values)
+    tenant.features = json.dumps(current)
 
 
 def _loads_list(raw_value: Optional[str]) -> list[Any]:
