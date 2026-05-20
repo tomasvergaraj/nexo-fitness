@@ -16,7 +16,7 @@ from app.core.dependencies import get_tenant_context, TenantContext, require_rol
 from app.core.exceptions import PlanLimitReachedError
 from app.core.security import hash_password
 from app.models.user import User, UserRole
-from app.models.business import Plan, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
+from app.models.business import Plan, PlanKind, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
 from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserClientResponse, UserDetailResponse, ClientListResponse
 from app.schemas.business import (
     PlanCreate, PlanUpdate, PlanResponse,
@@ -861,6 +861,19 @@ async def create_plan(
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_plans_write()),
 ):
+    # Validar plan_kind y total_uses coherentes.
+    try:
+        plan_kind = PlanKind((data.plan_kind or "subscription").lower())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="plan_kind inválido") from exc
+    total_uses = data.total_uses
+    if plan_kind == PlanKind.DROP_IN:
+        total_uses = 1
+    elif plan_kind == PlanKind.PUNCH_PASS and (not total_uses or total_uses < 1):
+        raise HTTPException(status_code=400, detail="Punch pass requiere total_uses >= 1")
+    elif plan_kind == PlanKind.SUBSCRIPTION:
+        total_uses = None
+
     plan = Plan(
         tenant_id=ctx.tenant_id,
         name=data.name,
@@ -869,6 +882,8 @@ async def create_plan(
         currency=data.currency,
         duration_type=data.duration_type,
         duration_days=data.duration_days,
+        plan_kind=plan_kind,
+        total_uses=total_uses,
         max_reservations_per_week=data.max_reservations_per_week,
         max_reservations_per_month=data.max_reservations_per_month,
         allowed_class_types=json.dumps(data.allowed_class_types) if data.allowed_class_types else None,

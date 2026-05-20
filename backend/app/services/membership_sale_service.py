@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.business import Membership, MembershipStatus, Payment, PaymentMethod, PaymentStatus, Plan, PlanDuration
+from app.models.business import Membership, MembershipStatus, Payment, PaymentMethod, PaymentStatus, Plan, PlanDuration, PlanKind
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.tenant_quota_service import assert_can_create_client
@@ -80,6 +80,9 @@ def _resolved_membership_status(membership: Membership, today: date) -> Membersh
     if membership.starts_at > today:
         return MembershipStatus.PENDING
     if membership.expires_at is not None and membership.expires_at <= today:
+        return MembershipStatus.EXPIRED
+    # Punch pass / drop-in: si uses_remaining llegó a 0, agotó pases → EXPIRED.
+    if membership.uses_remaining is not None and membership.uses_remaining <= 0:
         return MembershipStatus.EXPIRED
     return MembershipStatus.ACTIVE
 
@@ -293,6 +296,9 @@ async def allocate_membership_purchase(
         today=today,
     )
 
+    # Punch pass / drop-in: seedean uses_remaining desde el plan.
+    initial_uses = plan.total_uses if plan.plan_kind in {PlanKind.PUNCH_PASS, PlanKind.DROP_IN} else None
+
     membership = Membership(
         tenant_id=tenant.id,
         user_id=client.id,
@@ -301,6 +307,7 @@ async def allocate_membership_purchase(
         expires_at=allocated_expires_at,
         status=purchase_status,
         auto_renew=auto_renew,
+        uses_remaining=initial_uses,
         notes=(notes or "").strip() or None,
         previous_membership_id=previous_membership.id if previous_membership else None,
         sale_source=sale_source,
