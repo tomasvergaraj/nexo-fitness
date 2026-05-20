@@ -63,18 +63,23 @@ Objetivo: aumentar conversión, retención y diferenciación con cambios chicos 
 
 ---
 
-### 6.3 — Waitlist clases llenas ⭐⭐⭐⭐ · S
+### 6.3 — Waitlist clases llenas ⭐⭐⭐⭐ · S — **DONE (pre-v1.0.0)**
 
-**Problema:** Cliente intenta reservar clase llena → no puede → frustración. Cuando alguien cancela 1h antes, el cupo queda vacío.
+**Auditoría 2026-05-20:** ya implementado en producción al revisar el código.
 
-**Solución:**
-- `Reservation.status` agregar valor `waitlist`.
-- En cancel: trigger Celery que busca primer waitlist y promueve a `confirmed` + push.
-- UI: botón "Anótame si se libera cupo" cuando clase llena.
+Lo que existe:
+- `Reservation.status = WAITLISTED` + `waitlist_position` (orden FIFO).
+- `GymClass.waitlist_enabled` (toggle por clase, default true).
+- POST /reservations: cuando clase llena Y waitlist_enabled → crea waitlisted con posición incremental.
+- Cancel reservation: promociona primer waitlist a CONFIRMED + manda push "¡Tienes lugar!" via `create_and_dispatch_notification`.
+- Bulk-cancel: notifica a CONFIRMED + WAITLISTED si `notify_members=true`.
+- UI staff (ClassesPage): toggle `waitlist_enabled` al crear/editar + counter en stats.
+- UI miembro (AgendaTab): botón "Unirse a lista de espera" cuando llena + toast "En lista de espera (posición N)".
 
-**Implementación:** ~6 horas. Modelo ya soporta status enum.
-
-**Métrica:** Ocupación de clases con waitlist activa +10pp.
+**Mejoras posibles (opcionales, P3):**
+- Endpoint `GET /classes/{id}/my-waitlist-position` para ver posición actualizada (hoy solo en respuesta inicial de reserva).
+- Auto-expire waitlist 30min antes de la clase si no se promovió (evita falsa expectativa).
+- Mostrar count de waitlisted en card pública ("3 en lista de espera").
 
 ---
 
