@@ -73,6 +73,7 @@ class MembershipResponse(BaseModel):
     starts_at: date
     expires_at: Optional[date] = None
     auto_renew: bool
+    uses_remaining: Optional[int] = None
     frozen_until: Optional[date] = None
     notes: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
@@ -87,6 +88,7 @@ class MembershipResponse(BaseModel):
     created_at: datetime
     user_name: Optional[str] = None
     plan_name: Optional[str] = None
+    plan_kind: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

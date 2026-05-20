@@ -1,4 +1,5 @@
 import type { Payment } from './payment';
+import type { PlanKind } from './plan';
 
 export interface Membership {
   id: string;
@@ -8,6 +9,7 @@ export interface Membership {
   starts_at: string;
   expires_at?: string;
   auto_renew: boolean;
+  uses_remaining?: number | null;
   frozen_until?: string;
   stripe_subscription_id?: string;
   previous_membership_id?: string | null;
@@ -21,6 +23,7 @@ export interface Membership {
   created_at: string;
   user_name?: string;
   plan_name?: string;
+  plan_kind?: PlanKind | null;
 }
 
 export interface MembershipManualSaleRequest {

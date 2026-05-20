@@ -1,4 +1,7 @@
-"""Seed script — creates demo tenants, users, plans, classes, etc."""
+"""Seed script — creates demo tenants, users, plans, classes, etc.
+
+Idempotent: si el tenant `nexo-gym-santiago` ya existe, no hace nada.
+"""
 
 import asyncio
 import sys
@@ -6,6 +9,7 @@ from datetime import datetime, date, timedelta, timezone, time
 from decimal import Decimal
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory, engine, Base
@@ -30,6 +34,13 @@ async def seed():
     await create_tables()
 
     async with async_session_factory() as db:
+        existing = (
+            await db.execute(select(Tenant).where(Tenant.slug == "nexo-gym-santiago"))
+        ).scalar_one_or_none()
+        if existing:
+            print("✓ Seed ya aplicado (tenant nexo-gym-santiago existe). Skip.")
+            return
+
         await ensure_default_saas_plans(db)
         # ─── Superadmin ──────────────────────────────────
         superadmin = User(

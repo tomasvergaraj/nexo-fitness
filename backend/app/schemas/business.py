@@ -52,6 +52,8 @@ class PlanCreate(BaseModel):
     currency: str = "CLP"
     duration_type: str
     duration_days: Optional[int] = None
+    plan_kind: str = "subscription"  # subscription | punch_pass | drop_in
+    total_uses: Optional[int] = Field(default=None, ge=1)
     max_reservations_per_week: Optional[int] = None
     max_reservations_per_month: Optional[int] = None
     allowed_class_types: Optional[List[str]] = None
@@ -68,6 +70,8 @@ class PlanUpdate(BaseModel):
     discount_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     duration_type: Optional[str] = None
     duration_days: Optional[int] = None
+    plan_kind: Optional[str] = None
+    total_uses: Optional[int] = Field(default=None, ge=1)
     max_reservations_per_week: Optional[int] = None
     max_reservations_per_month: Optional[int] = None
     is_active: Optional[bool] = None
@@ -84,6 +88,8 @@ class PlanResponse(BaseModel):
     currency: str
     duration_type: str
     duration_days: Optional[int] = None
+    plan_kind: str = "subscription"
+    total_uses: Optional[int] = None
     max_reservations_per_week: Optional[int] = None
     max_reservations_per_month: Optional[int] = None
     is_active: bool

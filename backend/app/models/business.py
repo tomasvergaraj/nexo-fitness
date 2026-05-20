@@ -103,6 +103,22 @@ class PlanDuration(str, enum.Enum):
     CUSTOM = "custom"
 
 
+class PlanKind(str, enum.Enum):
+    """Tipo de membresía generada por un Plan.
+
+    SUBSCRIPTION: acceso por tiempo (expires_at controla validez).
+    PUNCH_PASS:   acceso por cantidad de usos (uses_remaining decrementa
+                  en cada check-in). El cliente compra un paquete de N
+                  clases que puede consumir antes de expirar.
+    DROP_IN:      caso especial de PUNCH_PASS con 1 uso y validez 24h.
+                  Modelado como PUNCH_PASS internamente; la UI lo expone
+                  como atajo de venta.
+    """
+    SUBSCRIPTION = "subscription"
+    PUNCH_PASS = "punch_pass"
+    DROP_IN = "drop_in"
+
+
 # ─── Branch ───────────────────────────────────────────────────────────────────
 
 class Branch(Base):
@@ -142,6 +158,13 @@ class Plan(Base):
     currency: Mapped[str] = mapped_column(String(3), default="CLP")
     duration_type: Mapped[PlanDuration] = mapped_column(SAEnum(PlanDuration, name="plan_duration_enum"))
     duration_days: Mapped[Optional[int]] = mapped_column(Integer)
+    plan_kind: Mapped[PlanKind] = mapped_column(
+        SAEnum(PlanKind, name="plan_kind_enum"),
+        default=PlanKind.SUBSCRIPTION,
+        nullable=False,
+        server_default=PlanKind.SUBSCRIPTION.name,  # 'SUBSCRIPTION' — match Postgres enum
+    )
+    total_uses: Mapped[Optional[int]] = mapped_column(Integer)  # solo punch_pass / drop_in
     max_reservations_per_week: Mapped[Optional[int]] = mapped_column(Integer)
     max_reservations_per_month: Mapped[Optional[int]] = mapped_column(Integer)
     allowed_class_types: Mapped[Optional[str]] = mapped_column(Text)  # JSON array
@@ -174,6 +197,7 @@ class Membership(Base):
     starts_at: Mapped[date] = mapped_column(Date, nullable=False)
     expires_at: Mapped[Optional[date]] = mapped_column(Date)
     auto_renew: Mapped[bool] = mapped_column(Boolean, default=True)
+    uses_remaining: Mapped[Optional[int]] = mapped_column(Integer)  # solo punch_pass / drop_in
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(255))
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     frozen_until: Mapped[Optional[date]] = mapped_column(Date)

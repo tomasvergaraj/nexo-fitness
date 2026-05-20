@@ -175,6 +175,7 @@ def _membership_payload(
         starts_at=membership.starts_at,
         expires_at=membership.expires_at,
         auto_renew=membership.auto_renew,
+        uses_remaining=membership.uses_remaining,
         frozen_until=membership.frozen_until,
         notes=membership.notes,
         stripe_subscription_id=membership.stripe_subscription_id,
@@ -189,6 +190,7 @@ def _membership_payload(
         created_at=membership.created_at,
         user_name=user.full_name if user else None,
         plan_name=plan.name if plan else None,
+        plan_kind=membership_status_value(plan.plan_kind) if plan else None,
     )
 
 

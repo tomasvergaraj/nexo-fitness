@@ -6,6 +6,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NexoFitness — SaaS multitenant platform for gym management. Stack: FastAPI + SQLAlchemy 2.0 (async) + PostgreSQL 15 backend, React 18 + Vite + TypeScript + Tailwind CSS frontend, Celery + Redis for background tasks, Nginx as reverse proxy.
 
+## Branching y releases
+
+- **main** → producción. Deploy via `./deploy.sh` en el VPS.
+- **develop** → integración. Feature branches salen de develop, PR a develop. Merge develop → main = release.
+- Tag semver en cada release (`v1.0.0` = primer release 2026-05-20). `vX.Y.Z`: X=breaking, Y=feature, Z=hotfix.
+- **NUNCA** commitear directo en main excepto hotfixes; hacerlo desde branch `hotfix/<desc>` → PR a main + cherry-pick a develop.
+
+### Ciclo end-to-end
+
+1. **Local (laptop)** en `develop`: implementar feature, levantar `docker compose up`, probar.
+2. **Push develop**: `git push origin develop`.
+3. **Merge a main** (cuando feature terminada): desde GitHub PR `develop → main` o local `git checkout main && git merge develop --no-ff && git push`. Tag opcional: `git tag -a v1.1.0 -m "..." && git push --tags`.
+4. **Deploy en VPS**:
+   ```bash
+   ssh root@vps && cd /var/www/nexofitness
+   ./deploy.sh                    # pull + build + migrations + vite build
+   ./deploy.sh --skip-build       # backend-only (sin tocar frontend)
+   ./deploy.sh --skip-migrations  # rebuild rápido sin alembic
+   ```
+   Sin staging — pruebas en local, deploy directo. Rollback: `git reset --hard <sha>` + `./deploy.sh`.
+
+## Local development (laptop, no VPS)
+
+Workflow para trabajar en develop desde la máquina personal sin tocar prod:
+
+```bash
+git clone git@github.com:tomasvergaraj/nexo-fitness.git
+cd nexo-fitness
+git checkout develop
+
+cp backend/.env.example backend/.env       # Editar: secrets para dev (Stripe TEST keys, Resend opcional, etc.)
+cp frontend/.env.example frontend/.env
+
+docker compose up -d db redis              # Solo infra
+docker compose run --rm backend alembic upgrade head
+docker compose run --rm backend python -m seeds.run    # Tenant demo + owner/admin/clients (idempotente)
+docker compose up -d                        # Backend + worker + beat + frontend
+```
+
+Credenciales seed:
+- Superadmin: `admin@nexofitness.com` / `Admin123!`
+- Owner: `owner@nexogym.cl` / `Owner123!`
+- Admin: `admin@nexogym.cl` / `Admin123!`
+
+App en `http://localhost:3000`, backend `http://localhost:8000`.
+
 ## Commands
 
 ### Frontend
