@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.business import (
     BodyMeasurement,
     Membership,
+    Notification,
     PersonalRecord,
     Plan,
     PromoCode,
@@ -23,11 +24,15 @@ from app.models.user import User
 from app.schemas.platform import (
     BodyMeasurementResponse,
     MembershipResponse,
+    NotificationDispatchResponse,
+    NotificationResponse,
     PersonalRecordResponse,
     PromoCodeResponse,
+    PushDeliveryResponse,
     SupportInteractionResponse,
 )
 from app.services.membership_sale_service import membership_status_value
+from app.services.push_notification_service import NotificationDispatchResult
 
 
 # Uploads root (shared with upload, feedback, progress-photos handlers).
@@ -188,6 +193,34 @@ def _support_payload(
         created_at=interaction.created_at,
         client_name=client.full_name if client else None,
         handler_name=handler.full_name if handler else None,
+    )
+
+
+def _notification_payload(notification: Notification) -> NotificationResponse:
+    return NotificationResponse.model_validate(notification)
+
+
+def _notification_dispatch_payload(result: NotificationDispatchResult) -> NotificationDispatchResponse:
+    return NotificationDispatchResponse(
+        notification=_notification_payload(result.notification),
+        push_deliveries=[
+            PushDeliveryResponse(
+                subscription_id=delivery.subscription_id,
+                provider=delivery.provider,
+                delivery_target=delivery.delivery_target,
+                expo_push_token=delivery.expo_push_token,
+                status=delivery.status,
+                is_active=delivery.is_active,
+                ticket_id=delivery.ticket_id,
+                message=delivery.message,
+                error=delivery.error,
+                receipt_status=delivery.receipt_status,
+                receipt_message=delivery.receipt_message,
+                receipt_error=delivery.receipt_error,
+                receipt_checked_at=delivery.receipt_checked_at,
+            )
+            for delivery in result.deliveries
+        ],
     )
 
 

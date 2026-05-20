@@ -27,22 +27,13 @@ from app.core.dependencies import (
 )
 from app.core.security import create_staff_invitation_token
 from app.integrations.email.email_service import email_service
-from app.integrations.payments.webpay_service import (
-    WEBPAY_DEFAULT_INTEGRATION_API_KEY,
-    WEBPAY_DEFAULT_INTEGRATION_COMMERCE_CODE,
-    WebpayCredentials,
-    webpay_service,
-)
 from app.models.business import (
     BodyMeasurement,
-    Campaign,
-    CampaignStatus,
     CheckIn,
     ClassStatus,
     GymClass,
     Membership,
     MembershipStatus,
-    Notification,
     Payment,
     PaymentStatus,
     PersonalRecord,
@@ -54,43 +45,29 @@ from app.models.business import (
     TrainingProgram,
     TrainingProgramEnrollment,
 )
-from app.models.platform import PushDelivery, PushSubscription, TenantPaymentProviderAccount, WebpayTransaction
+from app.models.platform import PushSubscription
 from app.models.pos import Expense, POSTransaction, POSTransactionItem, POSTransactionStatus
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.business import (
-    CampaignCreate,
-    CampaignResponse,
     GymClassResponse,
     PaginatedResponse,
 )
 from app.schemas.platform import (
     BodyMeasurementCreate,
     BodyMeasurementResponse,
-    CampaignOverviewResponse,
-    CampaignUpdateRequest,
     ExpenseCategoryPoint,
     MobileMembershipWalletResponse,
     MobilePaymentHistoryItemResponse,
     MobilePushPreviewRequest,
     MobileSupportInteractionCreateRequest,
     MobileWalletMembershipSummaryResponse,
-    NotificationBroadcastRecipientResponse,
-    NotificationBroadcastRequest,
-    NotificationBroadcastResponse,
-    NotificationCreateRequest,
     NotificationDispatchResponse,
-    NotificationResponse,
-    NotificationUpdateRequest,
-    PaymentProviderAccountCreateRequest,
-    PaymentProviderAccountResponse,
-    PaymentProviderAccountUpdateRequest,
     PersonalRecordCreate,
     PersonalRecordResponse,
     ProgramExerciseLibraryItemCreateRequest,
     ProgramExerciseLibraryItemResponse,
     ProgressPhotoResponse,
-    PushDeliveryResponse,
     PushSubscriptionCreateRequest,
     PushSubscriptionResponse,
     ReportSeriesPoint,
@@ -112,15 +89,6 @@ from app.services.branding_service import (
     normalize_brand_color,
 )
 from app.services.calendar_export_service import build_member_calendar_ical
-from app.services.campaign_service import (
-    CampaignDispatchRecipientResult,
-    DISPATCH_TRIGGER_MANUAL,
-    DISPATCH_TRIGGER_SCHEDULED,
-    dispatch_campaign_broadcast,
-    normalize_campaign_status,
-    parse_segment_filter,
-    serialize_segment_filter,
-)
 from app.services.class_service import build_gym_class_responses
 from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
 from app.services.membership_sale_service import (
@@ -128,29 +96,18 @@ from app.services.membership_sale_service import (
     resolve_membership_timeline,
     sync_membership_timeline,
 )
-from app.services.push_notification_service import (
-    NotificationDispatchResult,
-    create_and_dispatch_notification,
-    get_notification_dispatch_result,
-    record_notification_engagement,
-    refresh_push_receipts,
-)
+from app.services.push_notification_service import create_and_dispatch_notification
 from app.services.support_contact_service import resolve_tenant_support_contacts
 from app.services.user_account_service import purge_user_account
-from app.services.webpay_checkout_service import (
-    build_webpay_redirect_url,
-    build_webpay_return_url,
-    generate_webpay_buy_order,
-    generate_webpay_session_id,
-    normalize_payment_account_metadata,
-    sanitize_payment_account_metadata,
-)
 
-# Routers extracted to sub-modules (Phase A + B). Re-exported so main.py
+# Routers extracted to sub-modules (Phase A + B + C). Re-exported so main.py
 # keeps importing them as `operations.<name>_router`.
 from .branches import branches_router  # noqa: F401
+from .campaigns import campaigns_router  # noqa: F401
 from .feedback import feedback_router  # noqa: F401
 from .memberships import memberships_router  # noqa: F401
+from .notifications import notifications_router  # noqa: F401
+from .payment_accounts import payment_accounts_router  # noqa: F401
 from .personal_records import personal_records_router  # noqa: F401
 from .progress import progress_router  # noqa: F401
 from .promo_codes import promo_codes_router  # noqa: F401
@@ -172,11 +129,11 @@ from ._common import (
     _loads_dict,
     _loads_list,
     _measurement_to_response,
+    _notification_dispatch_payload,
     _pr_to_response,
     _support_payload,
 )
 
-campaigns_router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
 programs_router = APIRouter(prefix="/programs", tags=["Programs"])
 
 
@@ -193,8 +150,6 @@ def _valid_program_class_filter(tenant_id: UUID):
 staff_router = APIRouter(prefix="/staff", tags=["Staff"])
 settings_router = APIRouter(prefix="/settings", tags=["Settings"])
 reports_router = APIRouter(prefix="/reports", tags=["Reports"])
-notifications_router = APIRouter(prefix="/notifications", tags=["Notifications"])
-payment_accounts_router = APIRouter(prefix="/payment-provider/accounts", tags=["Payment Accounts"])
 mobile_router = APIRouter(prefix="/mobile", tags=["Mobile"])
 settings = get_settings()
 logger = structlog.get_logger()
@@ -270,54 +225,6 @@ _DEFAULT_PROGRAM_EXERCISE_LIBRARY = [
     }
     for index, (group, name) in enumerate(_DEFAULT_PROGRAM_EXERCISE_GROUPS, start=1)
 ]
-
-
-def _validate_payment_account_configuration(
-    *,
-    provider: str,
-    status: str,
-    metadata: dict[str, Any],
-    checkout_base_url: Optional[str],
-) -> dict[str, Any]:
-    try:
-        normalized_metadata = normalize_payment_account_metadata(provider, metadata)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if provider == "webpay" and status == "connected":
-        if not normalized_metadata.get("commerce_code") or not normalized_metadata.get("api_key"):
-            raise HTTPException(
-                status_code=400,
-                detail="Webpay conectado requiere commerce code y API key.",
-            )
-
-    if provider == "fintoc" and status == "connected":
-        secret_key = str(normalized_metadata.get("secret_key") or "").strip()
-        if not secret_key:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Fintoc conectado requiere la API key secreta de tu cuenta Fintoc. "
-                    "Encuéntrala en el dashboard de Fintoc bajo 'API Keys'."
-                ),
-            )
-
-    if provider == "tuu" and status == "connected":
-        account_id = str(normalized_metadata.get("account_id") or "").strip()
-        secret_key = str(normalized_metadata.get("secret_key") or "").strip()
-        if not account_id or not secret_key:
-            raise HTTPException(
-                status_code=400,
-                detail="TUU conectado requiere account_id y secret_key.",
-            )
-
-    if provider in {"stripe", "mercadopago", "manual"} and status == "connected" and not (checkout_base_url or "").strip():
-        raise HTTPException(
-            status_code=400,
-            detail=f"El proveedor {provider} requiere checkout_base_url cuando se marca como conectado.",
-        )
-
-    return normalized_metadata
 
 
 def _feature_map(tenant: Tenant) -> dict[str, Any]:
@@ -438,73 +345,6 @@ async def _ensure_custom_domain_is_available(
                     f"{existing_name}. Usa un dominio que no sea padre ni subdominio de otro tenant."
                 )
             raise HTTPException(status_code=409, detail=detail)
-
-
-def _notification_payload(notification: Notification) -> NotificationResponse:
-    return NotificationResponse.model_validate(notification)
-
-
-def _notification_dispatch_payload(result: NotificationDispatchResult) -> NotificationDispatchResponse:
-    return NotificationDispatchResponse(
-        notification=_notification_payload(result.notification),
-        push_deliveries=[
-            PushDeliveryResponse(
-                subscription_id=delivery.subscription_id,
-                provider=delivery.provider,
-                delivery_target=delivery.delivery_target,
-                expo_push_token=delivery.expo_push_token,
-                status=delivery.status,
-                is_active=delivery.is_active,
-                ticket_id=delivery.ticket_id,
-                message=delivery.message,
-                error=delivery.error,
-                receipt_status=delivery.receipt_status,
-                receipt_message=delivery.receipt_message,
-                receipt_error=delivery.receipt_error,
-                receipt_checked_at=delivery.receipt_checked_at,
-            )
-            for delivery in result.deliveries
-        ],
-    )
-
-
-def _notification_broadcast_recipient_payload(
-    result: CampaignDispatchRecipientResult,
-) -> NotificationBroadcastRecipientResponse:
-    dispatch_payload = _notification_dispatch_payload(result.dispatch_result)
-    return NotificationBroadcastRecipientResponse(
-        user_id=result.user.id,
-        user_name=result.user.full_name,
-        notification=dispatch_payload.notification,
-        push_deliveries=dispatch_payload.push_deliveries,
-    )
-
-
-def _campaign_payload(campaign: Campaign) -> CampaignResponse:
-    return CampaignResponse(
-        id=campaign.id,
-        name=campaign.name,
-        subject=campaign.subject,
-        content=campaign.content,
-        channel=str(campaign.channel.value if hasattr(campaign.channel, "value") else campaign.channel),
-        status=str(campaign.status.value if hasattr(campaign.status, "value") else campaign.status),
-        total_recipients=campaign.total_recipients,
-        total_sent=campaign.total_sent,
-        total_opened=campaign.total_opened,
-        total_clicked=campaign.total_clicked,
-        segment_filter=parse_segment_filter(campaign.segment_filter),
-        notification_type=campaign.notification_type,
-        action_url=campaign.action_url,
-        send_push=campaign.send_push,
-        scheduled_at=campaign.scheduled_at,
-        sent_at=campaign.sent_at,
-        last_dispatch_trigger=campaign.last_dispatch_trigger,
-        last_dispatch_attempted_at=campaign.last_dispatch_attempted_at,
-        last_dispatch_finished_at=campaign.last_dispatch_finished_at,
-        last_dispatch_error=campaign.last_dispatch_error,
-        dispatch_attempts=campaign.dispatch_attempts,
-        created_at=campaign.created_at,
-    )
 
 
 def _wallet_membership_summary(
@@ -702,21 +542,6 @@ def _program_enrollment_payload(
     )
 
 
-def _payment_account_payload(account: TenantPaymentProviderAccount) -> PaymentProviderAccountResponse:
-    return PaymentProviderAccountResponse(
-        id=account.id,
-        provider=account.provider,
-        status=account.status,
-        account_label=account.account_label,
-        public_identifier=account.public_identifier,
-        checkout_base_url=account.checkout_base_url,
-        metadata=sanitize_payment_account_metadata(_loads_dict(account.metadata_json)),
-        is_default=account.is_default,
-        created_at=account.created_at,
-        updated_at=account.updated_at,
-    )
-
-
 def _mobile_payment_payload(
     payment: Payment,
     membership: Optional[Membership],
@@ -743,180 +568,6 @@ def _mobile_payment_payload(
         membership_expires_at_snapshot=payment.membership_expires_at_snapshot or (membership.expires_at if membership else None),
         membership_status_snapshot=payment.membership_status_snapshot or membership_status_value(membership.status if membership else None),
     )
-
-
-@campaigns_router.get("", response_model=PaginatedResponse)
-async def list_campaigns(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "marketing")),
-):
-    total = (
-        await db.execute(
-            select(func.count()).select_from(Campaign).where(Campaign.tenant_id == ctx.tenant_id)
-        )
-    ).scalar() or 0
-    campaigns = (
-        await db.execute(
-            select(Campaign)
-            .where(Campaign.tenant_id == ctx.tenant_id)
-            .order_by(Campaign.created_at.desc())
-            .offset((page - 1) * per_page)
-            .limit(per_page)
-        )
-    ).scalars().all()
-    return PaginatedResponse(
-        items=[_campaign_payload(campaign) for campaign in campaigns],
-        total=total,
-        page=page,
-        per_page=per_page,
-        pages=(total + per_page - 1) // per_page,
-    )
-
-
-@campaigns_router.get("/overview", response_model=CampaignOverviewResponse)
-async def get_campaigns_overview(
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "marketing")),
-):
-    campaigns = (
-        await db.execute(select(Campaign).where(Campaign.tenant_id == ctx.tenant_id))
-    ).scalars().all()
-
-    sent_total = sum(int(campaign.total_sent or 0) for campaign in campaigns)
-    opened_total = sum(int(campaign.total_opened or 0) for campaign in campaigns)
-    clicked_total = sum(int(campaign.total_clicked or 0) for campaign in campaigns)
-
-    pending_push_receipts = (
-        await db.execute(
-            select(func.count()).select_from(PushDelivery).where(
-                PushDelivery.tenant_id == ctx.tenant_id,
-                PushDelivery.status == "ok",
-                or_(PushDelivery.receipt_status.is_(None), PushDelivery.receipt_status == "pending"),
-            )
-        )
-    ).scalar() or 0
-    failed_push_receipts = (
-        await db.execute(
-            select(func.count()).select_from(PushDelivery).where(
-                PushDelivery.tenant_id == ctx.tenant_id,
-                PushDelivery.receipt_status == "error",
-            )
-        )
-    ).scalar() or 0
-
-    return CampaignOverviewResponse(
-        total_campaigns=len(campaigns),
-        scheduled_pending=sum(1 for campaign in campaigns if campaign.status == CampaignStatus.SCHEDULED),
-        sending_now=sum(1 for campaign in campaigns if campaign.status == CampaignStatus.SENDING),
-        sent_total=sent_total,
-        opened_total=opened_total,
-        clicked_total=clicked_total,
-        manual_runs=sum(
-            1
-            for campaign in campaigns
-            if campaign.last_dispatch_trigger == DISPATCH_TRIGGER_MANUAL
-            and campaign.last_dispatch_finished_at is not None
-            and not campaign.last_dispatch_error
-        ),
-        scheduler_runs=sum(
-            1
-            for campaign in campaigns
-            if campaign.last_dispatch_trigger == DISPATCH_TRIGGER_SCHEDULED
-            and campaign.last_dispatch_finished_at is not None
-            and not campaign.last_dispatch_error
-        ),
-        scheduler_failures=sum(
-            1
-            for campaign in campaigns
-            if campaign.last_dispatch_trigger == DISPATCH_TRIGGER_SCHEDULED and bool(campaign.last_dispatch_error)
-        ),
-        pending_push_receipts=int(pending_push_receipts),
-        failed_push_receipts=int(failed_push_receipts),
-        open_rate=round((opened_total / sent_total) * 100, 1) if sent_total else 0.0,
-        click_rate=round((clicked_total / sent_total) * 100, 1) if sent_total else 0.0,
-    )
-
-
-@campaigns_router.post("", response_model=CampaignResponse, status_code=201)
-async def create_campaign(
-    data: CampaignCreate,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    current_user: User = Depends(get_current_user),
-    _user=Depends(require_roles("owner", "admin", "marketing")),
-):
-    normalized_status = normalize_campaign_status(
-        requested_status=data.status,
-        scheduled_at=data.scheduled_at,
-    )
-    campaign = Campaign(
-        tenant_id=ctx.tenant_id,
-        name=data.name,
-        subject=data.subject,
-        content=data.content,
-        channel=data.channel,
-        status=normalized_status,
-        segment_filter=serialize_segment_filter(data.segment_filter),
-        notification_type=data.notification_type,
-        action_url=data.action_url,
-        send_push=data.send_push,
-        scheduled_at=data.scheduled_at,
-        total_recipients=data.total_recipients,
-        total_sent=data.total_sent,
-        total_opened=data.total_opened,
-        total_clicked=data.total_clicked,
-        created_by=current_user.id,
-    )
-    db.add(campaign)
-    await db.flush()
-    await db.refresh(campaign)
-    return _campaign_payload(campaign)
-
-
-@campaigns_router.patch("/{campaign_id}", response_model=CampaignResponse)
-async def update_campaign(
-    campaign_id: UUID,
-    data: CampaignUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "marketing")),
-):
-    campaign = await db.get(Campaign, campaign_id)
-    if not campaign or campaign.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Campaña no encontrada")
-
-    previous_status = campaign.status
-    payload = data.model_dump(exclude_unset=True)
-    if "segment_filter" in payload:
-        payload["segment_filter"] = serialize_segment_filter(payload["segment_filter"])
-    scheduled_at = payload.get("scheduled_at", campaign.scheduled_at)
-    payload["status"] = normalize_campaign_status(
-        current_status=campaign.status,
-        requested_status=payload.get("status"),
-        scheduled_at=scheduled_at,
-    )
-
-    if payload["status"] != CampaignStatus.SENT:
-        campaign.sent_at = None
-        if "total_recipients" not in payload:
-            campaign.total_recipients = 0
-        if "total_sent" not in payload:
-            campaign.total_sent = 0
-        if "total_opened" not in payload and previous_status == CampaignStatus.SENT:
-            campaign.total_opened = 0
-        if "total_clicked" not in payload and previous_status == CampaignStatus.SENT:
-            campaign.total_clicked = 0
-
-    for field, value in payload.items():
-        setattr(campaign, field, value)
-
-    await db.flush()
-    await db.refresh(campaign)
-    return _campaign_payload(campaign)
 
 
 # ─── Staff Router ─────────────────────────────────────────────────────────────
@@ -2160,357 +1811,6 @@ async def get_attendance_report(
     instructor_rows = sorted(instructor_stats.values(), key=lambda x: x["total_checkins"], reverse=True)
 
     return {"classes": class_rows[:20], "instructors": instructor_rows[:10]}
-
-
-@notifications_router.get("", response_model=list[NotificationResponse])
-async def list_notifications(
-    date_from: date | None = Query(None),
-    date_to: date | None = Query(None),
-    limit: int = Query(100, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    current_user: User = Depends(get_current_user),
-):
-    if date_from and date_to and date_from > date_to:
-        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser mayor que la fecha final")
-
-    query = (
-        select(Notification)
-        .where(Notification.tenant_id == ctx.tenant_id, Notification.user_id == current_user.id)
-        .order_by(Notification.created_at.desc())
-    )
-
-    if date_from:
-        query = query.where(Notification.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
-    if date_to:
-        query = query.where(Notification.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
-
-    result = await db.execute(query.limit(limit))
-    return [_notification_payload(notification) for notification in result.scalars().all()]
-
-
-@notifications_router.post("", response_model=NotificationDispatchResponse, status_code=201)
-async def create_notification(
-    data: NotificationCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
-):
-    recipient = await db.get(User, data.user_id)
-    if not recipient or recipient.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    result = await create_and_dispatch_notification(
-        db,
-        tenant_id=ctx.tenant_id,
-        user_id=recipient.id,
-        title=data.title,
-        message=data.message,
-        type=data.type,
-        action_url=data.action_url,
-        send_push=data.send_push,
-    )
-    return _notification_dispatch_payload(result)
-
-
-@notifications_router.get("/{notification_id}/dispatch", response_model=NotificationDispatchResponse)
-async def get_notification_dispatch(
-    notification_id: UUID,
-    refresh_receipts_now: bool = Query(False, alias="refresh_receipts"),
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
-):
-    try:
-        if refresh_receipts_now:
-            await refresh_push_receipts(
-                db,
-                tenant_id=ctx.tenant_id,
-                notification_id=notification_id,
-            )
-        result = await get_notification_dispatch_result(
-            db,
-            tenant_id=ctx.tenant_id,
-            notification_id=notification_id,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    return _notification_dispatch_payload(result)
-
-
-@notifications_router.post("/broadcast", response_model=NotificationBroadcastResponse, status_code=201)
-async def broadcast_notifications(
-    data: NotificationBroadcastRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
-):
-    campaign: Campaign | None = None
-    if data.campaign_id:
-        campaign = await db.get(Campaign, data.campaign_id)
-        if not campaign or campaign.tenant_id != ctx.tenant_id:
-            raise HTTPException(status_code=404, detail="Campaña no encontrada")
-
-    try:
-        summary = await dispatch_campaign_broadcast(
-            db,
-            tenant_id=ctx.tenant_id,
-            campaign=campaign,
-            user_ids=data.user_ids,
-            title=data.title,
-            message=data.message,
-            notification_type=data.type,
-            action_url=data.action_url,
-            send_push=data.send_push,
-            dispatch_trigger=DISPATCH_TRIGGER_MANUAL,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    return NotificationBroadcastResponse(
-        total_recipients=summary.total_recipients,
-        total_notifications=summary.total_notifications,
-        total_push_deliveries=summary.total_push_deliveries,
-        accepted_push_deliveries=summary.accepted_push_deliveries,
-        errored_push_deliveries=summary.total_push_deliveries - summary.accepted_push_deliveries,
-        campaign_id=campaign.id if campaign else None,
-        recipients=[_notification_broadcast_recipient_payload(recipient) for recipient in summary.recipients],
-    )
-
-
-@notifications_router.patch("/{notification_id}", response_model=NotificationResponse)
-async def update_notification(
-    notification_id: UUID,
-    data: NotificationUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    current_user: User = Depends(get_current_user),
-):
-    notification = await db.get(Notification, notification_id)
-    if not notification or notification.tenant_id != ctx.tenant_id or notification.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Notificación no encontrada")
-
-    notification = await record_notification_engagement(
-        db,
-        notification=notification,
-        is_read=data.is_read,
-        mark_opened=data.mark_opened,
-        mark_clicked=data.mark_clicked,
-    )
-    return _notification_payload(notification)
-
-
-@payment_accounts_router.get("", response_model=list[PaymentProviderAccountResponse])
-async def list_payment_accounts(
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    result = await db.execute(
-        select(TenantPaymentProviderAccount)
-        .where(TenantPaymentProviderAccount.tenant_id == ctx.tenant_id)
-        .order_by(TenantPaymentProviderAccount.is_default.desc(), TenantPaymentProviderAccount.created_at.asc())
-    )
-    return [_payment_account_payload(account) for account in result.scalars().all()]
-
-
-@payment_accounts_router.post("", response_model=PaymentProviderAccountResponse, status_code=201)
-async def create_payment_account(
-    data: PaymentProviderAccountCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    normalized_metadata = _validate_payment_account_configuration(
-        provider=data.provider,
-        status=data.status,
-        metadata=data.metadata,
-        checkout_base_url=data.checkout_base_url,
-    )
-    public_identifier = (data.public_identifier or "").strip() or None
-    if data.provider == "webpay" and not public_identifier:
-        public_identifier = str(normalized_metadata.get("commerce_code") or "").strip() or None
-    if data.provider == "tuu" and not public_identifier:
-        public_identifier = str(normalized_metadata.get("account_id") or "").strip() or None
-
-    if data.is_default:
-        existing_accounts = (
-            await db.execute(
-                select(TenantPaymentProviderAccount).where(TenantPaymentProviderAccount.tenant_id == ctx.tenant_id)
-            )
-        ).scalars().all()
-        for account in existing_accounts:
-            account.is_default = False
-
-    account = TenantPaymentProviderAccount(
-        tenant_id=ctx.tenant_id,
-        provider=data.provider,
-        status=data.status,
-        account_label=data.account_label,
-        public_identifier=public_identifier,
-        checkout_base_url=(data.checkout_base_url or "").strip() or None,
-        metadata_json=json.dumps(normalized_metadata),
-        is_default=data.is_default,
-    )
-    db.add(account)
-    await db.flush()
-    await db.refresh(account)
-    return _payment_account_payload(account)
-
-
-@payment_accounts_router.patch("/{account_id}", response_model=PaymentProviderAccountResponse)
-async def update_payment_account(
-    account_id: UUID,
-    data: PaymentProviderAccountUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    account = await db.get(TenantPaymentProviderAccount, account_id)
-    if not account or account.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
-
-    payload = data.model_dump(exclude_unset=True)
-    merged_metadata = _loads_dict(account.metadata_json)
-    if "metadata" in payload and payload["metadata"] is not None:
-        merged_metadata.update(payload["metadata"])
-
-    normalized_status = payload.get("status", account.status)
-    normalized_checkout_base_url = payload.get("checkout_base_url", account.checkout_base_url)
-    normalized_metadata = _validate_payment_account_configuration(
-        provider=account.provider,
-        status=normalized_status,
-        metadata=merged_metadata,
-        checkout_base_url=normalized_checkout_base_url,
-    )
-
-    if payload.get("is_default"):
-        existing_accounts = (
-            await db.execute(
-                select(TenantPaymentProviderAccount).where(TenantPaymentProviderAccount.tenant_id == ctx.tenant_id)
-            )
-        ).scalars().all()
-        for existing in existing_accounts:
-            existing.is_default = existing.id == account.id
-
-    if "metadata" in payload:
-        payload.pop("metadata")
-        account.metadata_json = json.dumps(normalized_metadata)
-
-    if account.provider == "webpay" and "public_identifier" not in payload:
-        auto_identifier = str(normalized_metadata.get("commerce_code") or "").strip()
-        if auto_identifier and not (account.public_identifier or "").strip():
-            account.public_identifier = auto_identifier
-    if account.provider == "tuu" and "public_identifier" not in payload:
-        auto_identifier = str(normalized_metadata.get("account_id") or "").strip()
-        if auto_identifier and not (account.public_identifier or "").strip():
-            account.public_identifier = auto_identifier
-
-    for field, value in payload.items():
-        if field in {"account_label", "public_identifier", "checkout_base_url"}:
-            value = (value or "").strip() or None
-        setattr(account, field, value)
-
-    await db.flush()
-    await db.refresh(account)
-    return _payment_account_payload(account)
-
-
-@payment_accounts_router.delete("/{account_id}", status_code=204, response_class=Response)
-async def delete_payment_account(
-    account_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin")),
-):
-    account = await db.get(TenantPaymentProviderAccount, account_id)
-    if not account or account.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
-
-    was_default = account.is_default
-    await db.delete(account)
-    await db.flush()
-
-    if was_default:
-        replacement = (
-            await db.execute(
-                select(TenantPaymentProviderAccount)
-                .where(TenantPaymentProviderAccount.tenant_id == ctx.tenant_id)
-                .order_by(TenantPaymentProviderAccount.created_at.asc())
-                .limit(1)
-            )
-        ).scalars().first()
-        if replacement:
-            replacement.is_default = True
-            await db.flush()
-
-    return Response(status_code=204)
-
-
-@payment_accounts_router.post("/{account_id}/webpay/test-transaction", status_code=201)
-async def create_webpay_test_transaction(
-    account_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    current_user: User = Depends(require_roles("owner", "admin")),
-):
-    account = await db.get(TenantPaymentProviderAccount, account_id)
-    if not account or account.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Cuenta de pago no encontrada")
-    if account.provider != "webpay":
-        raise HTTPException(status_code=400, detail="Esta cuenta no es de tipo Webpay")
-
-    credentials = WebpayCredentials(
-        commerce_code=WEBPAY_DEFAULT_INTEGRATION_COMMERCE_CODE,
-        api_key=WEBPAY_DEFAULT_INTEGRATION_API_KEY,
-        environment="integration",
-    )
-
-    success_url = f"{settings.public_app_url.rstrip('/')}/settings?webpay_test=success"
-    cancel_url = f"{settings.public_app_url.rstrip('/')}/settings?webpay_test=cancelled"
-
-    transaction = WebpayTransaction(
-        tenant_id=ctx.tenant_id,
-        user_id=current_user.id,
-        payment_account_id=account.id,
-        flow_type="webpay_connectivity_test",
-        flow_reference=str(account_id),
-        status="creating",
-        buy_order=generate_webpay_buy_order("wbtest"),
-        session_id=generate_webpay_session_id("wbtest"),
-        amount=Decimal("100"),
-        currency="CLP",
-        commerce_code=credentials.commerce_code,
-        environment=credentials.environment,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata_json=json.dumps({"account_id": str(account_id), "test": True}),
-    )
-    db.add(transaction)
-    await db.flush()
-
-    return_url = build_webpay_return_url(str(transaction.id))
-    provider_response = await webpay_service.create_transaction(
-        buy_order=transaction.buy_order,
-        session_id=transaction.session_id,
-        amount=100,
-        return_url=return_url,
-        credentials=credentials,
-    )
-
-    transaction.token = provider_response["token"]
-    transaction.provider_url = provider_response["url"]
-    transaction.return_url = return_url
-    transaction.checkout_url = build_webpay_redirect_url(str(transaction.id))
-    transaction.status = "pending"
-    transaction.provider_response_json = json.dumps(provider_response)
-    transaction.updated_at = datetime.now(timezone.utc)
-    await db.flush()
-
-    return {"checkout_url": transaction.checkout_url, "transaction_id": str(transaction.id)}
 
 
 @mobile_router.get("/wallet", response_model=MobileMembershipWalletResponse)
