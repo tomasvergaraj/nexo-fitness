@@ -1203,6 +1203,7 @@ async def create_checkin(
     )
     if data.gym_class_id and reservation is None:
         raise HTTPException(status_code=409, detail="No se encontró una reserva vigente para esta clase")
+    membership_state = await sync_membership_timeline(db, tenant_id=ctx.tenant_id, user_id=client.id)
     checkin, resolution = await _create_checkin_record(
         db=db,
         tenant_id=ctx.tenant_id,
@@ -1212,6 +1213,7 @@ async def create_checkin(
         branch_id=data.branch_id,
         check_type=data.check_type,
         reservation=reservation,
+        access_membership=membership_state.access_membership,
     )
     gym_class_name: Optional[str] = None
     if checkin.gym_class_id and reservation:
@@ -1258,6 +1260,7 @@ async def create_checkin_from_qr(
         branch_id=data.branch_id,
         check_type="qr",
         reservation=reservation,
+        access_membership=membership,
     )
     gym_class_name: Optional[str] = None
     if checkin.gym_class_id and reservation:

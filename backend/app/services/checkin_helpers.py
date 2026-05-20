@@ -24,6 +24,8 @@ from app.models.business import (
     CheckInInvestigationCase,
     ClassModality,
     GymClass,
+    Membership,
+    MembershipStatus,
     Reservation,
     ReservationStatus,
 )
@@ -433,6 +435,7 @@ async def create_checkin_record(
     branch_id: Optional[UUID],
     check_type: str,
     reservation: Optional[Reservation] = None,
+    access_membership: Optional[Membership] = None,
 ) -> tuple[CheckIn, str]:
     """Create a check-in record and optionally link it to a reservation.
 
@@ -440,8 +443,30 @@ async def create_checkin_record(
       "linked"           — new attendance recorded
       "already_attended" — reservation was already attended; idempotent response
       "none"             — general check-in, no class linked
+
+    Si `access_membership` es punch_pass/drop_in (uses_remaining is not None),
+    valida que tenga pases disponibles y decrementa el contador. Si llega a 0
+    marca la membresía como EXPIRED y setea expires_at = hoy.
     """
     now_utc = datetime.now(timezone.utc)
+
+    # Punch pass / drop-in: validar + decrementar antes de crear el checkin.
+    # Solo aplica cuando se está reutilizando un check-in (already_attended NO
+    # debe decrementar de nuevo — eso lo manejamos abajo).
+    if access_membership is not None and access_membership.uses_remaining is not None:
+        is_duplicate_attendance = (
+            reservation is not None and reservation.status == ReservationStatus.ATTENDED
+        )
+        if not is_duplicate_attendance:
+            if access_membership.uses_remaining <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No quedan pases disponibles en esta membresía.",
+                )
+            access_membership.uses_remaining -= 1
+            if access_membership.uses_remaining <= 0:
+                access_membership.status = MembershipStatus.EXPIRED
+                access_membership.expires_at = now_utc.date()
 
     if reservation is not None:
         if reservation.status == ReservationStatus.ATTENDED:
