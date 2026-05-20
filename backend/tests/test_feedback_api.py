@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.api.v1.endpoints import operations
+from app.api.v1.endpoints.operations import feedback as feedback_module
 from app.core.dependencies import TenantContext
 from app.models.business import FeedbackCategory, FeedbackSubmission
 from app.models.tenant import LicenseType, Tenant, TenantStatus
@@ -206,7 +207,7 @@ def test_create_feedback_submission_with_image(monkeypatch, tmp_path) -> None:
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
     monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
-    monkeypatch.setattr(operations, "_UPLOADS_ROOT", tmp_path)
+    monkeypatch.setattr(feedback_module, "_UPLOADS_ROOT", tmp_path)
 
     response = client.post(
         "/api/v1/feedback/submissions",
@@ -247,7 +248,7 @@ def test_create_feedback_submission_rejects_oversized_image(monkeypatch) -> None
     client = build_client(session=session, tenant=tenant, current_user=current_user)
 
     monkeypatch.setattr(operations.email_service, "send_feedback_submission", _send_feedback_ok)
-    monkeypatch.setattr(operations, "_MAX_PHOTO_BYTES", 10)
+    monkeypatch.setattr(feedback_module, "_MAX_PHOTO_BYTES", 10)
 
     response = client.post(
         "/api/v1/feedback/submissions",

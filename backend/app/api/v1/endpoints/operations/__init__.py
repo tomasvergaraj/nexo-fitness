@@ -1,27 +1,23 @@
 """Additional tenant operations endpoints for the complete gym platform."""
 
 import asyncio
+import hashlib
 import json
-import os
 from datetime import date, datetime, time, timedelta, timezone
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update
-from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import hashlib
-
-from app.core.database import get_db
 from app.core.config import get_settings
+from app.core.database import get_db
 from app.core.dependencies import (
     TenantContext,
     get_current_tenant,
@@ -29,14 +25,20 @@ from app.core.dependencies import (
     get_tenant_context,
     require_roles,
 )
+from app.core.security import create_staff_invitation_token
+from app.integrations.email.email_service import email_service
+from app.integrations.payments.webpay_service import (
+    WEBPAY_DEFAULT_INTEGRATION_API_KEY,
+    WEBPAY_DEFAULT_INTEGRATION_COMMERCE_CODE,
+    WebpayCredentials,
+    webpay_service,
+)
 from app.models.business import (
     BodyMeasurement,
-    Branch,
     Campaign,
     CampaignStatus,
     CheckIn,
     ClassStatus,
-    FeedbackSubmission,
     GymClass,
     Membership,
     MembershipStatus,
@@ -45,7 +47,6 @@ from app.models.business import (
     PaymentStatus,
     PersonalRecord,
     Plan,
-    PromoCode,
     ProgressPhoto,
     Reservation,
     ReservationStatus,
@@ -58,36 +59,25 @@ from app.models.pos import Expense, POSTransaction, POSTransactionItem, POSTrans
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 from app.schemas.business import (
-    BranchCreate,
-    BranchResponse,
-    BranchUpdate,
     CampaignCreate,
     CampaignResponse,
     GymClassResponse,
     PaginatedResponse,
 )
-from app.services.class_service import build_gym_class_responses
-from app.core.security import create_staff_invitation_token, decode_staff_invitation_token, hash_password
-from app.integrations.email.email_service import email_service
 from app.schemas.platform import (
     BodyMeasurementCreate,
     BodyMeasurementResponse,
     CampaignOverviewResponse,
     CampaignUpdateRequest,
-    FeedbackSubmissionResponse,
-    MembershipCreateRequest,
-    MembershipManualSaleRequest,
-    MembershipManualSaleResponse,
-    MembershipResponse,
+    ExpenseCategoryPoint,
+    MobileMembershipWalletResponse,
+    MobilePaymentHistoryItemResponse,
+    MobilePushPreviewRequest,
     MobileSupportInteractionCreateRequest,
+    MobileWalletMembershipSummaryResponse,
     NotificationBroadcastRecipientResponse,
     NotificationBroadcastRequest,
     NotificationBroadcastResponse,
-    MobilePushPreviewRequest,
-    MobilePaymentHistoryItemResponse,
-    MembershipUpdateRequest,
-    MobileMembershipWalletResponse,
-    MobileWalletMembershipSummaryResponse,
     NotificationCreateRequest,
     NotificationDispatchResponse,
     NotificationResponse,
@@ -100,29 +90,28 @@ from app.schemas.platform import (
     ProgramExerciseLibraryItemCreateRequest,
     ProgramExerciseLibraryItemResponse,
     ProgressPhotoResponse,
-    PromoCodeCreate,
-    PromoCodeUpdate,
-    PromoCodeResponse,
-    PromoCodeValidateRequest,
-    PromoCodeValidateResponse,
     PushDeliveryResponse,
     PushSubscriptionCreateRequest,
     PushSubscriptionResponse,
-    ReportsOverviewResponse,
     ReportSeriesPoint,
-    TopProductPoint,
-    ExpenseCategoryPoint,
-    SupportInteractionCreateRequest,
+    ReportsOverviewResponse,
     SupportInteractionResponse,
-    SupportInteractionUpdateRequest,
     TenantSettingsResponse,
     TenantSettingsUpdateRequest,
+    TopProductPoint,
     TrainingProgramCreateRequest,
     TrainingProgramEnrollmentResponse,
     TrainingProgramResponse,
     TrainingProgramUpdateRequest,
     WebPushConfigResponse,
 )
+from app.services.branding_service import (
+    DEFAULT_PRIMARY_COLOR,
+    DEFAULT_SECONDARY_COLOR,
+    coerce_brand_color,
+    normalize_brand_color,
+)
+from app.services.calendar_export_service import build_member_calendar_ical
 from app.services.campaign_service import (
     CampaignDispatchRecipientResult,
     DISPATCH_TRIGGER_MANUAL,
@@ -132,34 +121,22 @@ from app.services.campaign_service import (
     parse_segment_filter,
     serialize_segment_filter,
 )
-from app.services.calendar_export_service import build_member_calendar_ical
-from app.services.branding_service import (
-    DEFAULT_PRIMARY_COLOR,
-    DEFAULT_SECONDARY_COLOR,
-    coerce_brand_color,
-    normalize_brand_color,
-)
+from app.services.class_service import build_gym_class_responses
+from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
 from app.services.membership_sale_service import (
-    apply_payment_membership_snapshot,
-    create_manual_membership_sale,
     membership_status_value,
     resolve_membership_timeline,
     sync_membership_timeline,
 )
-from app.services.push_notification_service import NotificationDispatchResult, create_and_dispatch_notification
-from app.services.push_notification_service import get_notification_dispatch_result, refresh_push_receipts
-from app.services.push_notification_service import record_notification_engagement
-from app.services.custom_domain_service import domains_conflict, extract_hostname, normalize_custom_domain
-from app.services.user_account_service import purge_user_account
-from app.services.promo_code_service import resolve_tenant_promo_pricing
-from app.services.support_contact_service import resolve_tenant_support_contacts
-from app.services.tenant_quota_service import assert_can_create_branch
-from app.integrations.payments.webpay_service import (
-    WEBPAY_DEFAULT_INTEGRATION_API_KEY,
-    WEBPAY_DEFAULT_INTEGRATION_COMMERCE_CODE,
-    WebpayCredentials,
-    webpay_service,
+from app.services.push_notification_service import (
+    NotificationDispatchResult,
+    create_and_dispatch_notification,
+    get_notification_dispatch_result,
+    record_notification_engagement,
+    refresh_push_receipts,
 )
+from app.services.support_contact_service import resolve_tenant_support_contacts
+from app.services.user_account_service import purge_user_account
 from app.services.webpay_checkout_service import (
     build_webpay_redirect_url,
     build_webpay_return_url,
@@ -169,25 +146,37 @@ from app.services.webpay_checkout_service import (
     sanitize_payment_account_metadata,
 )
 
-# Routers extracted to sub-modules (Phase A)
-from .branches import branches_router
-from .upload import upload_router
-from .promo_codes import promo_codes_router
-from .progress import progress_router
-from .personal_records import personal_records_router
+# Routers extracted to sub-modules (Phase A + B). Re-exported so main.py
+# keeps importing them as `operations.<name>_router`.
+from .branches import branches_router  # noqa: F401
+from .feedback import feedback_router  # noqa: F401
+from .memberships import memberships_router  # noqa: F401
+from .personal_records import personal_records_router  # noqa: F401
+from .progress import progress_router  # noqa: F401
+from .promo_codes import promo_codes_router  # noqa: F401
+from .support import support_router  # noqa: F401
+from .upload import upload_router  # noqa: F401
 
 # Shared helpers and constants used by remaining in-place routers
 from ._common import (
+    _JPEG_MAGIC,
+    _MAX_PHOTO_BYTES,
+    _MAX_PHOTOS_PER_USER,
+    _PHOTO_ALLOWED_TYPES,
     _PNG_MAGIC,
     _UPLOADS_ROOT,
+    _WEBP_ID,
+    _WEBP_RIFF,
+    _compress_photo,
+    _get_support_related_users,
+    _loads_dict,
+    _loads_list,
     _measurement_to_response,
     _pr_to_response,
+    _support_payload,
 )
 
-memberships_router = APIRouter(prefix="/memberships", tags=["Memberships"])
 campaigns_router = APIRouter(prefix="/campaigns", tags=["Campaigns"])
-support_router = APIRouter(prefix="/support/interactions", tags=["Support"])
-feedback_router = APIRouter(prefix="/feedback/submissions", tags=["Feedback"])
 programs_router = APIRouter(prefix="/programs", tags=["Programs"])
 
 
@@ -209,20 +198,6 @@ payment_accounts_router = APIRouter(prefix="/payment-provider/accounts", tags=["
 mobile_router = APIRouter(prefix="/mobile", tags=["Mobile"])
 settings = get_settings()
 logger = structlog.get_logger()
-_SUPPORT_STAFF_ROLES = (
-    UserRole.OWNER,
-    UserRole.ADMIN,
-    UserRole.RECEPTION,
-    UserRole.TRAINER,
-    UserRole.MARKETING,
-)
-_FEEDBACK_CATEGORY_LABELS: dict[str, str] = {
-    "suggestion": "Sugerencia",
-    "improvement": "Solicitud de mejora",
-    "problem": "Problema",
-    "other": "Otro",
-}
-_MAX_FEEDBACK_MESSAGE_CHARS = 5000
 _PROGRAM_EXERCISE_LIBRARY_FEATURE_KEY = "program_exercise_library"
 _DEFAULT_PROGRAM_EXERCISE_GROUPS: list[tuple[str, str]] = [
     ("Pecho", "Press banca"),
@@ -295,26 +270,6 @@ _DEFAULT_PROGRAM_EXERCISE_LIBRARY = [
     }
     for index, (group, name) in enumerate(_DEFAULT_PROGRAM_EXERCISE_GROUPS, start=1)
 ]
-
-
-def _loads_dict(raw_value: Optional[str]) -> dict[str, Any]:
-    if not raw_value:
-        return {}
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _loads_list(raw_value: Optional[str]) -> list[Any]:
-    if not raw_value:
-        return []
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return []
-    return parsed if isinstance(parsed, list) else []
 
 
 def _validate_payment_account_configuration(
@@ -552,37 +507,6 @@ def _campaign_payload(campaign: Campaign) -> CampaignResponse:
     )
 
 
-def _membership_payload(
-    membership: Membership,
-    user: Optional[User],
-    plan: Optional[Plan],
-    payment: Optional[Payment] = None,
-) -> MembershipResponse:
-    return MembershipResponse(
-        id=membership.id,
-        user_id=membership.user_id,
-        plan_id=membership.plan_id,
-        status=membership_status_value(membership.status) or "pending",
-        starts_at=membership.starts_at,
-        expires_at=membership.expires_at,
-        auto_renew=membership.auto_renew,
-        frozen_until=membership.frozen_until,
-        notes=membership.notes,
-        stripe_subscription_id=membership.stripe_subscription_id,
-        previous_membership_id=membership.previous_membership_id,
-        sale_source=membership.sale_source,
-        payment_id=payment.id if payment else None,
-        payment_amount=payment.amount if payment else None,
-        payment_currency=payment.currency if payment else None,
-        payment_method=membership_status_value(payment.method) if payment else None,
-        payment_status=membership_status_value(payment.status) if payment else None,
-        paid_at=payment.paid_at if payment else None,
-        created_at=membership.created_at,
-        user_name=user.full_name if user else None,
-        plan_name=plan.name if plan else None,
-    )
-
-
 def _wallet_membership_summary(
     membership: Optional[Membership],
     plan: Optional[Plan],
@@ -778,228 +702,6 @@ def _program_enrollment_payload(
     )
 
 
-def _support_payload(
-    interaction: SupportInteraction,
-    client: Optional[User],
-    handler: Optional[User],
-) -> SupportInteractionResponse:
-    return SupportInteractionResponse(
-        id=interaction.id,
-        user_id=interaction.user_id,
-        channel=str(interaction.channel.value if hasattr(interaction.channel, "value") else interaction.channel),
-        subject=interaction.subject,
-        notes=interaction.notes,
-        resolved=interaction.resolved,
-        handled_by=interaction.handled_by,
-        created_at=interaction.created_at,
-        client_name=client.full_name if client else None,
-        handler_name=handler.full_name if handler else None,
-    )
-
-
-def _build_upload_url(request: Request, file_path: str | None) -> str | None:
-    if not file_path:
-        return None
-    return f"{str(request.base_url).rstrip('/')}{file_path}"
-
-
-def _feedback_payload(
-    submission: FeedbackSubmission,
-    request: Request,
-    creator: Optional[User],
-) -> FeedbackSubmissionResponse:
-    return FeedbackSubmissionResponse(
-        id=submission.id,
-        category=str(submission.category.value if hasattr(submission.category, "value") else submission.category),
-        message=submission.message,
-        image_url=_build_upload_url(request, submission.image_path),
-        created_at=submission.created_at,
-        created_by=submission.created_by,
-        created_by_name=creator.full_name if creator else None,
-    )
-
-
-async def _get_support_related_users(
-    db: AsyncSession,
-    interactions: list[SupportInteraction],
-) -> dict[UUID, User]:
-    related_ids = [value for item in interactions for value in (item.user_id, item.handled_by) if value]
-    if not related_ids:
-        return {}
-
-    result = await db.execute(select(User).where(User.id.in_(related_ids)))
-    return {user.id: user for user in result.scalars().all()}
-
-
-async def _get_feedback_related_users(
-    db: AsyncSession,
-    submissions: list[FeedbackSubmission],
-) -> dict[UUID, User]:
-    related_ids = [item.created_by for item in submissions if item.created_by]
-    if not related_ids:
-        return {}
-
-    result = await db.execute(select(User).where(User.id.in_(related_ids)))
-    return {user.id: user for user in result.scalars().all()}
-
-
-async def _get_support_client(
-    db: AsyncSession,
-    tenant_id: UUID,
-    user_id: UUID | None,
-) -> User | None:
-    if user_id is None:
-        return None
-
-    return (
-        await db.execute(
-            select(User).where(
-                User.id == user_id,
-                User.tenant_id == tenant_id,
-                User.role == UserRole.CLIENT,
-            )
-        )
-    ).scalar_one_or_none()
-
-
-def _normalize_feedback_category(category: str) -> str:
-    normalized = category.strip().lower()
-    if normalized not in _FEEDBACK_CATEGORY_LABELS:
-        raise HTTPException(
-            status_code=400,
-            detail="La categoría debe ser suggestion, improvement, problem o other.",
-        )
-    return normalized
-
-
-def _normalize_feedback_message(message: str) -> str:
-    normalized = message.strip()
-    if not normalized:
-        raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
-    if len(normalized) > _MAX_FEEDBACK_MESSAGE_CHARS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"El mensaje supera el límite de {_MAX_FEEDBACK_MESSAGE_CHARS} caracteres.",
-        )
-    return normalized
-
-
-async def _store_feedback_image(
-    *,
-    file: UploadFile,
-    tenant_id: UUID,
-) -> str:
-    content_type = file.content_type or ""
-    if content_type not in _PHOTO_ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail="Solo se aceptan imágenes JPEG, PNG o WebP.")
-
-    raw = await file.read()
-    if len(raw) > _MAX_PHOTO_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el tamaño máximo de 15 MB.")
-
-    is_valid_image = (
-        raw[:3] == _JPEG_MAGIC
-        or raw[:4] == _PNG_MAGIC
-        or (len(raw) >= 12 and raw[:4] == _WEBP_RIFF and raw[8:12] == _WEBP_ID)
-    )
-    if not is_valid_image:
-        raise HTTPException(status_code=400, detail="El archivo no es una imagen válida.")
-
-    try:
-        data = await asyncio.to_thread(_compress_photo, raw)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    feedback_dir = _UPLOADS_ROOT / "feedback" / str(tenant_id)
-    feedback_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"{uuid4().hex}.jpg"
-    dest = feedback_dir / filename
-    dest.write_bytes(data)
-
-    return f"/uploads/feedback/{tenant_id}/{filename}"
-
-
-def _resolve_feedback_recipient_email() -> str:
-    return settings.FEEDBACK_TO_EMAIL.strip() or settings.SUPERADMIN_EMAIL.strip()
-
-
-def _is_missing_feedback_table_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return "feedback_submissions" in message and ("does not exist" in message or "undefinedtableerror" in message)
-
-
-def _raise_feedback_unavailable() -> None:
-    raise HTTPException(
-        status_code=503,
-        detail="El módulo Feedback aún no está disponible en esta instalación porque falta ejecutar la migración de base de datos.",
-    )
-
-
-async def _send_feedback_submission_notification(
-    *,
-    request: Request,
-    submission: FeedbackSubmission,
-    tenant_name: str,
-    creator: User | None,
-) -> None:
-    recipient_email = _resolve_feedback_recipient_email()
-    if not recipient_email:
-        return
-
-    category_key = str(submission.category.value if hasattr(submission.category, "value") else submission.category)
-    category_label = _FEEDBACK_CATEGORY_LABELS.get(category_key, category_key)
-    creator_name = creator.full_name if creator and creator.full_name else "Equipo del gimnasio"
-    creator_email = creator.email if creator else None
-    image_url = _build_upload_url(request, submission.image_path)
-
-    try:
-        sent = await email_service.send_feedback_submission(
-            to_email=recipient_email,
-            gym_name=tenant_name,
-            author_name=creator_name,
-            author_email=creator_email,
-            category_label=category_label,
-            message=submission.message,
-            image_url=image_url,
-        )
-        if not sent:
-            logger.warning(
-                "feedback_email_not_sent",
-                tenant_name=tenant_name,
-                submission_id=str(submission.id),
-                recipient=recipient_email,
-            )
-    except Exception as exc:
-        logger.warning(
-            "feedback_email_failed",
-            tenant_name=tenant_name,
-            submission_id=str(submission.id),
-            recipient=recipient_email,
-            exc_info=exc,
-        )
-
-
-async def _get_support_handler(
-    db: AsyncSession,
-    tenant_id: UUID,
-    user_id: UUID | None,
-) -> User | None:
-    if user_id is None:
-        return None
-
-    return (
-        await db.execute(
-            select(User).where(
-                User.id == user_id,
-                User.tenant_id == tenant_id,
-                User.role.in_(_SUPPORT_STAFF_ROLES),
-                User.is_active == True,
-            )
-        )
-    ).scalar_one_or_none()
-
-
 def _payment_account_payload(account: TenantPaymentProviderAccount) -> PaymentProviderAccountResponse:
     return PaymentProviderAccountResponse(
         id=account.id,
@@ -1041,186 +743,6 @@ def _mobile_payment_payload(
         membership_expires_at_snapshot=payment.membership_expires_at_snapshot or (membership.expires_at if membership else None),
         membership_status_snapshot=payment.membership_status_snapshot or membership_status_value(membership.status if membership else None),
     )
-
-
-@memberships_router.get("", response_model=PaginatedResponse)
-async def list_memberships(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    status_filter: Optional[str] = Query(None, alias="status"),
-    user_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception", "trainer")),
-):
-    query = select(Membership).where(Membership.tenant_id == ctx.tenant_id)
-    count_query = select(func.count()).select_from(Membership).where(Membership.tenant_id == ctx.tenant_id)
-
-    if status_filter:
-        query = query.where(Membership.status == status_filter)
-        count_query = count_query.where(Membership.status == status_filter)
-    if user_id:
-        query = query.where(Membership.user_id == user_id)
-        count_query = count_query.where(Membership.user_id == user_id)
-
-    total = (await db.execute(count_query)).scalar() or 0
-    memberships = (
-        await db.execute(
-            query.order_by(Membership.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
-        )
-    ).scalars().all()
-
-    user_ids = [membership.user_id for membership in memberships]
-    plan_ids = [membership.plan_id for membership in memberships]
-    users = {
-        user.id: user
-        for user in (
-            await db.execute(select(User).where(User.id.in_(user_ids)))
-        ).scalars().all()
-    } if user_ids else {}
-    plans = {
-        plan.id: plan
-        for plan in (
-            await db.execute(select(Plan).where(Plan.id.in_(plan_ids)))
-        ).scalars().all()
-    } if plan_ids else {}
-
-    return PaginatedResponse(
-        items=[_membership_payload(item, users.get(item.user_id), plans.get(item.plan_id)) for item in memberships],
-        total=total,
-        page=page,
-        per_page=per_page,
-        pages=(total + per_page - 1) // per_page,
-    )
-
-
-@memberships_router.post("", response_model=MembershipResponse, status_code=201)
-async def create_membership(
-    data: MembershipCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
-):
-    user = await db.get(User, data.user_id)
-    if not user or user.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    plan = await db.get(Plan, data.plan_id)
-    if not plan or plan.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Plan no encontrado")
-
-    expires_at = data.expires_at
-    if expires_at is None and plan.duration_days:
-        expires_at = data.starts_at + timedelta(days=plan.duration_days)
-
-    membership = Membership(
-        tenant_id=ctx.tenant_id,
-        user_id=data.user_id,
-        plan_id=data.plan_id,
-        starts_at=data.starts_at,
-        expires_at=expires_at,
-        status=data.status,
-        auto_renew=data.auto_renew,
-    )
-    db.add(membership)
-    await db.flush()
-    await db.refresh(membership)
-    return _membership_payload(membership, user, plan)
-
-
-@memberships_router.post("/manual-sale", response_model=MembershipManualSaleResponse, status_code=201)
-async def create_manual_membership_sale_endpoint(
-    data: MembershipManualSaleRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
-):
-    if not ctx.tenant:
-        raise HTTPException(status_code=403, detail="No hay tenant activo para registrar ventas manuales")
-
-    user = await db.get(User, data.user_id)
-    if not user or user.tenant_id != ctx.tenant_id or user.role != UserRole.CLIENT:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    plan = await db.get(Plan, data.plan_id)
-    if not plan or plan.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Plan no encontrado")
-    if not plan.is_active:
-        raise HTTPException(status_code=400, detail="Solo puedes asignar planes activos")
-
-    try:
-        result = await create_manual_membership_sale(
-            db,
-            tenant=ctx.tenant,
-            client=user,
-            plan=plan,
-            starts_at=data.starts_at,
-            expires_at=data.expires_at,
-            payment_method=data.payment_method,
-            amount=data.amount,
-            currency=data.currency,
-            description=data.description,
-            notes=data.notes,
-            auto_renew=data.auto_renew,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    effective_plan = None
-    if result.effective_membership:
-        effective_plan = plan if result.effective_membership.plan_id == plan.id else await db.get(Plan, result.effective_membership.plan_id)
-    scheduled_plan = None
-    if result.scheduled_membership:
-        scheduled_plan = plan if result.scheduled_membership.plan_id == plan.id else await db.get(Plan, result.scheduled_membership.plan_id)
-
-    return MembershipManualSaleResponse(
-        membership=_membership_payload(result.membership, user, plan, result.payment),
-        payment=result.payment,
-        replaced_membership_ids=result.replaced_membership_ids,
-        effective_membership=(
-            _membership_payload(
-                result.effective_membership,
-                user,
-                effective_plan,
-                result.payment if result.effective_membership and result.payment.membership_id == result.effective_membership.id else None,
-            )
-            if result.effective_membership and effective_plan
-            else None
-        ),
-        scheduled_membership=(
-            _membership_payload(
-                result.scheduled_membership,
-                user,
-                scheduled_plan,
-                result.payment if result.scheduled_membership and result.payment.membership_id == result.scheduled_membership.id else None,
-            )
-            if result.scheduled_membership and scheduled_plan
-            else None
-        ),
-        scheduled=result.scheduled,
-    )
-
-
-@memberships_router.patch("/{membership_id}", response_model=MembershipResponse)
-async def update_membership(
-    membership_id: UUID,
-    data: MembershipUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
-):
-    membership = await db.get(Membership, membership_id)
-    if not membership or membership.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Membresía no encontrada")
-
-    for field, value in data.model_dump(exclude_unset=True).items():
-        setattr(membership, field, value)
-
-    await db.flush()
-    await db.refresh(membership)
-    user = await db.get(User, membership.user_id)
-    plan = await db.get(Plan, membership.plan_id)
-    return _membership_payload(membership, user, plan)
 
 
 @campaigns_router.get("", response_model=PaginatedResponse)
@@ -1395,189 +917,6 @@ async def update_campaign(
     await db.flush()
     await db.refresh(campaign)
     return _campaign_payload(campaign)
-
-
-@support_router.get("", response_model=PaginatedResponse)
-async def list_support_interactions(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    resolved: Optional[bool] = None,
-    date_from: date | None = Query(None),
-    date_to: date | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
-):
-    if date_from and date_to and date_from > date_to:
-        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser mayor que la fecha final")
-
-    query = select(SupportInteraction).where(SupportInteraction.tenant_id == ctx.tenant_id)
-    count_query = select(func.count()).select_from(SupportInteraction).where(SupportInteraction.tenant_id == ctx.tenant_id)
-    if resolved is not None:
-        query = query.where(SupportInteraction.resolved == resolved)
-        count_query = count_query.where(SupportInteraction.resolved == resolved)
-    if date_from:
-        query = query.where(SupportInteraction.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
-        count_query = count_query.where(SupportInteraction.created_at >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
-    if date_to:
-        query = query.where(SupportInteraction.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
-        count_query = count_query.where(SupportInteraction.created_at <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
-
-    total = (await db.execute(count_query)).scalar() or 0
-    interactions = (
-        await db.execute(
-            query.order_by(SupportInteraction.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
-        )
-    ).scalars().all()
-
-    related_users = await _get_support_related_users(db, interactions)
-
-    return PaginatedResponse(
-        items=[
-            _support_payload(item, related_users.get(item.user_id), related_users.get(item.handled_by))
-            for item in interactions
-        ],
-        total=total,
-        page=page,
-        per_page=per_page,
-        pages=(total + per_page - 1) // per_page,
-    )
-
-
-@support_router.post("", response_model=SupportInteractionResponse, status_code=201)
-async def create_support_interaction(
-    data: SupportInteractionCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user: User = Depends(require_roles("owner", "admin", "reception")),
-):
-    client = await _get_support_client(db, ctx.tenant_id, data.user_id)
-    if data.user_id and client is None:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-    handler = await _get_support_handler(db, ctx.tenant_id, data.handled_by)
-    if data.handled_by and handler is None:
-        raise HTTPException(status_code=404, detail="Responsable no encontrado")
-
-    interaction = SupportInteraction(
-        tenant_id=ctx.tenant_id,
-        user_id=data.user_id,
-        channel=data.channel,
-        subject=data.subject,
-        notes=data.notes,
-        handled_by=data.handled_by,
-        resolved=data.resolved,
-    )
-    db.add(interaction)
-    await db.flush()
-    await db.refresh(interaction)
-
-    return _support_payload(interaction, client, handler)
-
-
-@support_router.patch("/{interaction_id}", response_model=SupportInteractionResponse)
-async def update_support_interaction(
-    interaction_id: UUID,
-    data: SupportInteractionUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
-):
-    interaction = await db.get(SupportInteraction, interaction_id)
-    if not interaction or interaction.tenant_id != ctx.tenant_id:
-        raise HTTPException(status_code=404, detail="Interacción de soporte no encontrada")
-
-    payload = data.model_dump(exclude_unset=True)
-
-    if "handled_by" in payload:
-        handler = await _get_support_handler(db, ctx.tenant_id, payload["handled_by"])
-        if payload["handled_by"] and handler is None:
-            raise HTTPException(status_code=404, detail="Responsable no encontrado")
-    else:
-        handler = await _get_support_handler(db, ctx.tenant_id, interaction.handled_by)
-
-    for field, value in payload.items():
-        setattr(interaction, field, value)
-
-    await db.flush()
-    await db.refresh(interaction)
-    client = await _get_support_client(db, ctx.tenant_id, interaction.user_id)
-    return _support_payload(interaction, client, handler)
-
-
-@feedback_router.get("", response_model=list[FeedbackSubmissionResponse])
-async def list_feedback_submissions(
-    request: Request,
-    limit: int = Query(12, ge=1, le=50),
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    _user=Depends(require_roles("owner", "admin", "reception")),
-):
-    if ctx.tenant_id is None:
-        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
-
-    try:
-        submissions = (
-            await db.execute(
-                select(FeedbackSubmission)
-                .where(FeedbackSubmission.tenant_id == ctx.tenant_id)
-                .order_by(FeedbackSubmission.created_at.desc())
-                .limit(limit)
-            )
-        ).scalars().all()
-    except ProgrammingError as exc:
-        if _is_missing_feedback_table_error(exc):
-            _raise_feedback_unavailable()
-        raise
-
-    related_users = await _get_feedback_related_users(db, submissions)
-    return [
-        _feedback_payload(item, request, related_users.get(item.created_by))
-        for item in submissions
-    ]
-
-
-@feedback_router.post("", response_model=FeedbackSubmissionResponse, status_code=201)
-async def create_feedback_submission(
-    request: Request,
-    category: str = Form(...),
-    message: str = Form(...),
-    image: UploadFile | None = File(default=None),
-    db: AsyncSession = Depends(get_db),
-    ctx: TenantContext = Depends(get_tenant_context),
-    current_user: User = Depends(require_roles("owner", "admin", "reception")),
-):
-    if ctx.tenant_id is None or ctx.tenant is None:
-        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
-
-    normalized_category = _normalize_feedback_category(category)
-    normalized_message = _normalize_feedback_message(message)
-    image_path = await _store_feedback_image(file=image, tenant_id=ctx.tenant_id) if image is not None else None
-
-    submission = FeedbackSubmission(
-        tenant_id=ctx.tenant_id,
-        created_by=current_user.id,
-        category=normalized_category,
-        message=normalized_message,
-        image_path=image_path,
-    )
-    db.add(submission)
-    try:
-        await db.flush()
-    except ProgrammingError as exc:
-        if _is_missing_feedback_table_error(exc):
-            _raise_feedback_unavailable()
-        raise
-    await db.refresh(submission)
-
-    await _send_feedback_submission_notification(
-        request=request,
-        submission=submission,
-        tenant_name=ctx.tenant.name,
-        creator=current_user,
-    )
-
-    return _feedback_payload(submission, request, current_user)
 
 
 # ─── Staff Router ─────────────────────────────────────────────────────────────
@@ -3916,36 +3255,6 @@ async def delete_personal_record(
 
 
 # ─── Progress Photos ──────────────────────────────────────────────────────────
-
-_MAX_PHOTO_BYTES = 15 * 1024 * 1024  # 15 MB raw input limit (compressed output will be ~200-500 KB)
-_MAX_PHOTO_BYTES_COMPRESSED = 1 * 1024 * 1024  # 1 MB target after compression
-_MAX_PHOTOS_PER_USER = 30
-_PHOTO_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
-_JPEG_MAGIC = b"\xff\xd8\xff"
-_WEBP_RIFF = b"RIFF"
-_WEBP_ID = b"WEBP"
-_PHOTO_MAX_SIDE = 1920  # px — longest side after resize
-
-
-def _compress_photo(raw: bytes) -> bytes:
-    """Resize to max 1920px on longest side, re-encode as JPEG at 82% quality.
-
-    Returns compressed JPEG bytes. Raises ValueError if the data is not a valid image.
-    """
-    import io
-    from PIL import Image, UnidentifiedImageError
-
-    try:
-        img = Image.open(io.BytesIO(raw))
-    except UnidentifiedImageError:
-        raise ValueError("El archivo no es una imagen válida.")
-
-    img = img.convert("RGB")  # strip alpha channel, normalise to RGB
-    img.thumbnail((_PHOTO_MAX_SIDE, _PHOTO_MAX_SIDE), Image.LANCZOS)
-
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=82, optimize=True)
-    return buf.getvalue()
 
 
 def _photo_to_response(p: ProgressPhoto, request: Request) -> ProgressPhotoResponse:
