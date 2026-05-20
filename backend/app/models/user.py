@@ -51,6 +51,12 @@ class User(Base):
     tags: Mapped[Optional[str]] = mapped_column(Text)  # JSON array
     internal_notes: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Member referral program (Fase 6.4)
+    referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, index=True)
+    referrer_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+
     # Auth
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

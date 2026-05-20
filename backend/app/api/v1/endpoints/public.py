@@ -6,6 +6,7 @@ from decimal import Decimal
 from html import escape
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+import uuid as uuid_lib
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -396,6 +397,7 @@ async def _find_or_create_checkout_user(
     customer_phone: str | None,
     customer_date_of_birth: date | None = None,
     customer_password: str | None = None,
+    referral_code: str | None = None,
 ) -> tuple[User, bool]:
     result = await db.execute(select(User).where(User.email == customer_email))
     user = result.scalar_one_or_none()
@@ -425,6 +427,16 @@ async def _find_or_create_checkout_user(
 
     first_name, last_name = _split_customer_name(customer_name)
     initial_password = customer_password or f"Nexo{uuid4().hex}Aa1"
+
+    # Programa de referidos: si vino con ?ref=CODE válido del mismo tenant,
+    # asociar al referrer. No bloquea registro si el código no existe.
+    resolved_referrer_id: uuid_lib.UUID | None = None
+    if referral_code:
+        from app.services.referral_service import resolve_referrer_by_code
+        referrer = await resolve_referrer_by_code(db, tenant_id=tenant.id, code=referral_code)
+        if referrer:
+            resolved_referrer_id = referrer.id
+
     user = User(
         tenant_id=tenant.id,
         email=customer_email,
@@ -436,6 +448,7 @@ async def _find_or_create_checkout_user(
         role=UserRole.CLIENT,
         is_active=True,
         is_verified=True,
+        referrer_user_id=resolved_referrer_id,
     )
     db.add(user)
     await db.flush()
@@ -1118,6 +1131,7 @@ async def _create_public_checkout_session_for_tenant(
             customer_phone=data.customer_phone,
             customer_date_of_birth=data.customer_date_of_birth,
             customer_password=data.customer_password,
+            referral_code=data.referral_code,
         )
 
     session_reference = f"{tenant.slug}-{plan.id}-{uuid4().hex[:10]}"

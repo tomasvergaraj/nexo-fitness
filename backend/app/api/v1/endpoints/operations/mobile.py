@@ -54,6 +54,7 @@ from app.schemas.platform import (
     WebPushConfigResponse,
 )
 from app.services.calendar_export_service import build_member_calendar_ical
+from app.services.custom_domain_service import build_storefront_url
 from app.services.membership_sale_service import (
     membership_status_value,
     sync_membership_timeline,
@@ -204,6 +205,50 @@ def _photo_to_response(p: ProgressPhoto, request: Request) -> ProgressPhotoRespo
 
 class MobileMembershipUpdateRequest(BaseModel):
     auto_renew: Optional[bool] = None
+
+
+class MobileReferralResponse(BaseModel):
+    code: Optional[str]
+    share_url: Optional[str]
+    referred_count: int
+
+
+@mobile_router.get("/refer", response_model=MobileReferralResponse)
+async def get_mobile_refer(
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Devuelve el código de referido del cliente actual + URL para compartir.
+
+    Si todavía no tiene código (cliente sin pagos completados), retorna
+    code=null. El código se genera al primer pago COMPLETED via hook en
+    membership_sale_service.
+    """
+    if tenant is None:
+        raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
+
+    if current_user.referral_code is None:
+        return MobileReferralResponse(code=None, share_url=None, referred_count=0)
+
+    from app.services.referral_service import get_referral_stats
+
+    settings = get_settings()
+    storefront_base = build_storefront_url(
+        frontend_url=settings.FRONTEND_URL,
+        tenant_slug=tenant.slug,
+        custom_domain=tenant.custom_domain,
+    )
+    stats = await get_referral_stats(
+        db,
+        user=current_user,
+        storefront_base_url=storefront_base,
+    )
+    return MobileReferralResponse(
+        code=stats.code,
+        share_url=stats.share_url,
+        referred_count=stats.referred_count,
+    )
 
 
 @mobile_router.get("/wallet", response_model=MobileMembershipWalletResponse)

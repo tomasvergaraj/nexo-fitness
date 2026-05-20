@@ -434,6 +434,7 @@ export const mobileApi = {
   registerPushSubscription: (data: Record<string, unknown>) => api.post('/mobile/push-subscriptions', data),
   updateMembership: (data: { auto_renew?: boolean }) => api.patch('/mobile/membership', data),
   downloadCalendar: () => api.get('/mobile/calendar.ics', { responseType: 'blob' }),
+  getReferral: () => api.get<{ code: string | null; share_url: string | null; referred_count: number }>('/mobile/refer'),
   listMeasurements: () => api.get('/mobile/progress'),
   createMeasurement: (data: Record<string, unknown>) => api.post('/mobile/progress', data),
   deleteMeasurement: (id: string) => api.delete(`/mobile/progress/${id}`),

@@ -17,6 +17,21 @@ export default function StorefrontPage() {
   const checkout = useCheckout(slug);
   const [ctaVisible, setCtaVisible] = useState(true);
 
+  // Programa de referidos: si llegan a la landing del storefront con
+  // ?ref=CODE, lo guardamos en localStorage para que el flujo de
+  // checkout (useCheckout.pay) lo envíe al backend al inscribirse.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get('ref');
+      if (ref && ref.trim()) {
+        window.localStorage.setItem('nexofitness_referral_code', ref.trim());
+      }
+    } catch {
+      /* sin window.localStorage: ignorar silenciosamente */
+    }
+  }, []);
+
   useEffect(() => {
     const onScroll = () => {
       const plans = document.getElementById('sf-plans');

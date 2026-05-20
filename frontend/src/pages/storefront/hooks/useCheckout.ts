@@ -159,6 +159,18 @@ export function useCheckout(slug: string) {
         payload.promo_code_id = state.promoResult.promo_code_id;
       }
 
+      // Programa de referidos: si llegaste desde un link ?ref=CODE,
+      // el código quedó guardado en localStorage. Lo enviamos en el
+      // checkout para asociar este nuevo cliente al referrer.
+      try {
+        const refCode = window.localStorage.getItem('nexofitness_referral_code');
+        if (refCode && refCode.trim()) {
+          payload.referral_code = refCode.trim();
+        }
+      } catch {
+        /* localStorage no disponible (modo incógnito muy restrictivo): ignorar */
+      }
+
       const res = isCustom
         ? await publicApi.createStorefrontCheckoutSession(payload)
         : await publicApi.createCheckoutSession(slug, payload);

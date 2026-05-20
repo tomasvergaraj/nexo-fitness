@@ -1,15 +1,18 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   Bell,
   CalendarDays,
+  Copy,
   Download,
+  Gift,
   LifeBuoy,
   Mail,
   Moon,
   Pencil,
   Phone,
+  Share2,
   Sun,
   Ticket,
   UserRound,
@@ -383,6 +386,9 @@ export default function ProfileTab() {
       {/* ══ Right column ══════════════════════════════════════════════════════ */}
       <div className="space-y-4">
 
+        {/* ── Panel: Invita y gana ───────────────────────────────────────── */}
+        <ReferralPanel brandGradient={brandGradient} />
+
         {/* ── Panel: Ajustes ─────────────────────────────────────────────── */}
         <Panel title="Ajustes">
           <div className="space-y-2.5">
@@ -584,5 +590,126 @@ export default function ProfileTab() {
         </Panel>
       </div>
     </motion.div>
+  );
+}
+
+
+function ReferralPanel({ brandGradient }: { brandGradient: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['member-referral'],
+    queryFn: async () => (await mobileApi.getReferral()).data,
+    staleTime: 60_000,
+  });
+
+  // Aún sin código (cliente sin pagos completados todavía).
+  if (!isLoading && !data?.code) {
+    return (
+      <Panel title="Invita y gana">
+        <div className="flex items-start gap-3">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white shadow-sm"
+            style={{ background: brandGradient }}
+          >
+            <Gift size={18} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-surface-900 dark:text-white">
+              Tu código se activa con tu primera compra
+            </p>
+            <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
+              Cuando completes tu primer pago vas a poder invitar amigos con un link personal y ganar
+              beneficios cuando se inscriban.
+            </p>
+          </div>
+        </div>
+      </Panel>
+    );
+  }
+
+  if (isLoading || !data?.code || !data.share_url) {
+    return (
+      <Panel title="Invita y gana">
+        <p className="text-sm text-surface-500 dark:text-surface-400">Cargando…</p>
+      </Panel>
+    );
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(data.share_url!);
+      toast.success('Link copiado al portapapeles');
+    } catch {
+      toast.error('No se pudo copiar el link. Cópialo manualmente.');
+    }
+  };
+
+  const handleShare = async () => {
+    if (!navigator.share) {
+      handleCopy();
+      return;
+    }
+    try {
+      await navigator.share({
+        title: 'Te invito a mi gimnasio',
+        text: 'Te recomiendo este gimnasio. Inscríbete con mi código y consigue tu primera clase con beneficio.',
+        url: data.share_url!,
+      });
+    } catch {
+      // El usuario canceló o falló el share API. Sin toast.
+    }
+  };
+
+  return (
+    <Panel title="Invita y gana">
+      <div className="flex items-start gap-3">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white shadow-sm"
+          style={{ background: brandGradient }}
+        >
+          <Gift size={18} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-surface-900 dark:text-white">
+            Comparte tu link y trae amigos
+          </p>
+          <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
+            Tu código es <span className="font-mono font-semibold text-surface-900 dark:text-white">{data.code}</span>.
+            Cuando alguien se inscribe con tu link, hablamos con el equipo del gym para tu beneficio.
+          </p>
+
+          <div className="mt-3 flex items-center gap-2 rounded-2xl border border-surface-200 bg-surface-50/80 px-3 py-2 text-xs dark:border-surface-800 dark:bg-surface-950/30">
+            <span className="min-w-0 flex-1 truncate text-surface-600 dark:text-surface-300">
+              {data.share_url}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="btn-secondary inline-flex items-center gap-1 px-2 py-1 text-xs"
+              aria-label="Copiar link"
+            >
+              <Copy size={12} />
+              Copiar
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleShare}
+            className="btn-primary mt-3 inline-flex w-full items-center justify-center gap-2 text-sm"
+            style={{ background: brandGradient }}
+          >
+            <Share2 size={14} />
+            Compartir
+          </button>
+
+          {data.referred_count > 0 ? (
+            <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
+              Ya {data.referred_count === 1 ? 'invitaste a' : 'invitaron a'} {data.referred_count}{' '}
+              {data.referred_count === 1 ? 'persona' : 'personas'}.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </Panel>
   );
 }

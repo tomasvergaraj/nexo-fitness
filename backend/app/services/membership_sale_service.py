@@ -353,6 +353,16 @@ async def allocate_membership_purchase(
     )
     await db.flush()
 
+    # Programa de referidos: al primer pago COMPLETED del cliente, generar
+    # su referral_code si aún no tiene uno. Idempotente, sin notificar.
+    if resolved_payment_status == PaymentStatus.COMPLETED and not client.referral_code:
+        try:
+            from app.services.referral_service import ensure_user_referral_code
+            await ensure_user_referral_code(db, user=client)
+        except Exception:
+            # Falla del programa de referidos no debe romper la venta.
+            pass
+
     refreshed_state = await sync_membership_timeline(db, tenant_id=tenant.id, user_id=client.id, today=today)
     scheduled = refreshed_state.current_membership is not membership
     effective_membership = refreshed_state.current_membership

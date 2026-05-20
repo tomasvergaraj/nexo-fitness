@@ -737,6 +737,7 @@ class PublicCheckoutSessionRequest(BaseModel):
     cancel_url: Optional[str] = None
     promo_code_id: Optional[UUID] = None
     verification_token: Optional[str] = None
+    referral_code: Optional[str] = Field(default=None, max_length=20)
 
 
 class PublicCheckoutSessionResponse(BaseModel):
