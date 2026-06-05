@@ -20,7 +20,7 @@ export default function GymHero({ profile, onCtaClick }: Props) {
         <div className="sf-aurora-blob sf-aurora-2" />
       </div>
 
-      <div className="sf-container relative z-10 py-20 md:py-28 flex flex-col items-center text-center gap-6">
+      <div className="sf-container relative z-10 py-14 md:py-20 flex flex-col items-center text-center gap-5">
         {/* Logo */}
         {branding.logo_url ? (
           <motion.img
@@ -49,7 +49,7 @@ export default function GymHero({ profile, onCtaClick }: Props) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.1, ease: [0.25, 0.1, 0.25, 1] }}
         >
-          <h1 className="sf-heading text-4xl md:text-5xl lg:text-6xl font-black tracking-tight leading-none">
+          <h1 className="sf-heading text-3xl md:text-4xl lg:text-5xl font-black tracking-tight leading-[1.05] text-balance">
             {headline}
           </h1>
           {description && (

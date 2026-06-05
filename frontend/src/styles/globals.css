@@ -255,11 +255,11 @@
 .sf-text-muted { color: rgba(225,241,248,0.65); }
 .sf-root:not(.dark) .sf-text-muted { color: rgba(6,19,24,0.6); }
 
-.sf-text-subtle { color: rgba(225,241,248,0.35); }
-.sf-root:not(.dark) .sf-text-subtle { color: rgba(6,19,24,0.38); }
+.sf-text-subtle { color: rgba(225,241,248,0.58); }
+.sf-root:not(.dark) .sf-text-subtle { color: rgba(6,19,24,0.56); }
 
-.sf-brand-text { color: var(--gym-brand); }
-.sf-brand-icon { color: var(--gym-brand); }
+.sf-brand-text { color: var(--gym-brand-ink, var(--gym-brand)); }
+.sf-brand-icon { color: var(--gym-brand-ink, var(--gym-brand)); }
 
 .sf-error { color: #f87171; }
 .sf-root:not(.dark) .sf-error { color: #dc2626; }
@@ -283,7 +283,7 @@
 
 /* ── Hero ─────────────────────────────────────────────────── */
 .sf-hero {
-  min-height: 60dvh;
+  min-height: 52dvh;
   background: linear-gradient(160deg,
     rgba(var(--gym-brand-rgb),0.14) 0%,
     transparent 50%,
@@ -298,14 +298,14 @@
   pointer-events: none;
 }
 .sf-aurora-1 {
-  width: 600px; height: 600px;
-  background: radial-gradient(circle, rgba(var(--gym-brand-rgb),0.38), transparent 65%);
+  width: 560px; height: 560px;
+  background: radial-gradient(circle, rgba(var(--gym-brand-rgb),0.24), transparent 65%);
   top: -200px; left: -100px;
   animation: sf-float1 10s ease-in-out infinite;
 }
 .sf-aurora-2 {
-  width: 400px; height: 400px;
-  background: radial-gradient(circle, rgba(var(--gym-brand-rgb),0.22), transparent 65%);
+  width: 380px; height: 380px;
+  background: radial-gradient(circle, rgba(var(--gym-brand-rgb),0.14), transparent 65%);
   bottom: -80px; right: -60px;
   animation: sf-float2 13s ease-in-out infinite;
 }
@@ -323,7 +323,7 @@
 
 .sf-logo-placeholder {
   background: linear-gradient(135deg, var(--gym-brand), var(--gym-brand-2));
-  color: #fff;
+  color: var(--gym-brand-fg, #fff);
 }
 
 /* ── Chips ────────────────────────────────────────────────── */
@@ -337,7 +337,7 @@
   font-weight: 600;
   background: rgba(var(--gym-brand-rgb), 0.12);
   border: 1px solid rgba(var(--gym-brand-rgb), 0.25);
-  color: var(--gym-brand);
+  color: var(--gym-brand-ink, var(--gym-brand));
 }
 .sf-chip-sm {
   display: inline-flex;
@@ -348,7 +348,7 @@
   font-size: 0.68rem;
   font-weight: 600;
   background: rgba(var(--gym-brand-rgb), 0.12);
-  color: var(--gym-brand);
+  color: var(--gym-brand-ink, var(--gym-brand));
 }
 .sf-chip-brand {
   display: inline-flex;
@@ -358,13 +358,13 @@
   font-size: 0.78rem;
   font-weight: 700;
   background: rgba(var(--gym-brand-rgb), 0.16);
-  color: var(--gym-brand);
+  color: var(--gym-brand-ink, var(--gym-brand));
 }
 
 /* ── Badges ───────────────────────────────────────────────── */
 .sf-badge-featured {
   background: linear-gradient(135deg, var(--gym-brand), var(--gym-brand-2));
-  color: #fff;
+  color: var(--gym-brand-fg, #fff);
   font-weight: 700;
   font-size: 0.72rem;
   box-shadow: 0 4px 14px rgba(var(--gym-brand-rgb), 0.4);
@@ -389,8 +389,8 @@
   border-color: rgba(var(--gym-brand-rgb), 0.2);
 }
 .sf-plan-featured {
-  border-color: rgba(var(--gym-brand-rgb), 0.5) !important;
-  box-shadow: 0 0 40px rgba(var(--gym-brand-rgb), 0.18);
+  border-color: rgba(var(--gym-brand-rgb), 0.45) !important;
+  box-shadow: 0 14px 44px -18px rgba(var(--gym-brand-rgb), 0.35);
   background: linear-gradient(160deg,
     rgba(var(--gym-brand-rgb),0.12) 0%,
     rgba(10,28,40,0.85) 60%
@@ -407,33 +407,38 @@
 
 .sf-check-icon {
   background: rgba(var(--gym-brand-rgb), 0.18);
-  color: var(--gym-brand);
+  color: var(--gym-brand-ink, var(--gym-brand));
 }
 
 /* ── Buttons ──────────────────────────────────────────────── */
 .sf-btn-brand {
   background: linear-gradient(135deg, var(--gym-brand), var(--gym-brand-2));
-  color: #fff;
+  color: var(--gym-brand-fg, #fff);
   font-weight: 700;
   border: none;
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.15s;
-  box-shadow: 0 8px 24px rgba(var(--gym-brand-rgb), 0.35);
+  transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+  box-shadow: 0 6px 18px rgba(var(--gym-brand-rgb), 0.22);
 }
-.sf-btn-brand:hover { opacity: 0.92; }
-.sf-btn-brand:disabled { opacity: 0.5; cursor: not-allowed; }
+.sf-btn-brand:hover { opacity: 0.94; box-shadow: 0 8px 22px rgba(var(--gym-brand-rgb), 0.3); }
+.sf-btn-brand:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
+/* Secundario: texto legible (no en color de marca), la marca vive en el borde. */
 .sf-btn-secondary {
-  background: rgba(var(--gym-brand-rgb), 0.1);
-  border: 1.5px solid rgba(var(--gym-brand-rgb), 0.35);
-  color: var(--gym-brand);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.32);
+  color: #f0f8ff;
   font-weight: 700;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
 }
+.sf-root:not(.dark) .sf-btn-secondary {
+  background: rgba(6,19,24,0.025);
+  color: #0a1f2b;
+}
 .sf-btn-secondary:hover {
-  background: rgba(var(--gym-brand-rgb), 0.18);
-  border-color: rgba(var(--gym-brand-rgb), 0.55);
+  background: rgba(var(--gym-brand-rgb), 0.1);
+  border-color: rgba(var(--gym-brand-rgb), 0.6);
 }
 
 /* ── Inputs ───────────────────────────────────────────────── */
@@ -453,8 +458,8 @@
   color: #061318;
 }
 .sf-input:focus { border-color: var(--gym-brand); }
-.sf-input::placeholder { color: rgba(225,241,248,0.3); }
-.sf-root:not(.dark) .sf-input::placeholder { color: rgba(6,19,24,0.3); }
+.sf-input::placeholder { color: rgba(225,241,248,0.5); }
+.sf-root:not(.dark) .sf-input::placeholder { color: rgba(6,19,24,0.5); }
 .sf-input[type="date"] { color-scheme: dark; }
 .sf-root:not(.dark) .sf-input[type="date"] { color-scheme: light; }
 
@@ -544,7 +549,7 @@
 .sf-root:not(.dark) .sf-icon-btn { color: rgba(6,19,24,0.6); }
 .sf-icon-btn:hover {
   background: rgba(var(--gym-brand-rgb), 0.2);
-  color: var(--gym-brand);
+  color: var(--gym-brand-ink, var(--gym-brand));
 }
 
 .sf-progress-active  { background: var(--gym-brand); }
@@ -566,6 +571,26 @@
 .sf-root:not(.dark) .sf-footer { color: rgba(6,19,24,0.45); }
 .sf-footer .sf-border {
   border-top-color: rgba(var(--gym-brand-rgb), 0.15);
+}
+
+/* ── Theme toggle (público) ───────────────────────────────── */
+.sf-theme-toggle {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.28);
+  color: #f0f8ff;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+}
+.sf-theme-toggle:hover {
+  background: rgba(var(--gym-brand-rgb), 0.16);
+  transform: scale(1.06);
+}
+.sf-root:not(.dark) .sf-theme-toggle {
+  background: rgba(255,255,255,0.75);
+  color: #0a1f2b;
+  border-color: rgba(var(--gym-brand-rgb), 0.3);
+  box-shadow: 0 4px 16px rgba(6,19,24,0.12);
 }
 
 /* ── safe-area padding for iOS ────────────────────────────── */

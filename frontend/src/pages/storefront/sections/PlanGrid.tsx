@@ -69,9 +69,9 @@ function PlanCard({ plan, index, checkoutEnabled, onSelect }: PlanCardProps) {
       )}
 
       {/* Plan name + duration */}
-      <div className="flex items-center justify-between gap-2 mb-4">
-        <span className="sf-chip-brand text-sm font-bold px-3 py-1 rounded-full">{plan.name}</span>
-        <span className="sf-text-muted text-xs">{formatDurationLabel(plan.duration_type, plan.duration_days)}</span>
+      <div className="flex items-baseline justify-between gap-3 mb-4">
+        <h3 className="sf-text-strong text-base md:text-lg font-bold tracking-tight">{plan.name}</h3>
+        <span className="sf-text-muted text-xs whitespace-nowrap">{formatDurationLabel(plan.duration_type, plan.duration_days)}</span>
       </div>
 
       {/* Price */}
