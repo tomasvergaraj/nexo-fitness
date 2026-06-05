@@ -192,6 +192,47 @@ export function readableInk(bgHex: string, dark = '#0f172a', light = '#ffffff'):
   return relativeLuminance(bgHex) > 0.18 ? dark : light;
 }
 
+function luminanceFromRgb(r: number, g: number, b: number): number {
+  const lin = [r, g, b].map((c) => {
+    const srgb = c / 255;
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+
+/** WCAG contrast ratio (1–21) between two hex colors. */
+export function contrastRatio(hexA: string, hexB: string): number {
+  const hi = Math.max(relativeLuminance(hexA), relativeLuminance(hexB)) + 0.05;
+  const lo = Math.min(relativeLuminance(hexA), relativeLuminance(hexB)) + 0.05;
+  return hi / lo;
+}
+
+/**
+ * Nudges `brandHex` toward white (on a dark bg) or black (on a light bg) until it
+ * meets `target` contrast against `bgHex`. Only shifts lightness, so brand-colored
+ * text stays on-brand yet readable for any tenant color. Used for brand-as-text.
+ */
+export function ensureReadable(brandHex: string, bgHex: string, target = 4.5): string {
+  const normalized = normalizeHexColor(brandHex);
+  if (!normalized) return brandHex;
+  const [r, g, b] = hexToRgbString(normalized).split(',').map(Number);
+  const bgL = relativeLuminance(bgHex);
+  const bgDark = bgL < 0.5;
+  const toward = bgDark ? 255 : 0;
+  const bgLumPlus = bgL + 0.05;
+  for (let t = 0; t <= 1.0001; t += 0.04) {
+    const rr = Math.round(r + (toward - r) * t);
+    const gg = Math.round(g + (toward - g) * t);
+    const bb = Math.round(b + (toward - b) * t);
+    const L = luminanceFromRgb(rr, gg, bb);
+    const ratio = bgDark ? (L + 0.05) / bgLumPlus : bgLumPlus / (L + 0.05);
+    if (ratio >= target) {
+      return `#${[rr, gg, bb].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+    }
+  }
+  return bgDark ? '#ffffff' : '#000000';
+}
+
 export function parseApiNumber(value: number | string | null | undefined): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {

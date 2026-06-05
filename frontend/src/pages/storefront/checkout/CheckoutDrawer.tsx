@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { X, ChevronLeft } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
@@ -28,6 +28,7 @@ const stepIndex = (step: string) => STEPS.findIndex(s => s.key === step);
 export default function CheckoutDrawer({ profile, checkout }: Props) {
   const { slug = '' } = useParams<{ slug: string }>();
   const { state, close, set } = checkout;
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const plan = profile.featured_plans.find(p => p.id === state.planId);
   const currentIndex = stepIndex(state.step);
@@ -43,6 +44,42 @@ export default function CheckoutDrawer({ profile, checkout }: Props) {
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  // Modal focus management: trap Tab inside the drawer, move focus in on open,
+  // and restore it to the trigger on close (WCAG 2.4.3 / 2.1.2).
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    const focusables = () =>
+      Array.from(
+        panel?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    // If a step input didn't autofocus, focus the first focusable element.
+    if (panel && !panel.contains(document.activeElement)) {
+      focusables()[0]?.focus();
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    panel?.addEventListener('keydown', onKeyDown);
+    return () => {
+      panel?.removeEventListener('keydown', onKeyDown);
+      previouslyFocused?.focus?.();
+    };
   }, []);
 
   const canGoBack = currentIndex > 0;
@@ -64,6 +101,10 @@ export default function CheckoutDrawer({ profile, checkout }: Props) {
 
       {/* Panel — right drawer on md+, bottom sheet on mobile */}
       <motion.div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sf-drawer-title"
         className="sf-drawer fixed z-50 flex flex-col
           bottom-0 left-0 right-0 max-h-[92dvh] rounded-t-3xl
           md:top-0 md:bottom-0 md:left-auto md:right-0 md:w-[440px] md:max-h-none md:rounded-none md:rounded-l-3xl"
@@ -82,7 +123,7 @@ export default function CheckoutDrawer({ profile, checkout }: Props) {
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 flex-shrink-0 sf-drawer-header">
           {canGoBack ? (
-            <button onClick={goBack} className="sf-icon-btn p-1.5 rounded-xl">
+            <button onClick={goBack} aria-label="Volver" className="sf-icon-btn p-1.5 rounded-xl">
               <ChevronLeft className="w-5 h-5" />
             </button>
           ) : (
@@ -92,14 +133,14 @@ export default function CheckoutDrawer({ profile, checkout }: Props) {
           {/* Plan summary pill */}
           {plan && (
             <div className="flex-1 text-center">
-              <p className="sf-text-strong font-bold text-sm leading-tight">{plan.name}</p>
+              <p id="sf-drawer-title" className="sf-text-strong font-bold text-sm leading-tight">{plan.name}</p>
               <p className="sf-text-muted text-xs">
                 {formatCurrency(plan.price, plan.currency)} · {formatDurationLabel(plan.duration_type, plan.duration_days)}
               </p>
             </div>
           )}
 
-          <button onClick={close} className="sf-icon-btn p-1.5 rounded-xl">
+          <button onClick={close} aria-label="Cerrar" className="sf-icon-btn p-1.5 rounded-xl">
             <X className="w-5 h-5" />
           </button>
         </div>

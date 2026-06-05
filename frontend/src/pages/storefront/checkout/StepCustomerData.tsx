@@ -38,8 +38,9 @@ export default function StepCustomerData({ checkout }: Props) {
     >
       {/* Name */}
       <div>
-        <label className="sf-label text-xs font-semibold mb-1.5 block">Nombre completo *</label>
+        <label htmlFor="sf-name" className="sf-label text-xs font-semibold mb-1.5 block">Nombre completo *</label>
         <input
+          id="sf-name"
           type="text"
           autoFocus
           value={state.name}
@@ -51,10 +52,11 @@ export default function StepCustomerData({ checkout }: Props) {
 
       {/* Phone */}
       <div>
-        <label className="sf-label text-xs font-semibold mb-1.5 block">
+        <label htmlFor="sf-phone" className="sf-label text-xs font-semibold mb-1.5 block">
           Teléfono <span className="sf-text-subtle font-normal">(opcional)</span>
         </label>
         <input
+          id="sf-phone"
           type="tel"
           value={state.phone}
           onChange={e => set({ phone: e.target.value })}
@@ -65,10 +67,11 @@ export default function StepCustomerData({ checkout }: Props) {
 
       {/* DOB */}
       <div>
-        <label className="sf-label text-xs font-semibold mb-1.5 block">
+        <label htmlFor="sf-dob" className="sf-label text-xs font-semibold mb-1.5 block">
           Fecha de nacimiento <span className="sf-text-subtle font-normal">(opcional)</span>
         </label>
         <input
+          id="sf-dob"
           type="date"
           value={state.dob}
           onChange={e => set({ dob: e.target.value })}
@@ -79,9 +82,10 @@ export default function StepCustomerData({ checkout }: Props) {
       {/* Password (only for new accounts) */}
       {isNew && (
         <div>
-          <label className="sf-label text-xs font-semibold mb-1.5 block">Contraseña *</label>
+          <label htmlFor="sf-password" className="sf-label text-xs font-semibold mb-1.5 block">Contraseña *</label>
           <div className="relative">
             <input
+              id="sf-password"
               type={showPwd ? 'text' : 'password'}
               value={state.password}
               onChange={e => set({ password: e.target.value, error: '' })}
@@ -91,6 +95,7 @@ export default function StepCustomerData({ checkout }: Props) {
             <button
               type="button"
               onClick={() => setShowPwd(s => !s)}
+              aria-label={showPwd ? 'Ocultar contraseña' : 'Mostrar contraseña'}
               className="absolute right-3 top-1/2 -translate-y-1/2 sf-text-muted hover:sf-text-strong transition-colors"
             >
               {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

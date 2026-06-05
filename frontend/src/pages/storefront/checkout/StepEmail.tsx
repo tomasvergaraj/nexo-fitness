@@ -45,8 +45,9 @@ export default function StepEmail({ checkout }: Props) {
 
         <div className="space-y-3">
           <div>
-            <label className="sf-label text-xs font-semibold mb-1.5 block">Contraseña</label>
+            <label htmlFor="sf-existing-pwd" className="sf-label text-xs font-semibold mb-1.5 block">Contraseña</label>
             <input
+              id="sf-existing-pwd"
               type="password"
               autoFocus
               value={state.existingPassword}
@@ -96,7 +97,7 @@ export default function StepEmail({ checkout }: Props) {
           <p className="sf-text-muted text-xs">Enviamos un código de 6 dígitos a <strong>{state.email}</strong></p>
         </div>
 
-        <div className="flex justify-center gap-2">
+        <div className="flex justify-center gap-1.5" role="group" aria-label="Código de verificación de 6 dígitos">
           {Array.from({ length: 6 }).map((_, i) => (
             <input
               key={i}
@@ -104,10 +105,12 @@ export default function StepEmail({ checkout }: Props) {
               type="text"
               inputMode="numeric"
               maxLength={1}
+              aria-label={`Dígito ${i + 1}`}
+              autoComplete={i === 0 ? 'one-time-code' : 'off'}
               value={state.otpCode[i] ?? ''}
               onChange={e => handleOtpInput(i, e.target.value)}
               onKeyDown={e => handleOtpKey(i, e)}
-              className="sf-otp-input w-10 h-12 text-center text-lg font-bold rounded-xl border sf-border focus:outline-none focus:sf-border-brand"
+              className="sf-otp-input w-full max-w-[2.75rem] h-12 text-center text-lg font-bold rounded-xl border sf-border focus:outline-none focus:sf-border-brand"
             />
           ))}
         </div>
@@ -143,11 +146,12 @@ export default function StepEmail({ checkout }: Props) {
       transition={{ duration: 0.25 }}
     >
       <div>
-        <label className="sf-label text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+        <label htmlFor="sf-email" className="sf-label text-xs font-semibold mb-1.5 flex items-center gap-1.5">
           <Mail className="w-3.5 h-3.5" />
           Tu correo electrónico
         </label>
         <input
+          id="sf-email"
           type="email"
           autoFocus
           value={state.email}

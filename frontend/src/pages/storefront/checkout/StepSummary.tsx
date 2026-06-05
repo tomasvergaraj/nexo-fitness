@@ -111,6 +111,7 @@ export default function StepSummary({ checkout, plan, slug }: Props) {
               <>
                 <input
                   type="text"
+                  aria-label="Código de descuento"
                   value={state.promoInput}
                   onChange={e => set({ promoInput: e.target.value.toUpperCase(), error: '' })}
                   placeholder="CÓDIGO"

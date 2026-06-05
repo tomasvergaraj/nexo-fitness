@@ -58,7 +58,7 @@ export default function StorefrontPage() {
       <div className="sf-root min-h-screen flex flex-col items-center justify-center gap-3 bg-[#070f14] text-white px-6 text-center">
         <AlertCircle className="w-10 h-10 text-red-400" />
         <p className="text-lg font-semibold">Gimnasio no encontrado</p>
-        <p className="text-sm text-white/50">Verifica el enlace o contacta al gimnasio.</p>
+        <p className="text-sm text-white/70">Verifica el enlace o contacta al gimnasio.</p>
       </div>
     );
   }
