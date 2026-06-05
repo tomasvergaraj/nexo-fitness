@@ -175,6 +175,23 @@ export function withAlpha(hexColor: string, alpha: number): string {
   return `rgba(${hexToRgbString(hexColor)}, ${alpha})`;
 }
 
+/** WCAG relative luminance (0 = black, 1 = white) of a hex color. */
+export function relativeLuminance(hexColor: string): number {
+  const channels = hexToRgbString(hexColor).split(',').map((value) => {
+    const srgb = Number(value) / 255;
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+/**
+ * Picks a readable ink (near-black or white) for text laid over `bgHex`.
+ * For a gradient, pass the lighter endpoint (the worst case for white text).
+ */
+export function readableInk(bgHex: string, dark = '#0f172a', light = '#ffffff'): string {
+  return relativeLuminance(bgHex) > 0.18 ? dark : light;
+}
+
 export function parseApiNumber(value: number | string | null | undefined): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -189,7 +206,16 @@ export function formatCurrency(amount: number, currency = 'CLP'): string {
 }
 
 export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
+  let d: Date;
+  if (typeof date === 'string') {
+    // Las fechas "solo día" (YYYY-MM-DD, p. ej. vencimiento de plan o fecha de
+    // nacimiento) no tienen zona horaria. `new Date('2026-06-01')` las interpreta
+    // como medianoche UTC y al renderizar en zona Chile (UTC-3/-4) retrocede un día,
+    // mostrando una fecha menos que la real almacenada. Forzamos parseo local.
+    d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00`) : new Date(date);
+  } else {
+    d = date;
+  }
   return d.toLocaleDateString('es-CL', options ?? { day: '2-digit', month: 'short', year: 'numeric' });
 }
 

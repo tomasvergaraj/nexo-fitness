@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-05T00:00:00Z",
+  "title": "Design System: NexoFitness",
+  "extensions": {
+    "colorMeta": {
+      "brand-500": {
+        "role": "primary",
+        "displayName": "Electric Cyan",
+        "canonical": "#06b6d4",
+        "tonalRamp": ["#083344", "#164e63", "#155e75", "#0e7490", "#0891b2", "#06b6d4", "#22d3ee", "#67e8f9", "#cffafe", "#ecfeff"]
+      },
+      "surface-900": {
+        "role": "neutral",
+        "displayName": "Slate Ink",
+        "canonical": "#0f172a",
+        "tonalRamp": ["#020617", "#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f8fafc"]
+      },
+      "success": { "role": "tertiary", "displayName": "Emerald", "canonical": "#10b981" },
+      "warning": { "role": "tertiary", "displayName": "Amber", "canonical": "#f59e0b" },
+      "danger": { "role": "tertiary", "displayName": "Red", "canonical": "#ef4444" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display (Outfit)", "purpose": "Page titles and member hero numbers. Geometric, tight tracking." },
+      "body": { "displayName": "Body (IBM Plex Sans)", "purpose": "Default reading text, 65-75ch measure." },
+      "mono": { "displayName": "Mono (JetBrains Mono)", "purpose": "Tabular numerics, member IDs, promo codes." }
+    },
+    "shadows": [
+      { "name": "state-lift", "value": "0 10px 15px -3px rgba(6,182,212,0.10)", "purpose": "Card on hover; rises -translate-y-1. Confirms interactivity." },
+      { "name": "signal-glow", "value": "0 4px 14px rgba(6,182,212,0.25)", "purpose": "Primary button at rest; intensifies to 0.40 on hover." },
+      { "name": "focus-ring", "value": "0 0 0 2px rgba(6,182,212,0.40)", "purpose": "Keyboard/focus on inputs and controls." }
+    ],
+    "motion": [
+      { "name": "ease-out-standard", "value": "ease-out", "purpose": "Default for state transitions; 200-300ms." },
+      { "name": "press", "value": "scale(0.98)", "purpose": "active: state on buttons; tactile feedback." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The signal action. One per view. Cyan gradient, brand-tinted glow, presses on click.",
+      "html": "<button class=\"ds-btn-primary\">Registrar pago</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.625rem 1.25rem; background: linear-gradient(to right, #06b6d4, #0891b2); color: #fff; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-weight: 600; border: none; border-radius: 0.75rem; box-shadow: 0 4px 14px rgba(6,182,212,0.25); transition: all 0.3s ease-out; cursor: pointer; } .ds-btn-primary:hover { background: linear-gradient(to right, #0891b2, #0e7490); box-shadow: 0 4px 14px rgba(6,182,212,0.40); } .ds-btn-primary:active { transform: scale(0.98); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(6,182,212,0.40); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Low-emphasis sibling to primary. Slate fill, 1px border, same press.",
+      "html": "<button class=\"ds-btn-secondary\">Cancelar</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.625rem 1.25rem; background: #f1f5f9; color: #334155; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-weight: 600; border: 1px solid #e2e8f0; border-radius: 0.75rem; transition: all 0.2s ease-out; cursor: pointer; } .ds-btn-secondary:hover { background: #e2e8f0; } .ds-btn-secondary:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Form field. White, slate border, cyan focus ring + border shift.",
+      "html": "<input class=\"ds-input\" placeholder=\"Buscar cliente\" />",
+      "css": ".ds-input { width: 100%; padding: 0.625rem 1rem; background: #fff; color: #0f172a; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 0.9375rem; border: 1px solid #e2e8f0; border-radius: 0.75rem; transition: all 0.2s ease-out; } .ds-input::placeholder { color: #94a3b8; } .ds-input:focus { outline: none; border-color: #06b6d4; box-shadow: 0 0 0 2px rgba(6,182,212,0.40); }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Pill reporting real state. Color always paired with text (color-blind safe).",
+      "html": "<span class=\"ds-badge ds-badge-success\">Activa</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.625rem; border-radius: 9999px; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 0.75rem; font-weight: 600; } .ds-badge-success { background: #d1fae5; color: #047857; }"
+    },
+    {
+      "name": "Sidebar Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Active = brand-tinted bg + brand text. Rounded, label type.",
+      "html": "<a class=\"ds-nav-item ds-nav-active\">Clientes</a>",
+      "css": ".ds-nav-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.625rem 0.75rem; border-radius: 0.75rem; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 0.875rem; font-weight: 500; color: #475569; transition: all 0.15s ease-out; cursor: pointer; } .ds-nav-item:hover { background: #f1f5f9; } .ds-nav-active { background: #ecfeff; color: #0e7490; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Room",
+    "overview": "NexoFitness is an operator's command surface. The person on the other side of the screen is running a gym, often with a queue at the front desk, and the interface exists to make their next action obvious and fast. Electric cyan is the signal color, used as a deliberate spotlight on a calm slate field, never as wallpaper. Hierarchy is carried by tone and spacing first; color second. A second identity layer rides on top: each tenant gets dynamic branding via --gym-brand on member-facing surfaces. Structure stays constant across tenants; the per-gym color does the branding work.",
+    "keyCharacteristics": [
+      "Cyan is a signal, not a surface. One spotlight per view.",
+      "Slate neutrals carry hierarchy; dark mode is first-class.",
+      "One primary task per screen, loudest element on the page.",
+      "Mobile-first member surfaces; desktop is the adaptation.",
+      "Tenant color (--gym-brand) overrides cyan on public/member surfaces without changing structure."
+    ],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "Cyan (or the tenant --gym-brand) marks the single most important action or state in a view. If two things are cyan, neither is the signal.", "section": "colors" },
+      { "name": "The Tenant Override Rule", "body": "On any /public or /member surface, the brand color is var(--gym-brand), never hardcoded cyan. Structure stays identical; only the signal hue changes.", "section": "colors" },
+      { "name": "The Sentence-Case Rule", "body": "UI labels are sentence case. Reserve uppercase for <=4-word badges only. No tracked uppercase eyebrows above sections.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest; shadows appear only as a response to state (hover, focus, the primary signal).", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep one cyan signal per view: the primary action or the most important state, nothing else.",
+      "Do drive all public/member branding through var(--gym-brand), never hardcode #06b6d4 on /public or /member surfaces.",
+      "Do carry hierarchy with tone + spacing first; reach for color second.",
+      "Do keep surfaces flat at rest and lift them on hover/focus with brand-tinted shadows.",
+      "Do use rounded-xl (0.75rem) and active:scale-[0.98] consistently so controls feel tactile.",
+      "Do ship a prefers-reduced-motion alternative for every animation; body text >=4.5:1, large >=3:1.",
+      "Do pair every status color with an icon or label (color-blind safe)."
+    ],
+    "donts": [
+      "Don't build the generic SaaS template: no hero-metric cards, no identical icon-heading-text card grids, no tracked uppercase eyebrows or 01/02/03 markers.",
+      "Don't drift toward the loud consumer fitness app: no neon-everywhere, no gamified noise, no aggressive gradient backdrops.",
+      "Don't ship the dated enterprise admin: no gray Bootstrap tables, cramped rows, or flat hierarchy.",
+      "Don't clutter: one primary task per screen, no widget soup, protect breathing room.",
+      "Don't lean on text-gradient or default glassmorphism decoratively; a single solid color and weight contrast beats gradient text.",
+      "Don't use border-left/right > 1px as a colored accent stripe on cards or alerts.",
+      "Don't let a second element compete with the cyan signal."
+    ]
+  }
+}

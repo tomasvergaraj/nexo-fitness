@@ -17,37 +17,37 @@ const colorMap = {
   brand: {
     bg: 'bg-brand-50 dark:bg-brand-950/40',
     icon: 'text-brand-500',
-    shadow: 'shadow-brand-500/10',
+    shadow: 'hover:shadow-brand-500/10',
     gradient: 'from-brand-400 to-brand-600',
   },
   emerald: {
     bg: 'bg-emerald-50 dark:bg-emerald-950/40',
     icon: 'text-emerald-500',
-    shadow: 'shadow-emerald-500/10',
+    shadow: 'hover:shadow-emerald-500/10',
     gradient: 'from-emerald-400 to-emerald-600',
   },
   amber: {
     bg: 'bg-amber-50 dark:bg-amber-950/40',
     icon: 'text-amber-500',
-    shadow: 'shadow-amber-500/10',
+    shadow: 'hover:shadow-amber-500/10',
     gradient: 'from-amber-400 to-amber-600',
   },
   rose: {
     bg: 'bg-rose-50 dark:bg-rose-950/40',
     icon: 'text-rose-500',
-    shadow: 'shadow-rose-500/10',
+    shadow: 'hover:shadow-rose-500/10',
     gradient: 'from-rose-400 to-rose-600',
   },
   violet: {
     bg: 'bg-violet-50 dark:bg-violet-950/40',
     icon: 'text-violet-500',
-    shadow: 'shadow-violet-500/10',
+    shadow: 'hover:shadow-violet-500/10',
     gradient: 'from-violet-400 to-violet-600',
   },
   blue: {
     bg: 'bg-blue-50 dark:bg-blue-950/40',
     icon: 'text-blue-500',
-    shadow: 'shadow-blue-500/10',
+    shadow: 'hover:shadow-blue-500/10',
     gradient: 'from-blue-400 to-blue-600',
   },
 };
@@ -96,7 +96,7 @@ export default function StatCard({ label, value, icon: Icon, trend, color = 'bra
         'bg-white dark:bg-surface-900',
         'border border-surface-200/50 dark:border-surface-800/50',
         'shadow-sm hover:shadow-lg transition-shadow duration-300',
-        `hover:${colors.shadow}`
+        colors.shadow
       )}
     >
       {/* Subtle background gradient */}

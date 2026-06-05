@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { MotionConfig } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import { router } from './router';
@@ -17,9 +18,11 @@ function PageLoader() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Suspense fallback={<PageLoader />}>
-        <RouterProvider router={router} />
-      </Suspense>
+      <MotionConfig reducedMotion="user">
+        <Suspense fallback={<PageLoader />}>
+          <RouterProvider router={router} />
+        </Suspense>
+      </MotionConfig>
       <Toaster
         position="top-right"
         toastOptions={{
