@@ -29,6 +29,7 @@ from app.models.pos import (
     Supplier, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus,
     POSTransaction, POSTransactionItem, POSTransactionStatus,
     Expense, ExpenseCategory,
+    CashRegisterSession, CashSessionStatus,
 )
 
 __all__ = [
@@ -50,4 +51,5 @@ __all__ = [
     "Supplier", "PurchaseOrder", "PurchaseOrderItem", "PurchaseOrderStatus",
     "POSTransaction", "POSTransactionItem", "POSTransactionStatus",
     "Expense", "ExpenseCategory",
+    "CashRegisterSession", "CashSessionStatus",
 ]

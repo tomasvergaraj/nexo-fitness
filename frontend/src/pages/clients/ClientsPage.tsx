@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { Fragment, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -8,6 +8,7 @@ import {
   BarChart2,
   Bell,
   Cake,
+  CalendarClock,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -27,8 +28,10 @@ import {
   PlayCircle,
   Plus,
   Power,
+  QrCode,
   RefreshCcw,
   Search,
+  Smartphone,
   Snowflake,
   Trash2,
   TrendingDown,
@@ -55,9 +58,38 @@ const filters = [
   { label: 'Activos', value: 'active' },
   { label: 'Inactivos', value: 'inactive' },
   { label: 'Cumpleaños', value: 'birthday', icon: Cake },
+  { label: 'Por vencer', value: 'expiring_upcoming', icon: CalendarClock },
+  { label: 'Vencidos', value: 'expiring_expired', icon: AlertTriangle },
+  { label: 'Usan app', value: 'app_active', icon: Smartphone },
+  { label: 'Solo QR', value: 'qr_only', icon: QrCode },
   { label: 'En riesgo', value: 'churn_high', icon: TrendingDown },
   { label: 'Riesgo medio', value: 'churn_medium', icon: TrendingDown },
 ];
+
+const SPECIAL_FILTER_VALUES = new Set([
+  'birthday',
+  'churn_high',
+  'churn_medium',
+  'expiring_upcoming',
+  'expiring_expired',
+  'app_active',
+  'qr_only',
+]);
+
+function buildClientListParams(statusFilter: string): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  if (statusFilter && !SPECIAL_FILTER_VALUES.has(statusFilter)) {
+    params.status = statusFilter;
+  }
+  if (statusFilter === 'birthday') params.birthday_month = true;
+  if (statusFilter === 'churn_high') params.churn_risk = 'high';
+  if (statusFilter === 'churn_medium') params.churn_risk = 'medium';
+  if (statusFilter === 'expiring_upcoming') params.expiring_filter = 'upcoming';
+  if (statusFilter === 'expiring_expired') params.expiring_filter = 'expired';
+  if (statusFilter === 'app_active') params.app_usage = 'active';
+  if (statusFilter === 'qr_only') params.app_usage = 'qr_only';
+  return params;
+}
 
 const notificationActionPresets = [
   { label: 'Perfil', value: 'nexofitness://account/profile' },
@@ -91,6 +123,7 @@ type ClientEditFormState = {
   emergency_phone: string;
   medical_notes: string;
   tags: string[];
+  prefers_qr_card: boolean;
 };
 
 const emptyForm: ClientFormState = {
@@ -172,8 +205,12 @@ function getSuggestedExpiryDate(plan?: Plan | null, startsAt?: string) {
   return nextDate.toISOString().slice(0, 10);
 }
 
-function createManualSaleForm(plan?: Plan | null): ManualSaleForm {
-  const startsAt = getTodayInputValue();
+function createManualSaleForm(plan?: Plan | null, client?: User | null): ManualSaleForm {
+  // Si el cliente ya tiene una membresía vigente, la nueva venta arranca cuando
+  // termina (apilamiento), no hoy. El vencimiento se calcula desde ese inicio.
+  const startsAt = client?.membership_expires_at
+    ? getDateInputValue(client.membership_expires_at)
+    : getTodayInputValue();
   return {
     plan_id: plan?.id ?? '',
     starts_at: startsAt,
@@ -291,6 +328,7 @@ export default function ClientsPage() {
     emergency_phone: '',
     medical_notes: '',
     tags: [],
+    prefers_qr_card: false,
   });
   const [editClientLoading, setEditClientLoading] = useState(false);
   const [editClientOriginalTags, setEditClientOriginalTags] = useState<string[]>([]);
@@ -327,14 +365,11 @@ export default function ClientsPage() {
   const { data, isLoading, isError } = useQuery<PaginatedResponse<User>>({
     queryKey: ['clients', page, deferredSearch, statusFilter, planFilter],
     queryFn: async () => {
-      const isChurnFilter = statusFilter === 'churn_high' || statusFilter === 'churn_medium';
       const response = await clientsApi.list({
         page,
         per_page: 10,
         ...(deferredSearch ? { search: deferredSearch } : {}),
-        ...(statusFilter && !['birthday', 'churn_high', 'churn_medium'].includes(statusFilter) ? { status: statusFilter } : {}),
-        ...(statusFilter === 'birthday' ? { birthday_month: true } : {}),
-        ...(isChurnFilter ? { churn_risk: statusFilter === 'churn_high' ? 'high' : 'medium' } : {}),
+        ...buildClientListParams(statusFilter),
         ...(planFilter ? { plan_id: planFilter } : {}),
       });
       return response.data;
@@ -389,7 +424,7 @@ export default function ClientsPage() {
       return;
     }
     const nextPlan = availablePlans[0];
-    const baseForm = createManualSaleForm(nextPlan);
+    const baseForm = createManualSaleForm(nextPlan, manualSaleClient);
     setManualSaleForm(
       nextPlan.is_trial
         ? {
@@ -526,6 +561,7 @@ export default function ClientsPage() {
         emergency_phone: string | null;
         medical_notes: string | null;
         tags: string[];
+        prefers_qr_card: boolean;
       }>;
     }) => {
       const response = await clientsApi.update(clientId, data);
@@ -772,6 +808,7 @@ export default function ClientsPage() {
       emergency_phone: client.emergency_phone ?? '',
       medical_notes: client.medical_notes ?? '',
       tags: [],
+      prefers_qr_card: Boolean(client.prefers_qr_card),
     });
     setEditClientLoading(true);
     try {
@@ -795,6 +832,7 @@ export default function ClientsPage() {
         emergency_phone: detail.emergency_phone ?? '',
         medical_notes: detail.medical_notes ?? '',
         tags,
+        prefers_qr_card: Boolean((detail as { prefers_qr_card?: boolean }).prefers_qr_card),
       }));
       setEditClientOriginalTags(tags);
     } catch (error) {
@@ -824,12 +862,7 @@ export default function ClientsPage() {
     setManualSaleClient(client);
     setTrialPassOnly(false);
     const firstPlan = availablePlans[0];
-    const nextForm = createManualSaleForm(firstPlan);
-    if (client.membership_expires_at) {
-      nextForm.starts_at = getDateInputValue(client.membership_expires_at);
-      nextForm.expires_at = getSuggestedExpiryDate(firstPlan ?? null, nextForm.starts_at);
-    }
-    setManualSaleForm(nextForm);
+    setManualSaleForm(createManualSaleForm(firstPlan, client));
   };
 
   const updateManualSalePlan = (planId: string) => {
@@ -855,13 +888,10 @@ export default function ClientsPage() {
     setShowExportMenu(false);
     setExportingFormat(format);
     try {
-      const isChurnFilter = statusFilter === 'churn_high' || statusFilter === 'churn_medium';
       const params: Record<string, unknown> & { format: 'xlsx' | 'csv' } = {
         format,
         ...(deferredSearch ? { search: deferredSearch } : {}),
-        ...(statusFilter && !['birthday', 'churn_high', 'churn_medium'].includes(statusFilter) ? { status: statusFilter } : {}),
-        ...(statusFilter === 'birthday' ? { birthday_month: true } : {}),
-        ...(isChurnFilter ? { churn_risk: statusFilter === 'churn_high' ? 'high' : 'medium' } : {}),
+        ...buildClientListParams(statusFilter),
       };
       const response = await clientsApi.export(params);
       const today = new Date().toISOString().slice(0, 10);
@@ -1144,84 +1174,233 @@ export default function ClientsPage() {
                     <p className="text-xs text-surface-500">{client.role}</p>
                   </div>
 
-                  <div className="col-span-2 flex flex-wrap items-center gap-1">
-                    <span className={cn('badge', client.is_active ? 'badge-success' : 'badge-warning')}>
-                      {client.is_active ? <CheckCircle2 size={10} /> : <Power size={10} />}
-                      {client.is_active ? 'Activo' : 'Inactivo'}
-                    </span>
-                    {client.membership_status === 'frozen' && (
-                      <span className="badge badge-info flex items-center gap-1">
-                        <Snowflake size={10} />
-                        Pausada
-                      </span>
-                    )}
-                    {client.date_of_birth && (() => {
-                      const dob = getDateOnlyParts(client.date_of_birth);
-                      if (!dob) {
-                        return null;
-                      }
-                      const now = new Date();
-                      const currentMonth = now.getMonth() + 1;
-                      const currentDay = now.getDate();
-                      const isToday = dob.month === currentMonth && dob.day === currentDay;
-                      const isThisMonth = dob.month === currentMonth;
-                      if (isToday) {
-                        return (
-                          <Tooltip content="¡Cumpleaños hoy!">
-                            <span className="badge bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300 flex items-center gap-1">
-                              <Cake size={10} />
-                              ¡Hoy!
+                  <div className="col-span-2 flex flex-nowrap items-center gap-1 overflow-hidden">
+                    {(() => {
+                      const chips: { key: string; node: ReactNode; tipLabel: string; tipIcon: ReactNode }[] = [];
+                      chips.push({
+                        key: 'status',
+                        tipLabel: client.is_active ? 'Cuenta activa' : 'Cuenta inactiva',
+                        tipIcon: client.is_active ? <CheckCircle2 size={12} /> : <Power size={12} />,
+                        node: (
+                          <span className={cn('badge flex-shrink-0', client.is_active ? 'badge-success' : 'badge-warning')}>
+                            {client.is_active ? <CheckCircle2 size={10} /> : <Power size={10} />}
+                            {client.is_active ? 'Activo' : 'Inactivo'}
+                          </span>
+                        ),
+                      });
+                      if (client.membership_status === 'frozen') {
+                        chips.push({
+                          key: 'frozen',
+                          tipLabel: 'Membresía pausada',
+                          tipIcon: <Snowflake size={12} />,
+                          node: (
+                            <span className="badge badge-info flex flex-shrink-0 items-center gap-1">
+                              <Snowflake size={10} />
+                              Pausada
                             </span>
-                          </Tooltip>
-                        );
+                          ),
+                        });
                       }
-                      if (isThisMonth) {
-                        return (
-                          <Tooltip content={`Cumpleaños el ${dob.day} de este mes`}>
-                            <span className="badge badge-neutral flex items-center gap-1">
-                              <Cake size={10} />
-                              {dob.day}
-                            </span>
-                          </Tooltip>
-                        );
-                      }
-                      return null;
-                    })()}
-                    {client.membership_expires_at && (() => {
-                      const daysLeft = Math.ceil((new Date(client.membership_expires_at).getTime() - Date.now()) / 86400000);
-                      if (daysLeft <= 7 && daysLeft >= 0) {
-                        return (
-                          <Tooltip content={`Membresía vence ${daysLeft === 0 ? 'hoy' : `en ${daysLeft} día${daysLeft === 1 ? '' : 's'}`}`}>
-                            <span className="badge badge-warning flex items-center gap-1">
+                      if (client.membership_status === 'expired') {
+                        chips.push({
+                          key: 'expired',
+                          tipLabel: 'Membresía vencida',
+                          tipIcon: <AlertTriangle size={12} />,
+                          node: (
+                            <span className="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 flex flex-shrink-0 items-center gap-1">
                               <AlertTriangle size={10} />
-                              {daysLeft === 0 ? 'Vence hoy' : `${daysLeft}d`}
+                              Vencida
+                            </span>
+                          ),
+                        });
+                      }
+                      if (client.date_of_birth) {
+                        const dob = getDateOnlyParts(client.date_of_birth);
+                        if (dob) {
+                          const now = new Date();
+                          const currentMonth = now.getMonth() + 1;
+                          const currentDay = now.getDate();
+                          const isToday = dob.month === currentMonth && dob.day === currentDay;
+                          const isThisMonth = dob.month === currentMonth;
+                          if (isToday) {
+                            chips.push({
+                              key: 'bday-today',
+                              tipLabel: '¡Cumpleaños hoy!',
+                              tipIcon: <Cake size={12} />,
+                              node: (
+                                <Tooltip content="¡Cumpleaños hoy!">
+                                  <span className="badge bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300 flex flex-shrink-0 items-center gap-1">
+                                    <Cake size={10} />
+                                    ¡Hoy!
+                                  </span>
+                                </Tooltip>
+                              ),
+                            });
+                          } else if (isThisMonth) {
+                            chips.push({
+                              key: 'bday-month',
+                              tipLabel: `Cumpleaños el ${dob.day} de este mes`,
+                              tipIcon: <Cake size={12} />,
+                              node: (
+                                <Tooltip content={`Cumpleaños el ${dob.day} de este mes`}>
+                                  <span className="badge badge-neutral flex flex-shrink-0 items-center gap-1">
+                                    <Cake size={10} />
+                                    {dob.day}
+                                  </span>
+                                </Tooltip>
+                              ),
+                            });
+                          }
+                        }
+                      }
+                      if (client.membership_expires_at) {
+                        const daysLeft = Math.ceil(
+                          (new Date(client.membership_expires_at).getTime() - Date.now()) / 86400000,
+                        );
+                        if (daysLeft <= 7 && daysLeft >= 0) {
+                          const tip = `Vence ${daysLeft === 0 ? 'hoy' : `en ${daysLeft} día${daysLeft === 1 ? '' : 's'}`}`;
+                          chips.push({
+                            key: 'expires-soon',
+                            tipLabel: tip,
+                            tipIcon: <AlertTriangle size={12} />,
+                            node: (
+                              <Tooltip content={`Membresía ${tip.toLowerCase()}`}>
+                                <span className="badge badge-warning flex flex-shrink-0 items-center gap-1">
+                                  <AlertTriangle size={10} />
+                                  {daysLeft === 0 ? 'Vence hoy' : `${daysLeft}d`}
+                                </span>
+                              </Tooltip>
+                            ),
+                          });
+                        }
+                      }
+                      if (client.churn_risk === 'high') {
+                        chips.push({
+                          key: 'risk-high',
+                          tipLabel: 'Alto riesgo de churn',
+                          tipIcon: <TrendingDown size={12} />,
+                          node: (
+                            <Tooltip content="Alto riesgo de churn: sin actividad reciente o membresía vencida">
+                              <span className="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 flex flex-shrink-0 items-center gap-1">
+                                <TrendingDown size={10} />
+                                En riesgo
+                              </span>
+                            </Tooltip>
+                          ),
+                        });
+                      }
+                      if (client.churn_risk === 'medium') {
+                        chips.push({
+                          key: 'risk-medium',
+                          tipLabel: 'Riesgo medio (>14 días sin actividad)',
+                          tipIcon: <TrendingDown size={12} />,
+                          node: (
+                            <Tooltip content="Riesgo medio: sin actividad en más de 14 días">
+                              <span className="badge bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 flex flex-shrink-0 items-center gap-1">
+                                <TrendingDown size={10} />
+                                Riesgo
+                              </span>
+                            </Tooltip>
+                          ),
+                        });
+                      }
+                      if (client.plan_name) {
+                        chips.push({
+                          key: 'plan',
+                          tipLabel: `Plan: ${client.plan_name}`,
+                          tipIcon: <CreditCard size={12} />,
+                          node: (
+                            <span
+                              className="badge badge-neutral inline-flex max-w-[160px] flex-shrink-0 items-center truncate"
+                              title={client.plan_name}
+                            >
+                              {client.plan_name}
+                            </span>
+                          ),
+                        });
+                      }
+                      if (
+                        (statusFilter === 'expiring_upcoming' || statusFilter === 'expiring_expired')
+                        && client.membership_expires_at
+                      ) {
+                        const verbo = statusFilter === 'expiring_expired' ? 'Venció' : 'Vence';
+                        chips.push({
+                          key: 'expiry-date',
+                          tipLabel: `${verbo} ${formatDate(client.membership_expires_at)}`,
+                          tipIcon: <CalendarClock size={12} />,
+                          node: (
+                            <Tooltip content={`${verbo} ${formatDate(client.membership_expires_at)}`}>
+                              <span
+                                className={cn(
+                                  'badge flex flex-shrink-0 items-center gap-1',
+                                  statusFilter === 'expiring_expired'
+                                    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                                    : 'badge-warning',
+                                )}
+                              >
+                                <CalendarClock size={10} />
+                                {formatDate(client.membership_expires_at)}
+                              </span>
+                            </Tooltip>
+                          ),
+                        });
+                      }
+                      chips.push({
+                        key: 'app-usage',
+                        tipLabel: client.uses_app
+                          ? 'Usa la app móvil'
+                          : client.prefers_qr_card
+                            ? 'Marcado como solo QR'
+                            : 'Sin app móvil activa',
+                        tipIcon: client.uses_app ? <Smartphone size={12} /> : <QrCode size={12} />,
+                        node: client.uses_app ? (
+                          <Tooltip content="Usa la app móvil">
+                            <span className="badge bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 flex flex-shrink-0 items-center gap-1">
+                              <Smartphone size={10} />
+                              App
                             </span>
                           </Tooltip>
-                        );
-                      }
-                      return null;
+                        ) : (
+                          <Tooltip content={client.prefers_qr_card ? 'Marcado como solo QR' : 'Sin app móvil activa'}>
+                            <span className="badge bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 flex flex-shrink-0 items-center gap-1">
+                              <QrCode size={10} />
+                              QR
+                            </span>
+                          </Tooltip>
+                        ),
+                      });
+
+                      const MAX_VISIBLE = 2;
+                      const visible = chips.slice(0, MAX_VISIBLE);
+                      const overflow = chips.slice(MAX_VISIBLE);
+                      return (
+                        <>
+                          {visible.map((c) => (
+                            <Fragment key={c.key}>{c.node}</Fragment>
+                          ))}
+                          {overflow.length > 0 && (
+                            <Tooltip
+                              content={
+                                <div className="flex flex-col items-start gap-1.5 py-0.5 text-left">
+                                  {overflow.map((c) => (
+                                    <div key={c.key} className="flex items-center gap-2 whitespace-nowrap">
+                                      <span className="inline-flex h-4 w-4 items-center justify-center opacity-80">
+                                        {c.tipIcon}
+                                      </span>
+                                      <span>{c.tipLabel}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              }
+                            >
+                              <span className="badge badge-neutral flex-shrink-0 cursor-help">
+                                +{overflow.length}
+                              </span>
+                            </Tooltip>
+                          )}
+                        </>
+                      );
                     })()}
-                    {client.churn_risk === 'high' && (
-                      <Tooltip content="Alto riesgo de churn: sin actividad reciente o membresía vencida">
-                        <span className="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300 flex items-center gap-1">
-                          <TrendingDown size={10} />
-                          En riesgo
-                        </span>
-                      </Tooltip>
-                    )}
-                    {client.churn_risk === 'medium' && (
-                      <Tooltip content="Riesgo medio: sin actividad en más de 14 días">
-                        <span className="badge bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 flex items-center gap-1">
-                          <TrendingDown size={10} />
-                          Riesgo
-                        </span>
-                      </Tooltip>
-                    )}
-                    {client.plan_name && (
-                      <span className="badge badge-neutral inline-flex max-w-full items-center truncate" title={client.plan_name}>
-                        {client.plan_name}
-                      </span>
-                    )}
                   </div>
 
                   <div className="col-span-1">
@@ -1981,6 +2160,7 @@ export default function ClientsPage() {
               emergency_phone: string | null;
               medical_notes: string | null;
               tags: string[];
+              prefers_qr_card: boolean;
             }> = {};
             const firstName = editContactForm.first_name.trim();
             const lastName = editContactForm.last_name.trim();
@@ -2017,6 +2197,10 @@ export default function ClientsPage() {
               editContactForm.tags.length !== editClientOriginalTags.length
               || editContactForm.tags.some((t, i) => t !== editClientOriginalTags[i]);
             if (tagsChanged) payload.tags = editContactForm.tags;
+
+            if (editContactForm.prefers_qr_card !== Boolean(editContactClient.prefers_qr_card)) {
+              payload.prefers_qr_card = editContactForm.prefers_qr_card;
+            }
 
             if (!Object.keys(payload).length) {
               setEditContactClient(null);
@@ -2169,6 +2353,23 @@ export default function ClientsPage() {
               </div>
             </div>
           </details>
+
+          <label className="flex items-start gap-3 rounded-2xl border border-surface-200 bg-surface-50/50 px-4 py-3 dark:border-surface-800 dark:bg-surface-950/40">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={editContactForm.prefers_qr_card}
+              onChange={(e) => setEditContactForm((f) => ({ ...f, prefers_qr_card: e.target.checked }))}
+            />
+            <span className="flex-1">
+              <span className="flex items-center gap-2 text-sm font-medium text-surface-800 dark:text-surface-200">
+                <QrCode size={14} /> Solo tarjeta QR (no usa app móvil)
+              </span>
+              <span className="mt-1 block text-xs text-surface-500">
+                Marca clientes que no descargan la app y se identifican con tarjeta QR. Aparecen en el filtro "Solo QR".
+              </span>
+            </span>
+          </label>
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setEditContactClient(null)}>

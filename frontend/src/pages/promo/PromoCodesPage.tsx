@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock3,
+  Layers,
   Pencil,
   Plus,
   Sparkles,
@@ -15,8 +16,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import { promoCodesApi } from '@/services/api';
-import type { PromoCode } from '@/types';
+import { plansApi, promoCodesApi } from '@/services/api';
+import type { Plan, PromoCode } from '@/types';
 import { cn, formatCurrency, formatDate, getApiError } from '@/utils';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 
@@ -28,6 +29,7 @@ interface FormState {
   discount_value: string;
   max_uses: string;
   expires_at: string;
+  plan_ids: string[]; // empty = aplica a todos los planes
 }
 
 const emptyForm: FormState = {
@@ -38,6 +40,7 @@ const emptyForm: FormState = {
   discount_value: '',
   max_uses: '',
   expires_at: '',
+  plan_ids: [],
 };
 
 function formatDiscount(promo: PromoCode) {
@@ -122,23 +125,36 @@ function promoToForm(promo: PromoCode): FormState {
     discount_value: String(promo.discount_value),
     max_uses: promo.max_uses != null ? String(promo.max_uses) : '',
     expires_at: promo.expires_at ? promo.expires_at.slice(0, 10) : '',
+    plan_ids: promo.plan_ids ?? [],
   };
 }
 
 interface PromoFormProps {
   initial: FormState;
+  plans: Plan[];
+  plansLoading: boolean;
   onSave: (data: FormState) => void;
   onCancel: () => void;
   saving: boolean;
   isEdit?: boolean;
 }
 
-function PromoForm({ initial, onSave, onCancel, saving, isEdit }: PromoFormProps) {
+function PromoForm({ initial, plans, plansLoading, onSave, onCancel, saving, isEdit }: PromoFormProps) {
   const [form, setForm] = useState<FormState>(initial);
   const codePreview = form.code.trim() || 'PROMO2026';
+  const appliesToAll = form.plan_ids.length === 0;
 
   function set(key: keyof FormState, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function togglePlan(planId: string) {
+    setForm((current) => ({
+      ...current,
+      plan_ids: current.plan_ids.includes(planId)
+        ? current.plan_ids.filter((id) => id !== planId)
+        : [...current.plan_ids, planId],
+    }));
   }
 
   function handleSubmit(event: React.FormEvent) {
@@ -254,6 +270,99 @@ function PromoForm({ initial, onSave, onCancel, saving, isEdit }: PromoFormProps
         </div>
       </div>
 
+      <div className="rounded-[1.25rem] border border-surface-200 bg-surface-50/80 p-4 dark:border-white/10 dark:bg-surface-950/35">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-semibold text-surface-900 dark:text-white">Planes donde aplica</p>
+          <p className="text-sm text-surface-500 dark:text-surface-400">
+            Elige a qué planes se puede aplicar este descuento. Los clientes solo podrán usarlo en los planes que marques.
+          </p>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2">
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3 text-sm dark:border-white/10 dark:bg-white/5">
+            <input
+              type="radio"
+              name="promo-scope"
+              className="mt-0.5"
+              checked={appliesToAll}
+              onChange={() => setForm((current) => ({ ...current, plan_ids: [] }))}
+            />
+            <span>
+              <span className="block font-medium text-surface-900 dark:text-white">Todos los planes</span>
+              <span className="text-surface-500 dark:text-surface-400">El código sirve para cualquier plan disponible en la tienda.</span>
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-surface-200 bg-white px-4 py-3 text-sm dark:border-white/10 dark:bg-white/5">
+            <input
+              type="radio"
+              name="promo-scope"
+              className="mt-0.5"
+              checked={!appliesToAll}
+              onChange={() => {
+                // Selecciona el primer plan disponible para no dejar la lista vacía (que equivaldría a "todos").
+                setForm((current) => (
+                  current.plan_ids.length > 0 || plans.length === 0
+                    ? current
+                    : { ...current, plan_ids: [plans[0].id] }
+                ));
+              }}
+            />
+            <span>
+              <span className="block font-medium text-surface-900 dark:text-white">Solo planes específicos</span>
+              <span className="text-surface-500 dark:text-surface-400">Marca abajo los planes que sí aceptan este descuento.</span>
+            </span>
+          </label>
+        </div>
+
+        {!appliesToAll ? (
+          <div className="mt-3 space-y-2">
+            {plansLoading ? (
+              <p className="text-sm text-surface-500 dark:text-surface-400">Cargando planes...</p>
+            ) : plans.length === 0 ? (
+              <p className="text-sm text-surface-500 dark:text-surface-400">Todavía no tienes planes creados.</p>
+            ) : (
+              <>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {plans.map((plan) => {
+                    const checked = form.plan_ids.includes(plan.id);
+                    return (
+                      <label
+                        key={plan.id}
+                        className={cn(
+                          'flex cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 text-sm transition-colors',
+                          checked
+                            ? 'border-brand-300 bg-brand-50 text-brand-900 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-100'
+                            : 'border-surface-200 bg-white text-surface-700 hover:border-surface-300 dark:border-white/10 dark:bg-white/5 dark:text-surface-200',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => togglePlan(plan.id)}
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{plan.name}</span>
+                          <span className="text-xs text-surface-500 dark:text-surface-400">
+                            {formatCurrency(Number(plan.price), plan.currency)}
+                            {plan.is_active ? '' : ' · inactivo'}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {form.plan_ids.length === 0 ? (
+                  <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                    Marca al menos un plan; de lo contrario el código aplicará a todos.
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+
       <div className="flex flex-wrap justify-end gap-2 border-t border-surface-200/70 pt-4 dark:border-white/10">
         <button type="button" onClick={onCancel} className="btn-secondary" disabled={saving}>
           Cancelar
@@ -277,6 +386,13 @@ export default function PromoCodesPage() {
     queryFn: async () => (await promoCodesApi.list()).data,
   });
 
+  const plansQuery = useQuery<Plan[]>({
+    queryKey: ['plans', 'promo-scope'],
+    queryFn: async () => (await plansApi.list({ active_only: false })).data.items,
+  });
+  const plans = plansQuery.data ?? [];
+  const planNameById = new Map(plans.map((plan) => [plan.id, plan.name]));
+
   const createMutation = useMutation({
     mutationFn: (form: FormState) =>
       promoCodesApi.create({
@@ -287,6 +403,7 @@ export default function PromoCodesPage() {
         discount_value: parseFloat(form.discount_value),
         max_uses: form.max_uses ? parseInt(form.max_uses, 10) : null,
         expires_at: form.expires_at ? new Date(`${form.expires_at}T23:59:59`).toISOString() : null,
+        plan_ids: form.plan_ids.length ? form.plan_ids : null,
       }),
     onSuccess: async () => {
       toast.success('Código promocional creado.');
@@ -307,6 +424,7 @@ export default function PromoCodesPage() {
         discount_value: parseFloat(form.discount_value),
         max_uses: form.max_uses ? parseInt(form.max_uses, 10) : null,
         expires_at: form.expires_at ? new Date(`${form.expires_at}T23:59:59`).toISOString() : null,
+        plan_ids: form.plan_ids.length ? form.plan_ids : null,
       }),
     onSuccess: async () => {
       toast.success('Código promocional actualizado.');
@@ -472,6 +590,16 @@ export default function PromoCodesPage() {
                               {promo.max_uses != null ? `${promo.max_uses} usos máximos` : 'Usos ilimitados'}
                             </span>
                           </div>
+                          <div className="mt-2 flex items-start gap-1.5 text-xs text-surface-500 dark:text-surface-400">
+                            <Layers size={13} className="mt-0.5 shrink-0" />
+                            <span>
+                              {!promo.plan_ids || promo.plan_ids.length === 0
+                                ? 'Aplica a todos los planes'
+                                : `Solo: ${promo.plan_ids
+                                    .map((id) => planNameById.get(id) ?? 'Plan eliminado')
+                                    .join(', ')}`}
+                            </span>
+                          </div>
                         </td>
 
                         <td className="px-4 py-4 align-top">
@@ -567,6 +695,8 @@ export default function PromoCodesPage() {
       >
         <PromoForm
           initial={emptyForm}
+          plans={plans}
+          plansLoading={plansQuery.isLoading}
           onSave={(form) => createMutation.mutate(form)}
           onCancel={() => setShowCreate(false)}
           saving={createMutation.isPending}
@@ -594,6 +724,8 @@ export default function PromoCodesPage() {
           <>
             <PromoForm
               initial={promoToForm(editPromo)}
+              plans={plans}
+              plansLoading={plansQuery.isLoading}
               onSave={(form) => updateMutation.mutate({ id: editPromo.id, form })}
               onCancel={() => setEditPromo(null)}
               saving={updateMutation.isPending}

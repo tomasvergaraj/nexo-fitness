@@ -27,4 +27,6 @@ export interface User {
   membership_notes?: string;
   plan_name?: string;
   churn_risk?: 'low' | 'medium' | 'high';
+  prefers_qr_card?: boolean;
+  uses_app?: boolean;
 }

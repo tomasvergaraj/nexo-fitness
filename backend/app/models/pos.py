@@ -48,6 +48,11 @@ class POSTransactionStatus(str, enum.Enum):
     REFUNDED = "refunded"
 
 
+class CashSessionStatus(str, enum.Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
 class ExpenseCategory(str, enum.Enum):
     RENT = "rent"
     UTILITIES = "utilities"
@@ -288,6 +293,9 @@ class POSTransaction(Base):
     cashier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cash_register_sessions.id", ondelete="SET NULL"), index=True
+    )
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
@@ -361,4 +369,46 @@ class Expense(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+# ─── CashRegisterSession (turno de caja) ────────────────────────────────────────
+
+class CashRegisterSession(Base):
+    """Turno de caja: apertura/cierre con fondo inicial y arqueo de efectivo.
+
+    Una sola sesión abierta por sucursal a la vez (validado en el servicio).
+    Las ventas POS se enlazan vía POSTransaction.session_id.
+    """
+    __tablename__ = "cash_register_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    branch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("branches.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[CashSessionStatus] = mapped_column(
+        SAEnum(CashSessionStatus, name="cash_session_status_enum", values_callable=lambda x: [e.value for e in x]),
+        default=CashSessionStatus.OPEN,
+        index=True,
+    )
+    opened_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    opening_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    closed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    closing_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))   # efectivo contado al cierre
+    expected_cash: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))    # fondo + ventas efectivo - devoluciones
+    difference: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))       # closing_amount - expected_cash
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

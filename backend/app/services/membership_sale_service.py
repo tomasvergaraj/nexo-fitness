@@ -282,10 +282,18 @@ async def allocate_membership_purchase(
     else:
         previous_membership = _latest_membership_for_history(state.memberships)
 
+    # Si el inicio se desplazó por apilamiento (el cliente ya tenía una membresía
+    # vigente/pendiente), corremos también el vencimiento explícito el mismo delta
+    # para conservar la duración comprada: el nuevo período arranca cuando termina
+    # el vigente y vence "duración" después, no antes.
+    shifted_expires_at = expires_at
+    if expires_at is not None and allocated_starts_at != starts_at:
+        shifted_expires_at = expires_at + (allocated_starts_at - starts_at)
+
     allocated_expires_at = resolve_membership_expiration(
         starts_at=allocated_starts_at,
         plan=plan,
-        explicit_expires_at=expires_at,
+        explicit_expires_at=shifted_expires_at,
     )
     if allocated_expires_at is not None and allocated_expires_at <= allocated_starts_at:
         raise ValueError("La fecha de vencimiento debe ser posterior al inicio del período comprado")

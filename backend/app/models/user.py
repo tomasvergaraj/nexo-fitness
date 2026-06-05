@@ -50,6 +50,9 @@ class User(Base):
     medical_notes: Mapped[Optional[str]] = mapped_column(Text)
     tags: Mapped[Optional[str]] = mapped_column(Text)  # JSON array
     internal_notes: Mapped[Optional[str]] = mapped_column(Text)
+    prefers_qr_card: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
     # Member referral program (Fase 6.4)
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, index=True)

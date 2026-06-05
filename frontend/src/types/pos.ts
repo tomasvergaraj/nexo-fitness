@@ -120,3 +120,41 @@ export interface Expense {
   created_by?: string | null;
   created_at: string;
 }
+
+export interface PaymentMethodBreakdownRow {
+  payment_method: string;
+  label: string;
+  count: number;
+  subtotal: number;
+  discount: number;
+  total: number;
+}
+
+export interface CashSession {
+  id: string;
+  branch_id?: string | null;
+  status: 'open' | 'closed';
+  opened_by?: string | null;
+  opened_by_name?: string | null;
+  opened_at: string;
+  opening_amount: number;
+  closed_by?: string | null;
+  closed_by_name?: string | null;
+  closed_at?: string | null;
+  closing_amount?: number | null;
+  expected_cash?: number | null;
+  difference?: number | null;
+  notes?: string | null;
+  sales_total: number;
+  sales_count: number;
+  cash_sales: number;
+  by_method: PaymentMethodBreakdownRow[];
+}
+
+export interface SalesBreakdown {
+  from_date: string;
+  to_date: string;
+  total: number;
+  transaction_count: number;
+  by_method: PaymentMethodBreakdownRow[];
+}

@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   BarChart2,
+  Banknote,
+  ClipboardList,
   Download,
   Filter,
   Package,
@@ -30,13 +32,40 @@ import {
   YAxis,
   Cell,
 } from 'recharts';
-import { reportsApi } from '@/services/api';
+import { reportsApi, posApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatCurrency, parseApiNumber } from '@/utils';
-import type { ReportsOverview } from '@/types';
+import type { ReportsOverview, SalesBreakdown, CashSession } from '@/types';
 
 type RangeKey = '30d' | '90d' | '12m';
-type TabKey = 'members' | 'pl';
+type TabKey = 'members' | 'pl' | 'caja';
+type CajaPeriod = 'day' | 'week' | 'month' | 'year';
+
+const CAJA_PERIODS: { value: CajaPeriod; label: string }[] = [
+  { value: 'day', label: 'Día' },
+  { value: 'week', label: 'Semana' },
+  { value: 'month', label: 'Mes' },
+  { value: 'year', label: 'Año' },
+];
+
+const METHOD_COLORS = ['#10b981', '#06b6d4', '#8b5cf6', '#f59e0b', '#ec4899', '#6366f1', '#94a3b8'];
+
+function cajaRange(period: CajaPeriod): { from: string; to: string } {
+  const now = new Date();
+  let from = new Date(now);
+  if (period === 'day') {
+    from.setHours(0, 0, 0, 0);
+  } else if (period === 'week') {
+    const day = (now.getDay() + 6) % 7; // lunes = 0
+    from.setDate(now.getDate() - day);
+    from.setHours(0, 0, 0, 0);
+  } else if (period === 'month') {
+    from = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else {
+    from = new Date(now.getFullYear(), 0, 1);
+  }
+  return { from: from.toISOString(), to: now.toISOString() };
+}
 
 function exportCsv(filename: string, rows: string[][]) {
   const content = rows.map((row) => row.map((value) => `"${value}"`).join(',')).join('\n');
@@ -82,6 +111,33 @@ const EXPENSE_COLORS: Record<string, string> = {
 export default function ReportsPage() {
   const [range, setRange] = useState<RangeKey>('12m');
   const [tab, setTab] = useState<TabKey>('members');
+  const [cajaPeriod, setCajaPeriod] = useState<CajaPeriod>('month');
+
+  const { from: cajaFrom, to: cajaTo } = useMemo(() => cajaRange(cajaPeriod), [cajaPeriod]);
+
+  const { data: breakdown, isLoading: breakdownLoading } = useQuery<SalesBreakdown>({
+    queryKey: ['pos-sales-breakdown', cajaFrom, cajaTo],
+    queryFn: () => posApi.salesBreakdown({ from_date: cajaFrom, to_date: cajaTo }).then((r) => r.data),
+    enabled: tab === 'caja',
+  });
+
+  const { data: cashSessions = [], isLoading: sessionsLoading } = useQuery<CashSession[]>({
+    queryKey: ['pos-cash-sessions-history'],
+    queryFn: () => posApi.listCashSessions({ size: 30 }).then((r) => r.data),
+    enabled: tab === 'caja',
+  });
+
+  // La API serializa Decimal como string → convertir a número para los gráficos
+  const methodData = useMemo(
+    () => (breakdown?.by_method ?? []).map((m) => ({
+      ...m,
+      total: parseApiNumber(m.total),
+      subtotal: parseApiNumber(m.subtotal),
+      discount: parseApiNumber(m.discount),
+    })),
+    [breakdown],
+  );
+  const methodTotal = useMemo(() => methodData.reduce((s, m) => s + m.total, 0), [methodData]);
 
   const { data, isLoading, isError } = useQuery<ReportsOverview>({
     queryKey: ['reports-overview', range],
@@ -186,6 +242,19 @@ export default function ReportsPage() {
         >
           <BarChart2 size={15} />
           P&amp;L / Gastos
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('caja')}
+          className={cn(
+            'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+            tab === 'caja'
+              ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
+              : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+          )}
+        >
+          <Banknote size={15} />
+          Caja / Métodos de pago
         </button>
       </div>
 
@@ -528,6 +597,204 @@ export default function ReportsPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </motion.div>
+        </>
+      )}
+
+      {/* ── TAB: CAJA / MÉTODOS DE PAGO ── */}
+      {tab === 'caja' && (
+        <>
+          {/* Period selector */}
+          <motion.div variants={fadeInUp} className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex gap-1 rounded-xl border border-surface-200/50 bg-surface-50 p-1 dark:border-surface-800/50 dark:bg-surface-900/50 w-fit">
+              {CAJA_PERIODS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setCajaPeriod(p.value)}
+                  className={cn(
+                    'rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                    cajaPeriod === p.value
+                      ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
+                      : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => exportCsv(`ventas-metodo-pago-${cajaPeriod}.csv`, [
+                ['Método', 'Transacciones', 'Subtotal', 'Descuento', 'Total'],
+                ...(breakdown?.by_method ?? []).map((m) => [m.label, String(m.count), String(m.subtotal), String(m.discount), String(m.total)]),
+              ])}
+              className="btn-secondary"
+            >
+              <Download size={16} />
+              Exportar
+            </button>
+          </motion.div>
+
+          {/* KPIs */}
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <p className="text-xs text-surface-500">Ventas totales</p>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {breakdownLoading ? '—' : formatCurrency(parseApiNumber(breakdown?.total))}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <p className="text-xs text-surface-500">Transacciones</p>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {breakdownLoading ? '—' : (breakdown?.transaction_count ?? 0)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <p className="text-xs text-surface-500">Efectivo</p>
+              <p className="mt-2 text-2xl font-bold font-display text-emerald-600 dark:text-emerald-400">
+                {breakdownLoading ? '—' : formatCurrency(parseApiNumber(breakdown?.by_method.find((m) => m.payment_method === 'cash')?.total ?? 0))}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-surface-200/50 bg-white p-4 dark:border-surface-800/50 dark:bg-surface-900">
+              <p className="text-xs text-surface-500">Métodos usados</p>
+              <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
+                {breakdownLoading ? '—' : (breakdown?.by_method.length ?? 0)}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.45fr_0.55fr]">
+            {/* Pie por método */}
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Ventas por método de pago</h2>
+              <p className="mt-1 text-sm text-surface-500">Distribución del período</p>
+              <div className="mt-5 h-[280px]">
+                {breakdownLoading ? (
+                  <div className="shimmer h-full rounded-2xl" />
+                ) : methodData.length === 0 ? (
+                  <p className="py-16 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={methodData}
+                        dataKey="total"
+                        nameKey="label"
+                        cx="50%"
+                        cy="45%"
+                        innerRadius={50}
+                        outerRadius={85}
+                        paddingAngle={3}
+                        label={(entry: { label: string; total: number }) =>
+                          `${entry.label} ${methodTotal > 0 ? Math.round((entry.total / methodTotal) * 100) : 0}%`}
+                        labelLine={false}
+                      >
+                        {methodData.map((m, i) => <Cell key={m.payment_method} fill={METHOD_COLORS[i % METHOD_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(value: number, _name, item) => [formatCurrency(value), item?.payload?.label ?? 'Total']} />
+                      <Legend verticalAlign="bottom" align="center" iconType="circle" wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </motion.div>
+
+            {/* Tabla por método */}
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Detalle por método</h2>
+              <p className="mt-1 text-sm text-surface-500">Transacciones e ingresos por medio</p>
+              <div className="mt-4 space-y-3">
+                {breakdownLoading ? (
+                  Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-12 rounded-2xl" />)
+                ) : methodData.length === 0 ? (
+                  <p className="py-10 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+                ) : (
+                  methodData.map((m, i) => {
+                    const pct = methodTotal > 0 ? Math.round((m.total / methodTotal) * 100) : 0;
+                    return (
+                      <div key={m.payment_method} className="rounded-2xl border border-surface-200/60 px-4 py-3 dark:border-surface-800/60">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length] }} />
+                            <span className="truncate text-sm font-medium text-surface-900 dark:text-white">{m.label}</span>
+                            <span className="flex-shrink-0 text-xs text-surface-400">{m.count} ventas</span>
+                          </div>
+                          <span className="flex-shrink-0 text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(m.total)}</span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-100 dark:bg-surface-800">
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length] }} />
+                          </div>
+                          <span className="w-9 text-right text-xs text-surface-400">{pct}%</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Historial de turnos de caja */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex items-center gap-2">
+              <ClipboardList size={18} className="text-brand-500" />
+              <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Historial de turnos de caja</h2>
+            </div>
+            <p className="mt-1 text-sm text-surface-500">Aperturas y cierres recientes con arqueo</p>
+            <div className="mt-4 overflow-x-auto">
+              {sessionsLoading ? (
+                <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-12 rounded-2xl" />)}</div>
+              ) : cashSessions.length === 0 ? (
+                <p className="py-10 text-center text-sm text-surface-400">Sin turnos de caja registrados.</p>
+              ) : (
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-surface-400">
+                      <th className="px-2 py-2 font-medium">Apertura</th>
+                      <th className="px-2 py-2 font-medium">Responsable</th>
+                      <th className="px-2 py-2 font-medium">Estado</th>
+                      <th className="px-2 py-2 text-right font-medium">Fondo</th>
+                      <th className="px-2 py-2 text-right font-medium">Ventas</th>
+                      <th className="px-2 py-2 text-right font-medium">Efectivo esp.</th>
+                      <th className="px-2 py-2 text-right font-medium">Contado</th>
+                      <th className="px-2 py-2 text-right font-medium">Dif.</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
+                    {cashSessions.map((s) => (
+                      <tr key={s.id} className="text-surface-700 dark:text-surface-300">
+                        <td className="px-2 py-2.5 whitespace-nowrap">
+                          {new Date(s.opened_at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="px-2 py-2.5">{s.opened_by_name ?? '—'}</td>
+                        <td className="px-2 py-2.5">
+                          <span className={cn(
+                            'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
+                            s.status === 'open'
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+                              : 'bg-surface-100 text-surface-500 dark:bg-surface-800',
+                          )}>
+                            {s.status === 'open' ? 'Abierta' : 'Cerrada'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(s.opening_amount)}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(s.sales_total)}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{s.expected_cash != null ? formatCurrency(s.expected_cash) : '—'}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{s.closing_amount != null ? formatCurrency(s.closing_amount) : '—'}</td>
+                        <td className={cn(
+                          'px-2 py-2.5 text-right tabular-nums font-medium',
+                          s.difference == null ? 'text-surface-400' : s.difference === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400',
+                        )}>
+                          {s.difference != null ? `${s.difference >= 0 ? '+' : ''}${formatCurrency(s.difference)}` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </motion.div>
         </>

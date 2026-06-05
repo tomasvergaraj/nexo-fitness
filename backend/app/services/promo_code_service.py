@@ -108,6 +108,31 @@ def _invalid_promo_result(reason: str, *, plan: Plan | None = None) -> PromoCode
     )
 
 
+async def _resolve_plan_names(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    plan_ids: list[str],
+) -> list[str]:
+    """Return the names of the given plan ids (tenant-scoped), ordered for display."""
+    allowed_uuids: list[UUID] = []
+    for raw in plan_ids:
+        try:
+            allowed_uuids.append(UUID(str(raw)))
+        except (ValueError, TypeError):
+            continue
+    if not allowed_uuids:
+        return []
+    rows = (
+        await db.execute(
+            select(Plan.name)
+            .where(Plan.tenant_id == tenant_id, Plan.id.in_(allowed_uuids))
+            .order_by(Plan.sort_order, Plan.name)
+        )
+    ).scalars().all()
+    return list(rows)
+
+
 async def resolve_tenant_promo_pricing(
     db: AsyncSession,
     *,
@@ -150,6 +175,11 @@ async def resolve_tenant_promo_pricing(
         except json.JSONDecodeError:
             allowed_ids = []
         if str(plan_id) not in allowed_ids:
-            return _invalid_promo_result("Este código no aplica para el plan seleccionado.", plan=plan)
+            allowed_names = await _resolve_plan_names(db, tenant_id=tenant_id, plan_ids=allowed_ids)
+            if allowed_names:
+                reason = "Este código solo aplica a estos planes: " + ", ".join(allowed_names) + "."
+            else:
+                reason = "Este código no aplica para el plan seleccionado."
+            return _invalid_promo_result(reason, plan=plan)
 
     return build_valid_promo_pricing_result(plan=plan, promo=promo)

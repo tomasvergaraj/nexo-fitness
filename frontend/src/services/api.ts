@@ -269,6 +269,7 @@ export const plansApi = {
   list: (params?: Record<string, unknown>) => api.get('/plans', { params }),
   create: (data: Record<string, unknown>) => api.post('/plans', data),
   update: (id: string, data: Record<string, unknown>) => api.patch(`/plans/${id}`, data),
+  membersCount: (id: string) => api.get<{ affected: number }>(`/plans/${id}/members-count`),
   delete: (id: string) => api.delete(`/plans/${id}`),
 };
 
@@ -508,6 +509,14 @@ export const posApi = {
   getTransaction: (id: string) => api.get(`/pos/transactions/${id}`),
   createTransaction: (data: Record<string, unknown>) => api.post('/pos/transactions', data),
   refundTransaction: (id: string) => api.post(`/pos/transactions/${id}/refund`, {}),
+
+  // Cash register sessions (turnos de caja)
+  currentCashSession: (params?: Record<string, unknown>) => api.get('/pos/cash-sessions/current', { params }),
+  openCashSession: (data: Record<string, unknown>) => api.post('/pos/cash-sessions/open', data),
+  closeCashSession: (id: string, data: Record<string, unknown>) => api.post(`/pos/cash-sessions/${id}/close`, data),
+  listCashSessions: (params?: Record<string, unknown>) => api.get('/pos/cash-sessions', { params }),
+  getCashSession: (id: string) => api.get(`/pos/cash-sessions/${id}`),
+  salesBreakdown: (params: Record<string, unknown>) => api.get('/pos/sales-breakdown', { params }),
 
   // Expenses
   listExpenses: (params?: Record<string, unknown>) => api.get('/pos/expenses', { params }),

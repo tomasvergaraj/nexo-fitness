@@ -271,3 +271,55 @@ class ExpenseResponse(BaseModel):
     created_by: Optional[UUID] = None
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+# ─── CashRegisterSession (turno de caja) ────────────────────────────────────────
+
+class CashSessionOpenIn(BaseModel):
+    opening_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    branch_id: Optional[UUID] = None
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class CashSessionCloseIn(BaseModel):
+    closing_amount: Decimal = Field(ge=0)   # efectivo contado al cierre
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class PaymentMethodBreakdownRow(BaseModel):
+    payment_method: str
+    label: str
+    count: int
+    subtotal: Decimal
+    discount: Decimal
+    total: Decimal
+
+
+class CashSessionResponse(BaseModel):
+    id: UUID
+    branch_id: Optional[UUID] = None
+    status: str
+    opened_by: Optional[UUID] = None
+    opened_by_name: Optional[str] = None
+    opened_at: datetime
+    opening_amount: Decimal
+    closed_by: Optional[UUID] = None
+    closed_by_name: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    closing_amount: Optional[Decimal] = None
+    expected_cash: Optional[Decimal] = None
+    difference: Optional[Decimal] = None
+    notes: Optional[str] = None
+    # agregados calculados sobre las ventas del turno
+    sales_total: Decimal = Decimal("0")
+    sales_count: int = 0
+    cash_sales: Decimal = Decimal("0")
+    by_method: List[PaymentMethodBreakdownRow] = []
+
+
+class SalesBreakdownResponse(BaseModel):
+    from_date: datetime
+    to_date: datetime
+    total: Decimal
+    transaction_count: int
+    by_method: List[PaymentMethodBreakdownRow] = []

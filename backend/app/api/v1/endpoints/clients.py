@@ -1,7 +1,7 @@
 """Clients, Plans, and Payments API endpoints."""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -15,8 +15,10 @@ from app.core.database import get_db
 from app.core.dependencies import get_tenant_context, TenantContext, require_roles, require_plans_write
 from app.core.exceptions import PlanLimitReachedError
 from app.core.security import hash_password
+from app.core.timezone import tenant_zone
 from app.models.user import User, UserRole
 from app.models.business import Plan, PlanKind, Membership, MembershipStatus, Payment, PaymentStatus, Reservation, ReservationStatus, CheckIn
+from app.models.platform import PushSubscription
 from app.schemas.auth import UserCreate, UserUpdate, UserResponse, UserClientResponse, UserDetailResponse, ClientListResponse
 from app.schemas.business import (
     PlanCreate, PlanUpdate, PlanResponse,
@@ -25,7 +27,7 @@ from app.schemas.business import (
 )
 from app.services import client_import_service
 from app.services.tenant_quota_service import assert_can_create_client, get_tenant_usage_snapshot
-from app.services.membership_sale_service import apply_payment_membership_snapshot, resolve_membership_timeline
+from app.services.membership_sale_service import apply_payment_membership_snapshot, resolve_membership_timeline, resolve_membership_expiration
 from app.services.user_account_service import purge_user_account
 
 # ─── Clients Router ──────────────────────────────────────────────────────────
@@ -43,6 +45,12 @@ async def list_clients(
     birthday_month: bool = Query(False),
     churn_risk: Optional[str] = Query(None, pattern="^(high|medium|low)$"),
     plan_id: Optional[UUID] = Query(None, description="Filtra por plan de la membresía vigente"),
+    expiring_filter: Optional[str] = Query(
+        None,
+        pattern="^(upcoming|expired)$",
+        description="upcoming = vencen entre hoy y fin de mes; expired = ya vencieron este mes (tenant tz)",
+    ),
+    app_usage: Optional[str] = Query(None, pattern="^(active|qr_only)$", description="active = tiene push token; qr_only = sin push o marcado prefers_qr_card"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
@@ -78,10 +86,101 @@ async def list_clients(
             extract("month", User.date_of_birth) == current_month,
         )
 
+    # app_usage: filtra por presencia de PushSubscription activa + override prefers_qr_card.
+    if app_usage:
+        active_push_users = (
+            select(PushSubscription.user_id)
+            .where(
+                PushSubscription.tenant_id == ctx.tenant_id,
+                PushSubscription.is_active == True,
+                PushSubscription.expo_push_token.is_not(None),
+            )
+        )
+        if app_usage == "active":
+            base = base.where(User.id.in_(active_push_users), User.prefers_qr_card == False)
+            count_base = count_base.where(User.id.in_(active_push_users), User.prefers_qr_card == False)
+        else:  # qr_only
+            base = base.where(or_(User.prefers_qr_card == True, ~User.id.in_(active_push_users)))
+            count_base = count_base.where(or_(User.prefers_qr_card == True, ~User.id.in_(active_push_users)))
+
+    # expiring_filter:
+    #   upcoming → membresías activas que vencen entre hoy y los próximos 30 días (rolling)
+    #   expired  → membresías cuyo expires_at ya pasó dentro del mes actual
+    #              (incluye las marcadas ACTIVE en DB sin haberse refrescado aún)
+    expiring_order_col = None
+    expiring_exp_by_user: dict[UUID, date] = {}
+    expiring_window_start: Optional[date] = None
+    expiring_window_end: Optional[date] = None
+    if expiring_filter:
+        zone = tenant_zone(ctx)
+        now_local = datetime.now(zone)
+        today_local = now_local.date()
+        if expiring_filter == "upcoming":
+            expiring_window_start = today_local
+            expiring_window_end = today_local + timedelta(days=30)
+            allowed_statuses = [MembershipStatus.ACTIVE]
+        else:  # expired
+            month_start = today_local.replace(day=1)
+            expiring_window_start = month_start
+            expiring_window_end = today_local - timedelta(days=1)
+            allowed_statuses = [MembershipStatus.ACTIVE, MembershipStatus.EXPIRED]
+        expiring_sub = (
+            select(
+                Membership.user_id.label("uid"),
+                func.min(Membership.expires_at).label("min_exp"),
+            )
+            .where(
+                Membership.tenant_id == ctx.tenant_id,
+                Membership.status.in_(allowed_statuses),
+                Membership.expires_at.is_not(None),
+                Membership.expires_at >= expiring_window_start,
+                Membership.expires_at <= expiring_window_end,
+            )
+            .group_by(Membership.user_id)
+            .subquery()
+        )
+        base = base.join(expiring_sub, expiring_sub.c.uid == User.id)
+        count_base = count_base.join(expiring_sub, expiring_sub.c.uid == User.id)
+        expiring_order_col = expiring_sub.c.min_exp
+
     total = (await db.execute(count_base)).scalar() or 0
-    query = base.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
-    result = await db.execute(query)
-    clients = result.scalars().all()
+    expiring_status_by_user: dict[UUID, str] = {}
+    if expiring_order_col is not None:
+        query = base.order_by(expiring_order_col.asc()).offset((page - 1) * per_page).limit(per_page)
+        result = await db.execute(query)
+        clients = result.scalars().all()
+        page_user_ids = [c.id for c in clients]
+        if page_user_ids:
+            inmonth_rows = (
+                await db.execute(
+                    select(Membership.user_id, Membership.expires_at, Membership.status)
+                    .where(
+                        Membership.tenant_id == ctx.tenant_id,
+                        Membership.user_id.in_(page_user_ids),
+                        Membership.status.in_(allowed_statuses),
+                        Membership.expires_at.is_not(None),
+                        Membership.expires_at >= expiring_window_start,
+                        Membership.expires_at <= expiring_window_end,
+                    )
+                )
+            ).all()
+            # Por cliente: tomar la membresía con vencimiento más cercano (sort key) y
+            # forzar status "expired" si la fecha ya pasó, aunque el registro siga en
+            # ACTIVE (la transición la hace sync_membership_timeline en cada acceso).
+            grouped: dict[UUID, list[tuple]] = {}
+            for uid, exp, st in inmonth_rows:
+                grouped.setdefault(uid, []).append((exp, st))
+            for uid, rows in grouped.items():
+                exp, st = min(rows, key=lambda x: x[0])
+                expiring_exp_by_user[uid] = exp
+                status_val = st.value if hasattr(st, "value") else str(st)
+                if exp < today_local and status_val == "active":
+                    status_val = "expired"
+                expiring_status_by_user[uid] = status_val
+    else:
+        query = base.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
+        result = await db.execute(query)
+        clients = result.scalars().all()
 
     # Enrich each client with their effective current membership
     client_ids = [c.id for c in clients]
@@ -123,6 +222,23 @@ async def list_clients(
     ).all()
     last_checkin_by_user: dict = {row.user_id: row.last_at for row in last_checkin_rows}
 
+    # Set de user_ids con push subscription activa (= app móvil instalada y activa).
+    app_user_ids: set[UUID] = set()
+    if client_ids:
+        push_rows = (
+            await db.execute(
+                select(PushSubscription.user_id)
+                .where(
+                    PushSubscription.tenant_id == ctx.tenant_id,
+                    PushSubscription.user_id.in_(client_ids),
+                    PushSubscription.is_active == True,
+                    PushSubscription.expo_push_token.is_not(None),
+                )
+                .distinct()
+            )
+        ).all()
+        app_user_ids = {row.user_id for row in push_rows}
+
     def compute_churn_risk(membership: Optional[Membership], last_checkin_at) -> str:
         now = datetime.now(timezone.utc)
         # Expired or cancelled membership → high risk regardless of activity
@@ -162,16 +278,27 @@ async def list_clients(
         dob = c.date_of_birth
         if hasattr(dob, 'date'):
             dob = dob.date()
+        uses_app = (c.id in app_user_ids) and not c.prefers_qr_card
+        # Si el filtro expiring_this_month está activo, la fecha relevante (y la usada para
+        # ordenar) es la del vencimiento dentro del mes — que puede no ser la del
+        # "current_membership" si el cliente ya tiene una renovación posterior.
+        display_expires_at = membership.expires_at if membership else None
+        display_status = membership.status.value if membership else None
+        if expiring_filter and c.id in expiring_exp_by_user:
+            display_expires_at = expiring_exp_by_user[c.id]
+            display_status = expiring_status_by_user.get(c.id, display_status)
         items.append(
             UserClientResponse(
                 **UserResponse.model_validate(c).model_dump(),
                 date_of_birth=dob,
                 membership_id=membership.id if membership else None,
-                membership_status=membership.status.value if membership else None,
-                membership_expires_at=membership.expires_at if membership else None,
+                membership_status=display_status,
+                membership_expires_at=display_expires_at,
                 membership_notes=membership.notes if membership else None,
                 plan_name=plan.name if plan else None,
                 churn_risk=risk,
+                prefers_qr_card=c.prefers_qr_card,
+                uses_app=uses_app,
             )
         )
 
@@ -251,6 +378,8 @@ async def export_clients(
     status_filter: Optional[str] = Query(None, alias="status"),
     birthday_month: bool = Query(False),
     churn_risk: Optional[str] = Query(None, pattern="^(high|medium|low)$"),
+    expiring_filter: Optional[str] = Query(None, pattern="^(upcoming|expired)$"),
+    app_usage: Optional[str] = Query(None, pattern="^(active|qr_only)$"),
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     _user=Depends(require_roles("owner", "admin", "reception", "trainer", "marketing")),
@@ -278,14 +407,96 @@ async def export_clients(
             extract("month", User.date_of_birth) == current_month,
         )
 
-    clients = (
-        await db.execute(base.order_by(User.first_name.asc(), User.last_name.asc()).limit(5000))
-    ).scalars().all()
+    if app_usage:
+        active_push_users = (
+            select(PushSubscription.user_id)
+            .where(
+                PushSubscription.tenant_id == ctx.tenant_id,
+                PushSubscription.is_active == True,
+                PushSubscription.expo_push_token.is_not(None),
+            )
+        )
+        if app_usage == "active":
+            base = base.where(User.id.in_(active_push_users), User.prefers_qr_card == False)
+        else:
+            base = base.where(or_(User.prefers_qr_card == True, ~User.id.in_(active_push_users)))
+
+    expiring_order_col = None
+    expiring_window_start: Optional[date] = None
+    expiring_window_end: Optional[date] = None
+    allowed_statuses: list[MembershipStatus] = []
+    today_local: Optional[date] = None
+    if expiring_filter:
+        zone = tenant_zone(ctx)
+        now_local = datetime.now(zone)
+        today_local = now_local.date()
+        if expiring_filter == "upcoming":
+            expiring_window_start = today_local
+            expiring_window_end = today_local + timedelta(days=30)
+            allowed_statuses = [MembershipStatus.ACTIVE]
+        else:
+            expiring_window_start = today_local.replace(day=1)
+            expiring_window_end = today_local - timedelta(days=1)
+            allowed_statuses = [MembershipStatus.ACTIVE, MembershipStatus.EXPIRED]
+        expiring_sub = (
+            select(
+                Membership.user_id.label("uid"),
+                func.min(Membership.expires_at).label("min_exp"),
+            )
+            .where(
+                Membership.tenant_id == ctx.tenant_id,
+                Membership.status.in_(allowed_statuses),
+                Membership.expires_at.is_not(None),
+                Membership.expires_at >= expiring_window_start,
+                Membership.expires_at <= expiring_window_end,
+            )
+            .group_by(Membership.user_id)
+            .subquery()
+        )
+        base = base.join(expiring_sub, expiring_sub.c.uid == User.id)
+        expiring_order_col = expiring_sub.c.min_exp
+
+    if expiring_order_col is not None:
+        order_query = base.order_by(expiring_order_col.asc()).limit(5000)
+    else:
+        order_query = base.order_by(User.first_name.asc(), User.last_name.asc()).limit(5000)
+    clients = (await db.execute(order_query)).scalars().all()
 
     if not clients:
         raise HTTPException(status_code=404, detail="No hay clientes para exportar con esos filtros")
 
     client_ids = [c.id for c in clients]
+
+    # Override del expires_at + status mostrados por los del mes (sort key) — un cliente
+    # con expires_at ya pasado puede seguir marcado como ACTIVE en DB porque
+    # sync_membership_timeline solo flip-ea en accesos; aquí forzamos "Vencida" si la
+    # fecha ya pasó, para no exportar contradictorio.
+    expiring_exp_by_user: dict[UUID, date] = {}
+    expiring_status_by_user: dict[UUID, str] = {}
+    if expiring_filter and client_ids and today_local is not None:
+        inmonth_rows = (
+            await db.execute(
+                select(Membership.user_id, Membership.expires_at, Membership.status)
+                .where(
+                    Membership.tenant_id == ctx.tenant_id,
+                    Membership.user_id.in_(client_ids),
+                    Membership.status.in_(allowed_statuses),
+                    Membership.expires_at.is_not(None),
+                    Membership.expires_at >= expiring_window_start,
+                    Membership.expires_at <= expiring_window_end,
+                )
+            )
+        ).all()
+        grouped: dict[UUID, list[tuple]] = {}
+        for uid, exp, st in inmonth_rows:
+            grouped.setdefault(uid, []).append((exp, st))
+        for uid, rows in grouped.items():
+            exp, st = min(rows, key=lambda x: x[0])
+            expiring_exp_by_user[uid] = exp
+            status_val = st.value if hasattr(st, "value") else str(st)
+            if exp < today_local and status_val == "active":
+                status_val = "expired"
+            expiring_status_by_user[uid] = status_val
 
     membership_rows = (
         await db.execute(
@@ -348,6 +559,18 @@ async def export_clients(
             return "medium"
         return "low"
 
+    # created_at y last_checkin son timestamps UTC; el "día real" del evento es el
+    # del calendario en la zona del tenant. Sin convertir, un registro de las 22:00
+    # en Chile (02:00 UTC del día siguiente) se exportaría con un día de más.
+    zone = tenant_zone(ctx)
+
+    def _local_date(dt) -> Optional[date]:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(zone).date()
+
     records: list[dict] = []
     for c in clients:
         membership = latest_membership.get(c.id)
@@ -365,6 +588,17 @@ async def export_clients(
         except (json.JSONDecodeError, TypeError):
             tags_list = []
 
+        display_expires_at = membership.expires_at if membership else None
+        membership_status_value = membership.status.value if membership else ""
+        if expiring_filter and c.id in expiring_exp_by_user:
+            display_expires_at = expiring_exp_by_user[c.id]
+            membership_status_value = expiring_status_by_user.get(c.id, membership_status_value)
+        membership_status_text = (
+            membership_status_label.get(membership_status_value, "")
+            if membership_status_value
+            else ("Sin membresía" if not membership else "")
+        )
+
         records.append({
             "first_name": c.first_name,
             "last_name": c.last_name,
@@ -378,13 +612,11 @@ async def export_clients(
             "tags": tags_list,
             "is_active": c.is_active,
             "plan_name": plan.name if plan else None,
-            "membership_status": membership_status_label.get(
-                membership.status.value if membership else "", ""
-            ) if membership else "Sin membresía",
-            "membership_expires_at": membership.expires_at if membership else None,
+            "membership_status": membership_status_text,
+            "membership_expires_at": display_expires_at,
             "churn_risk_label": risk_label_map.get(risk, ""),
-            "last_checkin_at": last_ci,
-            "created_at": c.created_at,
+            "last_checkin_at": _local_date(last_ci),
+            "created_at": _local_date(c.created_at),
         })
 
     if not records:
@@ -899,6 +1131,25 @@ async def create_plan(
     return PlanResponse.model_validate(plan)
 
 
+@plans_router.get("/{plan_id}/members-count")
+async def count_plan_members(
+    plan_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_plans_write()),
+):
+    """Cuenta las membresías no canceladas de un plan — las que se reajustarían
+    al cambiar su duración. Usado por el frontend para advertir antes de guardar."""
+    result = await db.execute(
+        select(func.count(Membership.id)).where(
+            Membership.plan_id == plan_id,
+            Membership.tenant_id == ctx.tenant_id,
+            Membership.status != MembershipStatus.CANCELLED,
+        )
+    )
+    return {"affected": result.scalar_one()}
+
+
 @plans_router.patch("/{plan_id}", response_model=PlanResponse)
 async def update_plan(
     plan_id: UUID,
@@ -914,11 +1165,48 @@ async def update_plan(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan no encontrado")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    duration_changed = (
+        ("duration_type" in changes and changes["duration_type"] != plan.duration_type)
+        or ("duration_days" in changes and changes["duration_days"] != plan.duration_days)
+    )
+
+    for field, value in changes.items():
         setattr(plan, field, value)
 
     await db.flush()
     await db.refresh(plan)
+
+    # Si cambió la duración del plan, recalcular la fecha de vencimiento de las
+    # membresías existentes (no canceladas) sobre la nueva duración: expires_at =
+    # starts_at + nueva duración. Reactiva vencidas y vence activas según corresponda.
+    if duration_changed:
+        today = datetime.now(tenant_zone(ctx.tenant)).date()
+        memberships = (
+            await db.execute(
+                select(Membership).where(
+                    Membership.plan_id == plan.id,
+                    Membership.tenant_id == ctx.tenant_id,
+                    Membership.status != MembershipStatus.CANCELLED,
+                )
+            )
+        ).scalars().all()
+        for membership in memberships:
+            membership.expires_at = resolve_membership_expiration(
+                starts_at=membership.starts_at, plan=plan
+            )
+            # Las congeladas conservan FROZEN hasta descongelar; solo cambia la fecha.
+            if membership.status == MembershipStatus.FROZEN:
+                continue
+            # Recalcular estado según las nuevas fechas (futuro→PENDING, vencido→EXPIRED).
+            if membership.starts_at > today:
+                membership.status = MembershipStatus.PENDING
+            elif membership.expires_at is not None and membership.expires_at <= today:
+                membership.status = MembershipStatus.EXPIRED
+            else:
+                membership.status = MembershipStatus.ACTIVE
+        await db.flush()
+
     return PlanResponse.model_validate(plan)
 
 

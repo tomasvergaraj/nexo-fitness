@@ -86,6 +86,24 @@ const resolveDurationPayload = (form: PlanFormState) => {
   }
 };
 
+// Duración final que se enviará al backend (replica la lógica de la mutación
+// updatePlan, incluyendo punch_pass / drop_in). Usada para detectar si la
+// duración cambió respecto al plan original y advertir antes de guardar.
+const resolveFinalDuration = (form: PlanFormState) => {
+  const duration = resolveDurationPayload(form);
+  const isPunchPass = form.plan_kind === 'punch_pass';
+  const isDropIn = form.plan_kind === 'drop_in';
+  const duration_days = isDropIn
+    ? 1
+    : isPunchPass
+      ? form.duration_days
+        ? Number(form.duration_days)
+        : 90
+      : duration?.duration_days ?? null;
+  const duration_type = isDropIn || isPunchPass ? ('custom' as const) : duration?.duration_type ?? null;
+  return { duration_type, duration_days };
+};
+
 function SettingToggleCard({
   title,
   description,
@@ -190,6 +208,10 @@ export default function PlansPage() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<PlanFormState>(emptyForm);
   const [planToDelete, setPlanToDelete] = useState<Plan | null>(null);
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
+  // Confirmación al cambiar la duración de un plan con membresías existentes.
+  const [durationConfirm, setDurationConfirm] = useState<{ affected: number } | null>(null);
+  const [checkingMembers, setCheckingMembers] = useState(false);
 
   const { data, isLoading, isError } = useQuery<PaginatedResponse<Plan>>({
     queryKey: ['plans'],
@@ -278,10 +300,17 @@ export default function PlansPage() {
       return response.data;
     },
     onSuccess: () => {
-      toast.success('Plan actualizado');
+      toast.success(
+        durationConfirm
+          ? `Plan actualizado. ${durationConfirm.affected} ${durationConfirm.affected === 1 ? 'membresía reajustada' : 'membresías reajustadas'}.`
+          : 'Plan actualizado',
+      );
       setShowModal(false);
       setForm(emptyForm);
+      setEditingPlan(null);
+      setDurationConfirm(null);
       queryClient.invalidateQueries({ queryKey: ['plans'] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
     onError: (error: any) => {
       toast.error(getApiError(error, 'No se pudo actualizar el plan'));
@@ -335,6 +364,7 @@ export default function PlansPage() {
           whileTap={{ scale: 0.98 }}
           onClick={() => {
             setForm(emptyForm);
+            setEditingPlan(null);
             setShowModal(true);
           }}
           className="btn-primary text-sm"
@@ -367,6 +397,7 @@ export default function PlansPage() {
                   type="button"
                   onClick={() => {
                     setForm(emptyForm);
+                    setEditingPlan(null);
                     setShowModal(true);
                   }}
                   className="btn-primary text-sm"
@@ -489,6 +520,7 @@ export default function PlansPage() {
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     setForm(toFormState(plan));
+                    setEditingPlan(plan);
                     setShowModal(true);
                   }}
                   className={cn(
@@ -543,13 +575,34 @@ export default function PlansPage() {
       >
         <form
           className="space-y-4"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            if (isEditing) {
-              updatePlan.mutate();
-            } else {
+            if (!isEditing) {
               createPlan.mutate();
+              return;
             }
+            // Si cambió la duración del plan, advertir cuántos clientes se reajustarán.
+            if (editingPlan && form.id) {
+              const final = resolveFinalDuration(form);
+              const durationChanged =
+                final.duration_type !== editingPlan.duration_type
+                || (final.duration_days ?? null) !== (editingPlan.duration_days ?? null);
+              if (durationChanged) {
+                setCheckingMembers(true);
+                try {
+                  const { data } = await plansApi.membersCount(form.id);
+                  if (data.affected > 0) {
+                    setDurationConfirm({ affected: data.affected });
+                    return;
+                  }
+                } catch {
+                  // Si falla el conteo, no bloqueamos el guardado.
+                } finally {
+                  setCheckingMembers(false);
+                }
+              }
+            }
+            updatePlan.mutate();
           }}
         >
           <div className="grid gap-4 sm:grid-cols-2">
@@ -845,8 +898,12 @@ export default function PlansPage() {
             <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>
               Cancelar
             </button>
-            <button type="submit" className="btn-primary" disabled={createPlan.isPending || updatePlan.isPending}>
-              {createPlan.isPending || updatePlan.isPending
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={createPlan.isPending || updatePlan.isPending || checkingMembers}
+            >
+              {createPlan.isPending || updatePlan.isPending || checkingMembers
                 ? 'Guardando...'
                 : isEditing ? 'Guardar cambios' : 'Crear plan'}
             </button>
@@ -872,6 +929,32 @@ export default function PlansPage() {
             onClick={() => planToDelete && deletePlan.mutate(planToDelete.id)}
           >
             {deletePlan.isPending ? 'Eliminando...' : 'Eliminar'}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(durationConfirm)}
+        title="Cambiar duración del plan"
+        description={
+          durationConfirm
+            ? `Este plan tiene ${durationConfirm.affected} ${durationConfirm.affected === 1 ? 'membresía no cancelada' : 'membresías no canceladas'}. Al cambiar la duración se recalculará su vencimiento (inicio + nueva duración). Las vigentes se ajustarán y las vencidas podrían reactivarse o vencer según la nueva fecha.`
+            : ''
+        }
+        onClose={() => setDurationConfirm(null)}
+        size="sm"
+      >
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className="btn-secondary" onClick={() => setDurationConfirm(null)}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={updatePlan.isPending}
+            onClick={() => updatePlan.mutate()}
+          >
+            {updatePlan.isPending ? 'Guardando...' : 'Aplicar a todos'}
           </button>
         </div>
       </Modal>

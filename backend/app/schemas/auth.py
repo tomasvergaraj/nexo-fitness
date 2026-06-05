@@ -189,6 +189,7 @@ class UserUpdate(BaseModel):
     tags: Optional[List[str]] = None
     internal_notes: Optional[str] = None
     is_active: Optional[bool] = None
+    prefers_qr_card: Optional[bool] = None
 
 
 class UserSelfUpdate(BaseModel):
@@ -222,6 +223,7 @@ class UserDetailResponse(UserResponse):
     tags: Optional[str] = None
     internal_notes: Optional[str] = None
     last_login_at: Optional[datetime] = None
+    prefers_qr_card: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -235,6 +237,8 @@ class UserClientResponse(UserResponse):
     membership_notes: Optional[str] = None
     plan_name: Optional[str] = None
     churn_risk: Optional[str] = None  # "low" | "medium" | "high"
+    prefers_qr_card: bool = False
+    uses_app: bool = False  # has any active PushSubscription
 
     model_config = {"from_attributes": True}
 

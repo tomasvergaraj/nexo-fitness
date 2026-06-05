@@ -24,6 +24,8 @@ from app.services.image_service import (
     upload_product_image,
 )
 from app.models.pos import (
+    CashRegisterSession,
+    CashSessionStatus,
     Expense,
     Inventory,
     InventoryMovement,
@@ -40,9 +42,14 @@ from app.models.pos import (
 )
 from app.models.user import User
 from app.schemas.pos import (
+    CashSessionCloseIn,
+    CashSessionOpenIn,
+    CashSessionResponse,
     ExpenseCreate,
     ExpenseResponse,
     ExpenseUpdate,
+    PaymentMethodBreakdownRow,
+    SalesBreakdownResponse,
     InventoryMovementResponse,
     InventoryResponse,
     POSTransactionCreate,
@@ -65,6 +72,24 @@ from app.schemas.pos import (
 pos_router = APIRouter(prefix="/pos", tags=["POS"])
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
+
+PAYMENT_METHOD_LABELS = {
+    "cash": "Efectivo",
+    "debit_card": "Débito",
+    "credit_card": "Crédito",
+    "transfer": "Transferencia",
+    "other": "Otro",
+    "stripe": "Stripe",
+    "webpay": "WebPay",
+    "tuu": "TUU",
+    "mercadopago": "MercadoPago",
+    "fintoc": "Fintoc",
+}
+
+
+def _payment_label(method: str) -> str:
+    return PAYMENT_METHOD_LABELS.get(method, method.replace("_", " ").title())
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -932,6 +957,14 @@ async def create_transaction(
 ):
     now = _now()
 
+    # ── require an open cash session for this branch ──────────────────────────
+    session = await _open_session_for_branch(db, ctx.tenant_id, body.branch_id)
+    if not session:
+        raise HTTPException(
+            status_code=409,
+            detail="No hay un turno de caja abierto. Abre la caja antes de registrar ventas.",
+        )
+
     # ── validate and lock inventory rows ──────────────────────────────────────
     product_ids = [item.product_id for item in body.items]
     products = {
@@ -986,6 +1019,7 @@ async def create_transaction(
         tenant_id=ctx.tenant_id,
         branch_id=body.branch_id,
         cashier_id=user.id,
+        session_id=session.id,
         subtotal=subtotal,
         discount_amount=discount,
         total=total,
@@ -1154,6 +1188,254 @@ async def refund_transaction(
     await db.commit()
     await db.refresh(tx)
     return await _build_tx_response(db, tx)
+
+
+# ─── Cash register sessions (turnos de caja) ────────────────────────────────────
+
+async def _breakdown_rows(
+    db: AsyncSession,
+    tenant_id: UUID,
+    *,
+    from_dt: Optional[datetime] = None,
+    to_dt: Optional[datetime] = None,
+    session_id: Optional[UUID] = None,
+) -> tuple[list[PaymentMethodBreakdownRow], Decimal, int]:
+    """Aggregate COMPLETED POS sales grouped by payment_method."""
+    conditions = [
+        POSTransaction.tenant_id == tenant_id,
+        POSTransaction.status == POSTransactionStatus.COMPLETED,
+    ]
+    if session_id is not None:
+        conditions.append(POSTransaction.session_id == session_id)
+    if from_dt is not None:
+        conditions.append(POSTransaction.sold_at >= from_dt)
+    if to_dt is not None:
+        conditions.append(POSTransaction.sold_at <= to_dt)
+
+    q = (
+        select(
+            POSTransaction.payment_method,
+            func.count(POSTransaction.id),
+            func.coalesce(func.sum(POSTransaction.subtotal), 0),
+            func.coalesce(func.sum(POSTransaction.discount_amount), 0),
+            func.coalesce(func.sum(POSTransaction.total), 0),
+        )
+        .where(*conditions)
+        .group_by(POSTransaction.payment_method)
+        .order_by(func.coalesce(func.sum(POSTransaction.total), 0).desc())
+    )
+    rows = (await db.execute(q)).all()
+
+    out: list[PaymentMethodBreakdownRow] = []
+    grand_total = Decimal("0")
+    grand_count = 0
+    for method, count, subtotal, discount, total in rows:
+        out.append(
+            PaymentMethodBreakdownRow(
+                payment_method=method,
+                label=_payment_label(method),
+                count=count,
+                subtotal=Decimal(subtotal),
+                discount=Decimal(discount),
+                total=Decimal(total),
+            )
+        )
+        grand_total += Decimal(total)
+        grand_count += count
+    return out, grand_total, grand_count
+
+
+async def _user_name(db: AsyncSession, user_id: Optional[UUID]) -> Optional[str]:
+    if not user_id:
+        return None
+    u = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    return f"{u.first_name} {u.last_name}" if u else None
+
+
+async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> CashSessionResponse:
+    by_method, sales_total, sales_count = await _breakdown_rows(db, s.tenant_id, session_id=s.id)
+    cash_sales = next((r.total for r in by_method if r.payment_method == "cash"), Decimal("0"))
+    return CashSessionResponse(
+        id=s.id,
+        branch_id=s.branch_id,
+        status=s.status.value if hasattr(s.status, "value") else s.status,
+        opened_by=s.opened_by,
+        opened_by_name=await _user_name(db, s.opened_by),
+        opened_at=s.opened_at,
+        opening_amount=s.opening_amount or Decimal("0"),
+        closed_by=s.closed_by,
+        closed_by_name=await _user_name(db, s.closed_by),
+        closed_at=s.closed_at,
+        closing_amount=s.closing_amount,
+        expected_cash=s.expected_cash,
+        difference=s.difference,
+        notes=s.notes,
+        sales_total=sales_total,
+        sales_count=sales_count,
+        cash_sales=cash_sales,
+        by_method=by_method,
+    )
+
+
+async def _open_session_for_branch(
+    db: AsyncSession, tenant_id: UUID, branch_id: Optional[UUID]
+) -> Optional[CashRegisterSession]:
+    q = select(CashRegisterSession).where(
+        CashRegisterSession.tenant_id == tenant_id,
+        CashRegisterSession.status == CashSessionStatus.OPEN,
+    )
+    q = q.where(
+        CashRegisterSession.branch_id == branch_id
+        if branch_id is not None
+        else CashRegisterSession.branch_id.is_(None)
+    )
+    q = q.order_by(CashRegisterSession.opened_at.desc()).limit(1)
+    return (await db.execute(q)).scalar_one_or_none()
+
+
+@pos_router.get("/cash-sessions/current", response_model=Optional[CashSessionResponse])
+async def get_current_cash_session(
+    branch_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    s = await _open_session_for_branch(db, ctx.tenant_id, branch_id)
+    if not s:
+        return None
+    return await _build_session_response(db, s)
+
+
+@pos_router.post("/cash-sessions/open", response_model=CashSessionResponse, status_code=201)
+async def open_cash_session(
+    body: CashSessionOpenIn,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    user=Depends(require_roles("owner", "admin", "reception")),
+):
+    existing = await _open_session_for_branch(db, ctx.tenant_id, body.branch_id)
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya hay un turno de caja abierto para esta sucursal")
+
+    now = _now()
+    s = CashRegisterSession(
+        id=uuid4(),
+        tenant_id=ctx.tenant_id,
+        branch_id=body.branch_id,
+        status=CashSessionStatus.OPEN,
+        opened_by=user.id,
+        opened_at=now,
+        opening_amount=body.opening_amount,
+        notes=body.notes,
+        created_at=now,
+    )
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
+    return await _build_session_response(db, s)
+
+
+@pos_router.post("/cash-sessions/{session_id}/close", response_model=CashSessionResponse)
+async def close_cash_session(
+    session_id: UUID,
+    body: CashSessionCloseIn,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    user=Depends(require_roles("owner", "admin", "reception")),
+):
+    s = (
+        await db.execute(
+            select(CashRegisterSession).where(
+                CashRegisterSession.id == session_id,
+                CashRegisterSession.tenant_id == ctx.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Turno de caja no encontrado")
+    if s.status != CashSessionStatus.OPEN:
+        raise HTTPException(status_code=400, detail="El turno de caja ya está cerrado")
+
+    by_method, _, _ = await _breakdown_rows(db, ctx.tenant_id, session_id=s.id)
+    cash_sales = next((r.total for r in by_method if r.payment_method == "cash"), Decimal("0"))
+    expected = (s.opening_amount or Decimal("0")) + cash_sales
+
+    now = _now()
+    s.status = CashSessionStatus.CLOSED
+    s.closed_by = user.id
+    s.closed_at = now
+    s.closing_amount = body.closing_amount
+    s.expected_cash = expected
+    s.difference = body.closing_amount - expected
+    if body.notes:
+        s.notes = f"{s.notes}\n{body.notes}" if s.notes else body.notes
+    await db.commit()
+    await db.refresh(s)
+    return await _build_session_response(db, s)
+
+
+@pos_router.get("/cash-sessions", response_model=List[CashSessionResponse])
+async def list_cash_sessions(
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    branch_id: Optional[UUID] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    q = select(CashRegisterSession).where(CashRegisterSession.tenant_id == ctx.tenant_id)
+    if from_date:
+        q = q.where(CashRegisterSession.opened_at >= from_date)
+    if to_date:
+        q = q.where(CashRegisterSession.opened_at <= to_date)
+    if branch_id:
+        q = q.where(CashRegisterSession.branch_id == branch_id)
+    if status_filter:
+        q = q.where(CashRegisterSession.status == status_filter)
+    q = q.order_by(CashRegisterSession.opened_at.desc()).offset((page - 1) * size).limit(size)
+    sessions = (await db.execute(q)).scalars().all()
+    return [await _build_session_response(db, s) for s in sessions]
+
+
+@pos_router.get("/cash-sessions/{session_id}", response_model=CashSessionResponse)
+async def get_cash_session(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    s = (
+        await db.execute(
+            select(CashRegisterSession).where(
+                CashRegisterSession.id == session_id,
+                CashRegisterSession.tenant_id == ctx.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Turno de caja no encontrado")
+    return await _build_session_response(db, s)
+
+
+@pos_router.get("/sales-breakdown", response_model=SalesBreakdownResponse)
+async def sales_breakdown(
+    from_date: datetime,
+    to_date: datetime,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    by_method, total, count = await _breakdown_rows(db, ctx.tenant_id, from_dt=from_date, to_dt=to_date)
+    return SalesBreakdownResponse(
+        from_date=from_date,
+        to_date=to_date,
+        total=total,
+        transaction_count=count,
+        by_method=by_method,
+    )
 
 
 # ─── Expenses ─────────────────────────────────────────────────────────────────
