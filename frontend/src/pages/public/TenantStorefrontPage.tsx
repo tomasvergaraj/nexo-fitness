@@ -43,6 +43,7 @@ import {
   normalizeHexColor,
   readableInk,
   relativeLuminance,
+  withAlpha,
 } from '@/utils';
 import type { PromoCodeValidateResponse, PublicCheckoutSession, TenantPublicProfile } from '@/types';
 
@@ -821,7 +822,7 @@ export default function TenantStorefrontPage() {
 
                 <div className="mt-5 rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
                   <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
-                    <Tag size={16} className="text-brand-600" />
+                    <Tag size={16} style={{ color: primaryColor }} />
                     Código promocional
                   </div>
                   <div className="mt-4 flex gap-2">
@@ -889,7 +890,7 @@ export default function TenantStorefrontPage() {
                     Flujo guiado para crear tu acceso y pagar sin vueltas
                   </div>
                   <div className="mt-3 flex items-center gap-3 text-sm text-surface-600 dark:text-surface-300">
-                    <BadgeCheck size={18} className="text-brand-600" />
+                    <BadgeCheck size={18} style={{ color: primaryColor }} />
                     Si ya tienes cuenta con este correo, mantendremos tu acceso actual
                   </div>
                 </div>
@@ -1084,7 +1085,7 @@ export default function TenantStorefrontPage() {
             <div className="space-y-5">
               <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
                 <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
-                  <UserRound size={16} className="text-brand-600" />
+                  <UserRound size={16} style={{ color: primaryColor }} />
                   Tus datos
                 </div>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -1136,7 +1137,7 @@ export default function TenantStorefrontPage() {
 
               <div className="rounded-[1.5rem] border border-surface-200 bg-white p-5 dark:border-surface-800 dark:bg-surface-900">
                 <div className="flex items-center gap-2 text-sm font-semibold text-surface-900 dark:text-white">
-                  <LockKeyhole size={16} className="text-brand-600" />
+                  <LockKeyhole size={16} style={{ color: primaryColor }} />
                   Tu acceso
                 </div>
                 <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
@@ -1150,13 +1151,26 @@ export default function TenantStorefrontPage() {
                     className={cn(
                       'rounded-[1.35rem] border p-4 text-left transition-all',
                       accountMode === 'create'
-                        ? 'border-brand-300 bg-gradient-to-br from-brand-50 to-cyan-50 shadow-sm ring-1 ring-brand-100'
+                        ? 'shadow-sm'
                         : 'border-surface-200 bg-[#fcfbf7] hover:border-surface-300 dark:border-surface-700 dark:bg-surface-800/70 dark:hover:border-surface-600',
                     )}
+                    style={
+                      accountMode === 'create'
+                        ? {
+                            borderColor: withAlpha(primaryColor, 0.45),
+                            backgroundColor: withAlpha(primaryColor, 0.08),
+                            boxShadow: `0 0 0 1px ${withAlpha(primaryColor, 0.18)}`,
+                          }
+                        : undefined
+                    }
                   >
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-surface-900 dark:text-white">Crear mi cuenta ahora</p>
-                      <Sparkles size={16} className={accountMode === 'create' ? 'text-brand-600' : 'text-surface-400'} />
+                      <Sparkles
+                        size={16}
+                        className={accountMode === 'create' ? undefined : 'text-surface-400'}
+                        style={accountMode === 'create' ? { color: primaryColor } : undefined}
+                      />
                     </div>
                     <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                       Dejas tu contraseña lista y, después del pago, ya puedes entrar con este correo.
@@ -1223,7 +1237,10 @@ export default function TenantStorefrontPage() {
                 ) : null}
               </div>
 
-              <div className="rounded-[1.25rem] border border-brand-100 bg-gradient-to-r from-brand-50 to-cyan-50 px-4 py-4 text-sm text-surface-700 dark:border-brand-900/50 dark:from-brand-950/30 dark:to-cyan-950/20 dark:text-surface-200">
+              <div
+                className="rounded-[1.25rem] border px-4 py-4 text-sm text-surface-700 dark:text-surface-200"
+                style={{ borderColor: withAlpha(primaryColor, 0.25), backgroundColor: withAlpha(primaryColor, 0.08) }}
+              >
                 Al continuar, prepararemos tu compra y te redirigiremos a una pantalla segura para pagar.
               </div>
             </div>
