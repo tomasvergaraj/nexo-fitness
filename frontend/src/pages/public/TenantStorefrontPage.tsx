@@ -564,7 +564,7 @@ export default function TenantStorefrontPage() {
                     <div className="mt-6 grid gap-3 sm:grid-cols-3">
                       {storefrontSummary.map((item) => (
                         <div key={item.label} className="rounded-[1.35rem] border border-surface-200 bg-[#fcfbf7] px-4 py-4 dark:border-surface-700 dark:bg-surface-800/70">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">{item.label}</p>
+                          <p className="text-xs font-semibold text-surface-600 dark:text-surface-400">{item.label}</p>
                           <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">{item.value}</p>
                         </div>
                       ))}
@@ -676,7 +676,7 @@ export default function TenantStorefrontPage() {
                                     {formatCurrency(plan.price, plan.currency)}
                                   </p>
                                 )}
-                                <p className={`mt-1 text-xs uppercase tracking-[0.18em] ${isSelected ? 'opacity-80' : 'text-surface-600'}`}>
+                                <p className={`mt-1 text-xs ${isSelected ? 'opacity-80' : 'text-surface-600'}`}>
                                   {formatDurationLabel(plan.duration_type, plan.duration_days)}
                                 </p>
                               </div>
@@ -692,7 +692,7 @@ export default function TenantStorefrontPage() {
                             )}>
                               {plan.discount_pct ? (
                                 <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-emerald-100 bg-emerald-50/90 dark:border-emerald-900/40 dark:bg-emerald-950/25'}`}>
-                                  <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'opacity-70' : 'text-emerald-700'}`}>Ahorro</p>
+                                  <p className={`text-[11px] font-semibold ${isSelected ? 'opacity-70' : 'text-emerald-700'}`}>Ahorro</p>
                                   <p className={`mt-1 text-sm font-semibold ${isSelected ? '' : 'text-surface-900 dark:text-white'}`}>
                                     {formatCurrency(savings, plan.currency)}
                                   </p>
@@ -700,14 +700,14 @@ export default function TenantStorefrontPage() {
                               ) : null}
 
                               <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-surface-200 bg-white/90 dark:border-surface-700 dark:bg-surface-900/80'}`}>
-                                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'opacity-70' : 'text-surface-600 dark:text-surface-400'}`}>Vigencia</p>
+                                <p className={`text-[11px] font-semibold ${isSelected ? 'opacity-70' : 'text-surface-600 dark:text-surface-400'}`}>Vigencia</p>
                                 <p className={`mt-1 text-sm font-semibold ${isSelected ? '' : 'text-surface-900 dark:text-white'}`}>
                                   {formatDurationLabel(plan.duration_type, plan.duration_days)}
                                 </p>
                               </div>
 
                               <div className={`rounded-2xl border px-3 py-3 ${isSelected ? 'border-white/15 bg-white/10' : 'border-surface-200 bg-white/90 dark:border-surface-700 dark:bg-surface-900/80'}`}>
-                                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${isSelected ? 'opacity-70' : 'text-surface-600 dark:text-surface-400'}`}>Compra</p>
+                                <p className={`text-[11px] font-semibold ${isSelected ? 'opacity-70' : 'text-surface-600 dark:text-surface-400'}`}>Compra</p>
                                 <p className={`mt-1 text-sm font-semibold ${isSelected ? '' : 'text-surface-900 dark:text-white'}`}>
                                   Online y segura
                                 </p>
@@ -775,14 +775,14 @@ export default function TenantStorefrontPage() {
               <div className="rounded-[2rem] border border-surface-200 bg-white p-6 shadow-[0_40px_100px_-55px_rgba(15,23,42,0.4)] dark:border-surface-800 dark:bg-surface-900">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-surface-600 dark:text-surface-400">Tu selección</p>
+                    <p className="text-sm font-semibold text-surface-600 dark:text-surface-400">Tu selección</p>
                     <h2 className="mt-2 text-3xl font-bold font-display">{selectedPlan?.name || 'Plan disponible'}</h2>
                     <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                       {selectedPlan?.description || 'Plan listo para comprar online y activar con el gimnasio.'}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 text-left sm:min-w-[180px] sm:text-right dark:border-surface-700 dark:bg-surface-800/80">
-                    <p className="text-xs uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">
+                    <p className="text-xs text-surface-600 dark:text-surface-400">
                       {selectedPlan ? formatDurationLabel(selectedPlan.duration_type, selectedPlan.duration_days) : 'Disponible'}
                     </p>
                     <p className="mt-1 text-2xl font-bold font-display">
@@ -803,19 +803,19 @@ export default function TenantStorefrontPage() {
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4 dark:border-surface-700 dark:bg-surface-800/70">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">Hoy pagas</p>
+                    <p className="text-[11px] font-semibold text-surface-600 dark:text-surface-400">Hoy pagas</p>
                     <p className="mt-2 text-lg font-bold font-display text-surface-900 dark:text-white">
                       {selectedPlan ? formatCurrency(selectedFinalCheckoutPrice, selectedPlan.currency) : '--'}
                     </p>
                   </div>
                   <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4 dark:border-surface-700 dark:bg-surface-800/70">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">Vigencia</p>
+                    <p className="text-[11px] font-semibold text-surface-600 dark:text-surface-400">Vigencia</p>
                     <p className="mt-2 text-lg font-bold font-display text-surface-900 dark:text-white">
                       {selectedPlan ? formatDurationLabel(selectedPlan.duration_type, selectedPlan.duration_days) : '--'}
                     </p>
                   </div>
                   <div className="rounded-[1.25rem] border border-surface-200 bg-[#fcfbf7] p-4 dark:border-surface-700 dark:bg-surface-800/70">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">Acceso</p>
+                    <p className="text-[11px] font-semibold text-surface-600 dark:text-surface-400">Acceso</p>
                     <p className="mt-2 text-lg font-bold font-display text-surface-900 dark:text-white">Desde cualquier dispositivo</p>
                   </div>
                 </div>
@@ -1248,7 +1248,7 @@ export default function TenantStorefrontPage() {
             <div className="space-y-4">
               {selectedPlan ? (
                 <div className="rounded-[1.5rem] border border-surface-200 bg-[#fcfbf7] p-5 dark:border-surface-700 dark:bg-surface-800/70">
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">Resumen de tu compra</p>
+                  <p className="text-sm font-semibold text-surface-600 dark:text-surface-400">Resumen de tu compra</p>
                   <p className="mt-3 text-lg font-semibold text-surface-900 dark:text-white">{selectedPlan.name}</p>
                   <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                     {selectedPlan.description || 'Plan listo para contratar online.'}
@@ -1257,7 +1257,7 @@ export default function TenantStorefrontPage() {
                   <div className="mt-4 rounded-[1.25rem] border border-surface-200 bg-white p-4 dark:border-surface-700 dark:bg-surface-900/80">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-xs uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">Hoy pagas</p>
+                        <p className="text-xs text-surface-600 dark:text-surface-400">Hoy pagas</p>
                         <p className="mt-1 text-2xl font-bold font-display text-surface-900 dark:text-white">
                           {formatCurrency(selectedFinalCheckoutPrice, selectedPlan.currency)}
                         </p>
@@ -1286,7 +1286,7 @@ export default function TenantStorefrontPage() {
               ) : null}
 
               <div className="rounded-[1.5rem] border border-surface-200 bg-white p-5 dark:border-surface-800 dark:bg-surface-900">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-surface-600 dark:text-surface-400">Qué pasará después</p>
+                <p className="text-sm font-semibold text-surface-600 dark:text-surface-400">Qué pasará después</p>
                 <ul className="mt-4 space-y-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
                   <li className="flex items-start gap-3">
                     <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
