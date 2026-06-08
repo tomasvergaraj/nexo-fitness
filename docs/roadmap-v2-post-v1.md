@@ -466,26 +466,28 @@ Estas no son features pero son críticas para sostener el ritmo a 1 año.
 
 | Fase | Items | Esfuerzo total | Cuándo |
 |------|-------|----------------|--------|
-| 6 — Quick wins comerciales | 7 (3 done) | ~3 semanas | Próximo sprint |
+| 6 — Quick wins comerciales | 7 (6 done, solo WhatsApp pend.) | DONE 2026-06-08 | ✅ |
 | 7 — Plataforma + B2B | 9 | ~2 meses | Q3 2026 |
 | 8 — AI + integraciones | 5 | ~3-4 meses | Q4 2026 / Q1 2027 |
 | 9 — Deuda técnica | 8 (1 done) | ongoing | Intercalado con cada fase |
 
-## Estado Fase 6
+## Estado Fase 6 — COMPLETA salvo WhatsApp (2026-06-08)
 
-- 6.1 WhatsApp — pendiente (necesita Twilio/Meta).
+- 6.1 WhatsApp — **pendiente** (bloqueado por setup Twilio/Meta, 24-48h aprobación plantillas).
 - **6.2 Punch passes + Drop-in — DONE v1.1.0**.
 - **6.3 Waitlist — DONE (pre-v1.0.0)**.
-- **6.4 Member referral codes — DONE v1.2.0** (6.4b crédito auto pendiente).
-- 6.5 NPS post-clase — pendiente (recomendado siguiente, sin deps).
-- 6.6 Gift cards — pendiente.
-- 6.7 Booking widget — pendiente.
+- **6.4 Member referral codes — DONE v1.2.0**.
+- **6.4b crédito auto al referrer — DONE v1.4.0** (opt-in por gym, días gratis).
+- **6.5 NPS post-clase — DONE v1.3.0**.
+- **6.6 Gift cards — DONE v1.6.0** (+ checkout online WebPay/TUU post-v1.6.0).
+- **6.7 Booking widget — DONE v1.5.0** (`/embed/:slug`).
 
-## Próximos candidatos
+## Próximos candidatos (Fase 7 — Plataforma + B2B)
 
-1. **6.5 NPS post-clase** (S, ⭐⭐⭐⭐, sin deps externas).
-2. **6.4b** crédito auto al referrer cuando el referido completa primer pago.
-3. **6.1 WhatsApp transaccional** (bloqueado por setup Twilio/Meta).
+1. **7.1 Webhooks Stripe/WebPay reales** (M, ⭐⭐⭐⭐) — reemplaza polling; complementa el checkout de gift cards recién agregado.
+2. **7.6 Audit log UI** (S, ⭐⭐⭐) — `audit_logs` ya existe, falta el visor.
+3. **7.7 Cache Redis para reports** (S, ⭐⭐⭐).
+4. **6.1 WhatsApp transaccional** (bloqueado por Twilio/Meta).
 
 ## Cómo usar este doc
 
