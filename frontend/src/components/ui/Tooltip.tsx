@@ -1,4 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/utils';
 
@@ -102,6 +112,21 @@ export default function Tooltip({
     return <>{children}</>;
   }
 
+  // A11y: el tooltip (role="tooltip", solo en hover) no le da nombre accesible
+  // al trigger. Si el contenido es texto y el hijo es un único elemento sin
+  // nombre propio, exponemos el texto como aria-label — así los botones de solo
+  // ícono envueltos en Tooltip cumplen WCAG 4.1.2 (Name, Role, Value).
+  let accessibleChildren = children;
+  if (typeof content === 'string' && content.trim()) {
+    const only = Children.toArray(children);
+    if (only.length === 1 && isValidElement(only[0])) {
+      const child = only[0] as ReactElement<Record<string, unknown>>;
+      if (child.props['aria-label'] == null && child.props['aria-labelledby'] == null) {
+        accessibleChildren = cloneElement(child, { 'aria-label': content });
+      }
+    }
+  }
+
   const tooltip = mounted && open && !disabled ? createPortal(
     <div
       ref={tooltipRef}
@@ -137,7 +162,7 @@ export default function Tooltip({
           }
         }}
       >
-        {children}
+        {accessibleChildren}
       </span>
       {tooltip}
     </>

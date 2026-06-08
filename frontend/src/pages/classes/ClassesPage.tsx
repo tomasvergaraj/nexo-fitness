@@ -1500,6 +1500,7 @@ export default function ClassesPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                aria-label="Semana anterior"
                 className="rounded-xl p-2 transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
                 onClick={() => setWeekStartDate((current) => addWeeks(current, -1))}
               >
@@ -1514,6 +1515,7 @@ export default function ClassesPage() {
               </button>
               <button
                 type="button"
+                aria-label="Semana siguiente"
                 className="rounded-xl p-2 transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
                 onClick={() => setWeekStartDate((current) => addWeeks(current, 1))}
               >
@@ -1573,6 +1575,7 @@ export default function ClassesPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                aria-label="Semana anterior"
                 className="rounded-xl p-2 transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
                 onClick={() => setWeekStartDate((current) => addWeeks(current, -1))}
               >
@@ -1583,6 +1586,7 @@ export default function ClassesPage() {
               </button>
               <button
                 type="button"
+                aria-label="Semana siguiente"
                 className="rounded-xl p-2 transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
                 onClick={() => setWeekStartDate((current) => addWeeks(current, 1))}
               >
