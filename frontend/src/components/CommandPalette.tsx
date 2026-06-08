@@ -181,7 +181,7 @@ export default function CommandPalette() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Buscar acciones, páginas..."
-                className="flex-1 bg-transparent text-sm text-surface-900 outline-none placeholder:text-surface-400 dark:text-white"
+                className="flex-1 bg-transparent text-sm text-surface-900 outline-none placeholder:text-surface-500 dark:text-white dark:placeholder:text-surface-400"
               />
               <kbd className="hidden rounded border border-surface-200 px-1.5 py-0.5 text-[10px] font-medium text-surface-500 dark:border-surface-700 dark:text-surface-400 sm:inline">
                 Esc
