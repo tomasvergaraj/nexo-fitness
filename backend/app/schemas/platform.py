@@ -650,6 +650,8 @@ class TenantSettingsUpdateRequest(BaseModel):
     staff_can_edit_plans: Optional[bool] = None
     two_factor_required: Optional[bool] = None
     public_checkout_enabled: Optional[bool] = None
+    referral_reward_enabled: Optional[bool] = None
+    referral_reward_days: Optional[int] = Field(default=None, ge=0, le=90)
 
 
 class TenantSettingsResponse(BaseModel):
@@ -674,6 +676,8 @@ class TenantSettingsResponse(BaseModel):
     staff_can_edit_plans: bool = False
     two_factor_required: bool = False
     public_checkout_enabled: bool = True
+    referral_reward_enabled: bool = False
+    referral_reward_days: int = 7
     branding: TenantBranding
 
 

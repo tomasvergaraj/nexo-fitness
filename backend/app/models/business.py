@@ -524,6 +524,30 @@ class NPSResponse(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class ReferralReward(Base):
+    """Recompensa otorgada al referrer cuando su referido completa el primer pago (Fase 6.4b).
+
+    Una recompensa por referido (constraint único). `status`:
+    - applied: los días gratis se sumaron al `expires_at` de una membresía vigente del referrer.
+    - pending: se otorgó pero el referrer no tenía membresía vigente para extender.
+    """
+
+    __tablename__ = "referral_rewards"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "referred_user_id", name="uq_referral_reward_per_referred"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    referrer_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    referred_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    payment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("payments.id", ondelete="SET NULL"))
+    applied_membership_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL"))
+    reward_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # applied | pending
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 # ─── Audit Log ────────────────────────────────────────────────────────────────
 
 class AuditLog(Base):

@@ -212,6 +212,9 @@ class MobileReferralResponse(BaseModel):
     code: Optional[str]
     share_url: Optional[str]
     referred_count: int
+    reward_enabled: bool = False
+    reward_days: int = 0
+    rewards_earned_days: int = 0
 
 
 @mobile_router.get("/refer", response_model=MobileReferralResponse)
@@ -229,10 +232,26 @@ async def get_mobile_refer(
     if tenant is None:
         raise HTTPException(status_code=400, detail="Se requiere el contexto de la cuenta")
 
-    if current_user.referral_code is None:
-        return MobileReferralResponse(code=None, share_url=None, referred_count=0)
+    from app.services.referral_service import (
+        _referral_reward_config,
+        get_referral_stats,
+        get_rewards_earned_days,
+    )
 
-    from app.services.referral_service import get_referral_stats
+    reward_enabled, reward_days = _referral_reward_config(tenant)
+    earned_days = await get_rewards_earned_days(
+        db, tenant_id=tenant.id, referrer_user_id=current_user.id
+    )
+
+    if current_user.referral_code is None:
+        return MobileReferralResponse(
+            code=None,
+            share_url=None,
+            referred_count=0,
+            reward_enabled=reward_enabled,
+            reward_days=reward_days,
+            rewards_earned_days=earned_days,
+        )
 
     settings = get_settings()
     storefront_base = build_storefront_url(
@@ -249,6 +268,9 @@ async def get_mobile_refer(
         code=stats.code,
         share_url=stats.share_url,
         referred_count=stats.referred_count,
+        reward_enabled=reward_enabled,
+        reward_days=reward_days,
+        rewards_earned_days=earned_days,
     )
 
 

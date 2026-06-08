@@ -42,6 +42,8 @@ export interface TenantSettings {
   staff_can_edit_plans: boolean;
   two_factor_required: boolean;
   public_checkout_enabled: boolean;
+  referral_reward_enabled: boolean;
+  referral_reward_days: number;
   branding: TenantBranding;
 }
 

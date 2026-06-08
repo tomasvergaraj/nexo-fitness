@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.business import Membership, MembershipStatus, Payment, PaymentMethod, PaymentStatus, Plan, PlanDuration, PlanKind
@@ -361,14 +361,38 @@ async def allocate_membership_purchase(
     )
     await db.flush()
 
-    # Programa de referidos: al primer pago COMPLETED del cliente, generar
-    # su referral_code si aún no tiene uno. Idempotente, sin notificar.
-    if resolved_payment_status == PaymentStatus.COMPLETED and not client.referral_code:
+    # Programa de referidos (Fase 6.4 / 6.4b).
+    if resolved_payment_status == PaymentStatus.COMPLETED:
+        # 1) Generar el referral_code del cliente si aún no tiene uno. Idempotente.
+        if not client.referral_code:
+            try:
+                from app.services.referral_service import ensure_user_referral_code
+                await ensure_user_referral_code(db, user=client)
+            except Exception:
+                # Falla del programa de referidos no debe romper la venta.
+                pass
+
+        # 2) Si este es el PRIMER pago completado del cliente y vino referido,
+        #    otorgar la recompensa automática al referrer (opt-in del gym).
         try:
-            from app.services.referral_service import ensure_user_referral_code
-            await ensure_user_referral_code(db, user=client)
+            completed_count = (
+                await db.execute(
+                    select(func.count())
+                    .select_from(Payment)
+                    .where(
+                        Payment.tenant_id == tenant.id,
+                        Payment.user_id == client.id,
+                        Payment.status == PaymentStatus.COMPLETED,
+                    )
+                )
+            ).scalar() or 0
+            if completed_count == 1 and client.referrer_user_id:
+                from app.services.referral_service import grant_referral_reward
+                await grant_referral_reward(
+                    db, tenant=tenant, referred_user=client, payment_id=payment.id
+                )
         except Exception:
-            # Falla del programa de referidos no debe romper la venta.
+            # El reward nunca debe romper la venta.
             pass
 
     refreshed_state = await sync_membership_timeline(db, tenant_id=tenant.id, user_id=client.id, today=today)

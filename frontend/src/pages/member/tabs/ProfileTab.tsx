@@ -617,8 +617,10 @@ function ReferralPanel({ brandGradient }: { brandGradient: string }) {
               Tu código se activa con tu primera compra
             </p>
             <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
-              Cuando completes tu primer pago vas a poder invitar amigos con un link personal y ganar
-              beneficios cuando se inscriban.
+              Cuando completes tu primer pago vas a poder invitar amigos con un link personal
+              {data?.reward_enabled
+                ? ` y ganar ${data.reward_days} días gratis por cada uno que se inscriba.`
+                : ' y ganar beneficios cuando se inscriban.'}
             </p>
           </div>
         </div>
@@ -674,8 +676,15 @@ function ReferralPanel({ brandGradient }: { brandGradient: string }) {
           </p>
           <p className="mt-1 text-xs leading-5 text-surface-500 dark:text-surface-400">
             Tu código es <span className="font-mono font-semibold text-surface-900 dark:text-white">{data.code}</span>.
-            Cuando alguien se inscribe con tu link, hablamos con el equipo del gym para tu beneficio.
+            {data.reward_enabled
+              ? ` Cuando alguien se inscribe con tu link, ganas ${data.reward_days} días gratis en tu membresía.`
+              : ' Cuando alguien se inscribe con tu link, hablamos con el equipo del gym para tu beneficio.'}
           </p>
+          {data.rewards_earned_days > 0 ? (
+            <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+              <Gift size={12} /> Ya ganaste {data.rewards_earned_days} días gratis
+            </span>
+          ) : null}
 
           <div className="mt-3 flex items-center gap-2 rounded-2xl border border-surface-200 bg-surface-50/80 px-3 py-2 text-xs dark:border-surface-800 dark:bg-surface-950/30">
             <span className="min-w-0 flex-1 truncate text-surface-600 dark:text-surface-300">

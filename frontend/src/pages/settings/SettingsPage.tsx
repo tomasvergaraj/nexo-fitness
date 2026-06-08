@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Bell, CheckCircle2, ChevronDown, Clock, Copy, CreditCard, FlaskConical, Globe, Lock, Mail, MapPin, Palette, Pencil, Plus, Shield, ShieldCheck, Store, Trash2, UserCog, UserMinus, UserPlus, Users, XCircle } from 'lucide-react';
+import { Bell, CheckCircle2, ChevronDown, Clock, Copy, CreditCard, FlaskConical, Gift, Globe, Lock, Mail, MapPin, Palette, Pencil, Plus, Shield, ShieldCheck, Store, Trash2, UserCog, UserMinus, UserPlus, Users, XCircle } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import LogoUploader from '@/components/ui/LogoUploader';
 import PersonalTwoFactorCard from '@/pages/settings/PersonalTwoFactorCard';
@@ -1087,6 +1087,50 @@ export default function SettingsPage() {
                 >
                   <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition-transform ${form.staff_can_edit_plans ? 'translate-x-5' : 'translate-x-0'}`} />
                 </button>
+              </div>
+
+              {/* Programa de referidos: recompensa automática */}
+              <div className="rounded-2xl border border-surface-200 px-4 py-4 dark:border-surface-800">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-pink-50 text-pink-500 dark:bg-pink-950/40">
+                      <Gift size={16} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-surface-900 dark:text-white">Recompensa por referido</p>
+                      <p className="mt-0.5 text-xs text-surface-500">
+                        Cuando un invitado completa su primer pago, sumamos días gratis a la membresía vigente de quien lo refirió. Automático.
+                      </p>
+                      {form.referral_reward_enabled ? (
+                        <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                          <ShieldCheck size={11} /> Aplicado automáticamente
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.referral_reward_enabled}
+                    onClick={() => setForm((current) => current ? { ...current, referral_reward_enabled: !current.referral_reward_enabled } : current)}
+                    className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 ${form.referral_reward_enabled ? 'bg-brand-500' : 'bg-surface-200 dark:bg-surface-700'}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition-transform ${form.referral_reward_enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+                {form.referral_reward_enabled ? (
+                  <div className="mt-3 flex items-center gap-2 border-t border-surface-100 pt-3 dark:border-surface-800">
+                    <label className="text-sm text-surface-700 dark:text-surface-300">Días gratis por referido</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={90}
+                      className="input w-20"
+                      value={form.referral_reward_days}
+                      onChange={(event) => setForm((current) => current ? { ...current, referral_reward_days: Math.max(0, Math.min(90, Number(event.target.value) || 0)) } : current)}
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {/* 2FA obligatorio */}
