@@ -283,3 +283,34 @@ async def get_nps_summary(
     window = max(7, min(days, 365))
     summary = await nps_service.get_nps_summary(db, tenant_id=ctx.tenant_id, days=window)
     return NPSSummaryResponse(**summary)
+
+
+# ─── Referidos ────────────────────────────────────────────────────────────────
+
+
+class ReferrerRow(BaseModel):
+    user_id: str
+    name: str
+    referred_count: int
+    reward_days: int
+
+
+class ReferralMetricsResponse(BaseModel):
+    total_referred: int
+    rewarded_count: int
+    applied_count: int
+    pending_count: int
+    total_reward_days: int
+    top_referrers: List[ReferrerRow]
+
+
+@retention_router.get("/referrals", response_model=ReferralMetricsResponse)
+async def get_referral_metrics(
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+) -> ReferralMetricsResponse:
+    from app.services import referral_service
+
+    metrics = await referral_service.get_referral_metrics(db, tenant_id=ctx.tenant_id)
+    return ReferralMetricsResponse(**metrics)

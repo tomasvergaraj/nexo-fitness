@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Heart, Loader2, TrendingDown, Users, Clock, Megaphone, Smile } from 'lucide-react';
+import { AlertTriangle, Heart, Loader2, TrendingDown, Users, Clock, Megaphone, Smile, Gift } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { retentionApi } from '@/services/api';
 import { cn } from '@/utils';
@@ -25,6 +25,15 @@ interface NpsSummary {
   detractors: number;
   average: number | null;
   days: number;
+}
+interface ReferrerRow { user_id: string; name: string; referred_count: number; reward_days: number }
+interface ReferralMetrics {
+  total_referred: number;
+  rewarded_count: number;
+  applied_count: number;
+  pending_count: number;
+  total_reward_days: number;
+  top_referrers: ReferrerRow[];
 }
 
 const MONTH_OPTIONS = [3, 6, 12];
@@ -58,6 +67,12 @@ export default function RetentionPage() {
   const { data: nps } = useQuery<NpsSummary>({
     queryKey: ['retention-nps', npsDays],
     queryFn: async () => (await retentionApi.getNps(npsDays)).data,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: referrals } = useQuery<ReferralMetrics>({
+    queryKey: ['retention-referrals'],
+    queryFn: async () => (await retentionApi.getReferrals()).data,
     staleTime: 5 * 60_000,
   });
 
@@ -135,6 +150,9 @@ export default function RetentionPage() {
 
           {/* ── NPS post-clase ─────────────────────────────────────────── */}
           {nps && <NpsPanel nps={nps} months={months} />}
+
+          {/* ── Referidos ──────────────────────────────────────────────── */}
+          {referrals && <ReferralPanel data={referrals} />}
 
           {/* ── At-risk CTA ────────────────────────────────────────────── */}
           {data.at_risk.high > 0 && (
@@ -330,6 +348,63 @@ function SegLabel({ color, label, value, sub }: { color: string; label: string; 
         <p className="truncate font-medium text-surface-700 dark:text-surface-300">{label}</p>
         <p className="text-surface-400">{value} · {sub}</p>
       </div>
+    </div>
+  );
+}
+
+function ReferralPanel({ data }: { data: ReferralMetrics }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mb-6 rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-800 dark:bg-surface-900 sm:p-6"
+    >
+      <div className="mb-4 flex items-center gap-2">
+        <Gift size={16} className="text-pink-500" />
+        <div>
+          <h2 className="text-sm font-semibold text-surface-900 dark:text-white">Referidos</h2>
+          <p className="text-xs text-surface-500">Clientes que llegaron por recomendación y recompensas otorgadas</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <MiniStat label="Referidos" value={String(data.total_referred)} />
+        <MiniStat label="Recompensas" value={String(data.rewarded_count)} hint={`${data.applied_count} aplicadas · ${data.pending_count} pendientes`} />
+        <MiniStat label="Días gratis dados" value={String(data.total_reward_days)} />
+        <MiniStat label="Top referrer" value={data.top_referrers[0]?.referred_count ? String(data.top_referrers[0].referred_count) : '—'} hint={data.top_referrers[0]?.name} />
+      </div>
+
+      {data.top_referrers.length > 0 ? (
+        <div className="mt-4 border-t border-surface-100 pt-3 dark:border-surface-800">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-surface-400">Ranking de referrers</p>
+          <div className="space-y-1.5">
+            {data.top_referrers.map((r, i) => (
+              <div key={r.user_id} className="flex items-center gap-3 text-sm">
+                <span className="w-5 shrink-0 text-center text-xs font-bold text-surface-400">{i + 1}</span>
+                <span className="min-w-0 flex-1 truncate text-surface-700 dark:text-surface-300">{r.name}</span>
+                <span className="shrink-0 text-xs text-surface-500">
+                  {r.referred_count} {r.referred_count === 1 ? 'referido' : 'referidos'}
+                  {r.reward_days > 0 ? ` · ${r.reward_days}d` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="mt-4 border-t border-surface-100 pt-3 text-center text-sm text-surface-400 dark:border-surface-800">
+          Aún no hay clientes referidos. Compártelo: cada miembro tiene un link en su perfil.
+        </p>
+      )}
+    </motion.div>
+  );
+}
+
+function MiniStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-xl bg-surface-50 px-3 py-2.5 dark:bg-surface-800/40">
+      <p className="text-xs font-medium uppercase tracking-wide text-surface-500">{label}</p>
+      <p className="mt-0.5 text-xl font-bold text-surface-900 dark:text-white">{value}</p>
+      {hint && <p className="mt-0.5 truncate text-xs text-surface-400">{hint}</p>}
     </div>
   );
 }

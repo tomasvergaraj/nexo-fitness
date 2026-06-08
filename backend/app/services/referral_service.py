@@ -247,6 +247,95 @@ async def get_rewards_earned_days(
     return int(total or 0)
 
 
+async def get_referral_metrics(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    top: int = 5,
+) -> dict:
+    """Métricas del programa de referidos para el panel del owner.
+
+    Devuelve totales de referidos, recompensas otorgadas (aplicadas/pendientes),
+    días gratis entregados y un ranking de los referrers más activos.
+    """
+    # Total de clientes que llegaron referidos.
+    total_referred = (
+        await db.execute(
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.tenant_id == tenant_id,
+                User.referrer_user_id.isnot(None),
+                User.role == UserRole.CLIENT,
+            )
+        )
+    ).scalar() or 0
+
+    # Recompensas otorgadas.
+    reward_rows = (
+        await db.execute(
+            select(ReferralReward.status, ReferralReward.reward_days).where(
+                ReferralReward.tenant_id == tenant_id
+            )
+        )
+    ).all()
+    rewarded_count = len(reward_rows)
+    applied_count = sum(1 for status, _ in reward_rows if status == "applied")
+    pending_count = sum(1 for status, _ in reward_rows if status == "pending")
+    total_reward_days = sum(int(days or 0) for _, days in reward_rows)
+
+    # Ranking de referrers: nº de referidos + días ganados.
+    count_rows = (
+        await db.execute(
+            select(User.referrer_user_id, func.count())
+            .where(
+                User.tenant_id == tenant_id,
+                User.referrer_user_id.isnot(None),
+                User.role == UserRole.CLIENT,
+            )
+            .group_by(User.referrer_user_id)
+        )
+    ).all()
+    counts: dict[uuid.UUID, int] = {rid: int(c) for rid, c in count_rows if rid is not None}
+
+    days_rows = (
+        await db.execute(
+            select(ReferralReward.referrer_user_id, func.coalesce(func.sum(ReferralReward.reward_days), 0))
+            .where(ReferralReward.tenant_id == tenant_id)
+            .group_by(ReferralReward.referrer_user_id)
+        )
+    ).all()
+    days_by_referrer: dict[uuid.UUID, int] = {rid: int(d or 0) for rid, d in days_rows if rid is not None}
+
+    ranked_ids = sorted(counts.keys(), key=lambda rid: (counts[rid], days_by_referrer.get(rid, 0)), reverse=True)[:top]
+    names: dict[uuid.UUID, str] = {}
+    if ranked_ids:
+        name_rows = (
+            await db.execute(select(User.id, User.first_name, User.last_name).where(User.id.in_(ranked_ids)))
+        ).all()
+        for uid, first, last in name_rows:
+            names[uid] = (f"{first or ''} {last or ''}".strip()) or "Cliente"
+
+    top_referrers = [
+        {
+            "user_id": str(rid),
+            "name": names.get(rid, "Cliente"),
+            "referred_count": counts[rid],
+            "reward_days": days_by_referrer.get(rid, 0),
+        }
+        for rid in ranked_ids
+    ]
+
+    return {
+        "total_referred": int(total_referred),
+        "rewarded_count": rewarded_count,
+        "applied_count": applied_count,
+        "pending_count": pending_count,
+        "total_reward_days": total_reward_days,
+        "top_referrers": top_referrers,
+    }
+
+
 @dataclass
 class ReferralStats:
     code: str

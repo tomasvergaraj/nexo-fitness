@@ -205,6 +205,7 @@ export const retentionApi = {
     api.get('/retention/dashboard', { params: { months } }),
   getNps: (days: number = 90) =>
     api.get('/retention/nps', { params: { days } }),
+  getReferrals: () => api.get('/retention/referrals'),
 };
 
 export const classesApi = {

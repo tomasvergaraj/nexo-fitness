@@ -601,6 +601,11 @@ function ReferralPanel({ brandGradient }: { brandGradient: string }) {
     staleTime: 60_000,
   });
 
+  // El programa de referidos solo se muestra si el gym activó la recompensa.
+  // Mientras carga no mostramos nada para evitar parpadeo.
+  if (isLoading) return null;
+  if (!data?.reward_enabled) return null;
+
   // Aún sin código (cliente sin pagos completados todavía).
   if (!isLoading && !data?.code) {
     return (
