@@ -224,7 +224,7 @@ function NavGroup({
                   >
                     <span className={cn(
                       'flex-shrink-0',
-                      isActive ? 'text-brand-500' : 'text-surface-400 dark:text-surface-500',
+                      isActive ? 'text-brand-500' : 'text-surface-500 dark:text-surface-400',
                     )}>
                       {item.icon}
                     </span>
@@ -357,7 +357,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
               titleClassName="text-base tracking-tight text-surface-900 dark:text-white"
               accentClassName="text-brand-500"
               subtitle={NEXO_BRAND_SLOGAN}
-              subtitleClassName="font-medium tracking-widest text-[10px] text-surface-400 dark:text-surface-500"
+              subtitleClassName="font-medium tracking-widest text-[10px] text-surface-500 dark:text-surface-400"
             />
           </NavLink>
           <button onClick={onToggle} className="lg:hidden p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800">
@@ -454,7 +454,7 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
                 >
                   <Receipt
                     size={18}
-                    className={isSubActive ? 'text-violet-600 dark:text-violet-400' : 'text-surface-400 dark:text-surface-500'}
+                    className={isSubActive ? 'text-violet-600 dark:text-violet-400' : 'text-surface-500 dark:text-surface-400'}
                   />
                   <span className="truncate">Mi Suscripción</span>
                   {isSubActive && (

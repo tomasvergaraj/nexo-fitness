@@ -52,7 +52,7 @@ export default function MemberBottomNav({ onOpenDrawer }: Props) {
               <span className="relative flex h-6 w-6 items-center justify-center">
                 <Icon
                   size={20}
-                  className={isActive ? 'text-current' : 'text-surface-400 dark:text-surface-500'}
+                  className={isActive ? 'text-current' : 'text-surface-500 dark:text-surface-400'}
                 />
                 {badge ? (
                   <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-400 px-0.5 text-[9px] font-bold text-surface-950">
@@ -60,7 +60,7 @@ export default function MemberBottomNav({ onOpenDrawer }: Props) {
                   </span>
                 ) : null}
               </span>
-              <span className={isActive ? 'text-current' : 'text-surface-400 dark:text-surface-500'}>
+              <span className={isActive ? 'text-current' : 'text-surface-500 dark:text-surface-400'}>
                 {tab.label}
               </span>
             </motion.button>
@@ -86,10 +86,10 @@ export default function MemberBottomNav({ onOpenDrawer }: Props) {
           <span className="flex h-6 w-6 items-center justify-center">
             <Menu
               size={20}
-              className={isDrawerTabActive ? 'text-current' : 'text-surface-400 dark:text-surface-500'}
+              className={isDrawerTabActive ? 'text-current' : 'text-surface-500 dark:text-surface-400'}
             />
           </span>
-          <span className={isDrawerTabActive ? 'text-current' : 'text-surface-400 dark:text-surface-500'}>
+          <span className={isDrawerTabActive ? 'text-current' : 'text-surface-500 dark:text-surface-400'}>
             Más
           </span>
         </motion.button>

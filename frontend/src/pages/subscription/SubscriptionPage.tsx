@@ -255,7 +255,7 @@ function PlanCard({
         </div>
         <p className="mt-0.5 text-xs text-surface-500">neto · {periodLabel(plan.license_type)}</p>
         {Number(plan.tax_rate) > 0 && (
-          <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
+          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
             + IVA {Number(plan.tax_rate)}% ({formatCLP(Number(plan.tax_amount))})
             {' '}→{' '}
             <span className="font-semibold text-surface-600 dark:text-surface-300">

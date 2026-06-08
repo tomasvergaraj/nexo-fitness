@@ -380,7 +380,7 @@ function ReferralPanel({ data }: { data: ReferralMetrics }) {
           <div className="space-y-1.5">
             {data.top_referrers.map((r, i) => (
               <div key={r.user_id} className="flex items-center gap-3 text-sm">
-                <span className="w-5 shrink-0 text-center text-xs font-bold text-surface-400 dark:text-surface-500">{i + 1}</span>
+                <span className="w-5 shrink-0 text-center text-xs font-bold text-surface-500 dark:text-surface-400">{i + 1}</span>
                 <span className="min-w-0 flex-1 truncate text-surface-700 dark:text-surface-300">{r.name}</span>
                 <span className="shrink-0 text-xs text-surface-500">
                   {r.referred_count} {r.referred_count === 1 ? 'referido' : 'referidos'}

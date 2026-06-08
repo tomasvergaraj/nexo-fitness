@@ -1878,7 +1878,7 @@ export default function ProgramsPage() {
                   )}>
                     {done ? <CheckCircle2 size={16} /> : step}
                   </div>
-                  <span className={cn('text-xs font-medium', active ? 'text-surface-900 dark:text-white' : 'text-surface-400 dark:text-surface-500')}>
+                  <span className={cn('text-xs font-medium', active ? 'text-surface-900 dark:text-white' : 'text-surface-500 dark:text-surface-400')}>
                     {label}
                   </span>
                 </button>
@@ -2369,7 +2369,7 @@ export default function ProgramsPage() {
                               ? `${formatDateTime(firstClass.start_time)} → ${formatDateTime(lastClass.start_time)}`
                               : `Grupo ${group.recurrenceGroupId.slice(0, 8)}`}
                           </p>
-                          <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
+                          <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                             {classCount} clase{classCount !== 1 ? 's' : ''} en esta tanda
                           </p>
                         </div>
@@ -2410,7 +2410,7 @@ export default function ProgramsPage() {
                                     {booking.user_email || 'Sin correo'}
                                     {booking.user_phone ? ` · ${booking.user_phone}` : ''}
                                   </p>
-                                  <p className="mt-1 text-xs text-surface-400 dark:text-surface-500">
+                                  <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                                     Reservó el {formatDateTime(booking.created_at)}
                                     {booking.cancelled_at ? ` · Canceló el ${formatDateTime(booking.cancelled_at)}` : ''}
                                   </p>
@@ -2427,7 +2427,7 @@ export default function ProgramsPage() {
                                       style={{ width: `${Math.min(progressPct, 100)}%` }}
                                     />
                                   </div>
-                                  <p className="mt-2 text-xs text-surface-400 dark:text-surface-500">
+                                  <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
                                     {booking.failed_classes} sin reservar
                                   </p>
                                 </div>

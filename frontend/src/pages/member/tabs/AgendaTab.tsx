@@ -585,7 +585,7 @@ export default function AgendaTab() {
                                     </span>
                                   ) : null}
                                   {gymClass.branch_name ? (
-                                    <span className="text-[11px] text-surface-400 dark:text-surface-500">
+                                    <span className="text-[11px] text-surface-500 dark:text-surface-400">
                                       · {gymClass.branch_name}
                                     </span>
                                   ) : null}
@@ -796,7 +796,7 @@ export default function AgendaTab() {
               className="mb-1.5 block text-sm font-medium text-surface-700 dark:text-surface-300"
             >
               Motivo de cancelación{' '}
-              <span className="text-surface-400 dark:text-surface-500">(opcional)</span>
+              <span className="text-surface-500 dark:text-surface-400">(opcional)</span>
             </label>
             <textarea
               id="cancel-reason"

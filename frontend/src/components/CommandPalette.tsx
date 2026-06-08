@@ -195,7 +195,7 @@ export default function CommandPalette() {
               ) : (
                 grouped.map(([group, items]) => (
                   <div key={group} className="py-1">
-                    <div className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-wider text-surface-400 dark:text-surface-500">
+                    <div className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">
                       {group}
                     </div>
                     <div>

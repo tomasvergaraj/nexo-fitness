@@ -556,7 +556,7 @@ export default function ProgressTab() {
                   : 'border-surface-300 bg-surface-50 hover:border-surface-400 dark:border-white/15 dark:bg-white/[0.03] dark:hover:border-white/25',
               )}
             >
-              <Upload size={24} className="text-surface-400 dark:text-surface-500" />
+              <Upload size={24} className="text-surface-500 dark:text-surface-400" />
               {photoFile ? (
                 <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">{photoFile.name}</p>
               ) : (

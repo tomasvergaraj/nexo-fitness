@@ -148,7 +148,7 @@ export default function MemberDrawer({ isOpen, onClose }: Props) {
               <div>
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between px-5 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-surface-400 dark:text-surface-500"
+                  className="flex w-full items-center justify-between px-5 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-surface-500 dark:text-surface-400"
                   onClick={() => toggleSection('nav')}
                 >
                   Navegación
@@ -224,7 +224,7 @@ export default function MemberDrawer({ isOpen, onClose }: Props) {
               <div className="mt-1 border-t border-surface-100 pt-1 dark:border-white/10">
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between px-5 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-surface-400 dark:text-surface-500"
+                  className="flex w-full items-center justify-between px-5 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-surface-500 dark:text-surface-400"
                   onClick={() => toggleSection('settings')}
                 >
                   Ajustes

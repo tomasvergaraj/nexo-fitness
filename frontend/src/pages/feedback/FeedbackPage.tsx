@@ -266,7 +266,7 @@ export default function FeedbackPage() {
                 <label className="block text-sm font-medium text-surface-700 dark:text-surface-300">Mensaje</label>
                 <span className={cn(
                   'text-xs font-medium',
-                  remainingChars < 300 ? 'text-amber-600 dark:text-amber-300' : 'text-surface-400 dark:text-surface-500',
+                  remainingChars < 300 ? 'text-amber-600 dark:text-amber-300' : 'text-surface-500 dark:text-surface-400',
                 )}>
                   {messageLength}/{FEEDBACK_MESSAGE_LIMIT}
                 </span>
@@ -284,7 +284,7 @@ export default function FeedbackPage() {
             <div>
               <div className="mb-2 flex items-center justify-between gap-3">
                 <label className="block text-sm font-medium text-surface-700 dark:text-surface-300">Imagen adjunta</label>
-                <span className="text-xs text-surface-400 dark:text-surface-500">JPEG, PNG o WebP hasta 15 MB</span>
+                <span className="text-xs text-surface-500 dark:text-surface-400">JPEG, PNG o WebP hasta 15 MB</span>
               </div>
 
               <div className="rounded-[1.25rem] border border-dashed border-amber-300/70 bg-gradient-to-r from-amber-50/80 to-rose-50/60 p-4 dark:border-amber-700/40 dark:from-amber-950/10 dark:to-rose-950/10">

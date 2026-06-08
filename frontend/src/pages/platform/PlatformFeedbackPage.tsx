@@ -256,7 +256,7 @@ export default function PlatformFeedbackPage() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-surface-400 dark:text-surface-500">
+                <p className="text-xs text-surface-500 dark:text-surface-400">
                   {tenantsQuery.isFetching ? 'Buscando cuentas...' : 'El selector consulta las cuentas SaaS en tiempo real.'}
                 </p>
               </div>
@@ -376,7 +376,7 @@ export default function PlatformFeedbackPage() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-lg font-semibold text-surface-900 dark:text-white">{submission.tenant_name}</h2>
-                          <span className="text-sm text-surface-400 dark:text-surface-500">/{submission.tenant_slug}</span>
+                          <span className="text-sm text-surface-500 dark:text-surface-400">/{submission.tenant_slug}</span>
                         </div>
                         <p className="mt-3 text-sm leading-6 text-surface-600 dark:text-surface-300">
                           {summarizeMessage(submission.message)}
@@ -493,7 +493,7 @@ export default function PlatformFeedbackPage() {
 function SummaryCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[1.25rem] border border-white/70 bg-white/80 px-4 py-4 backdrop-blur dark:border-white/10 dark:bg-white/5">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-400 dark:text-surface-500">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-surface-900 dark:text-white">{value}</p>
     </div>
   );
@@ -510,7 +510,7 @@ function DetailMeta({
 }) {
   return (
     <div className="rounded-[1.1rem] border border-surface-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-surface-900">
-      <div className="flex items-center gap-2 text-surface-400 dark:text-surface-500">
+      <div className="flex items-center gap-2 text-surface-500 dark:text-surface-400">
         <Icon size={14} />
         <span className="text-xs font-semibold uppercase tracking-[0.18em]">{label}</span>
       </div>

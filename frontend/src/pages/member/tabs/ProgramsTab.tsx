@@ -501,7 +501,7 @@ export default function ProgramsTab() {
               className="mb-1.5 block text-sm font-medium text-surface-700 dark:text-surface-300"
             >
               Motivo{' '}
-              <span className="text-surface-400 dark:text-surface-500">(opcional)</span>
+              <span className="text-surface-500 dark:text-surface-400">(opcional)</span>
             </label>
             <textarea
               id="cancel-booking-reason"

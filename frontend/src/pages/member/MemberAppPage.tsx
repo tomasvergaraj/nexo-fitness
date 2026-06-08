@@ -126,7 +126,7 @@ function MemberApp() {
               <p className="truncate text-sm font-bold leading-tight text-surface-900 dark:text-white">
                 {tenantDisplayName}
               </p>
-              <p className="truncate text-[11px] leading-tight text-surface-400 dark:text-surface-500">
+              <p className="truncate text-[11px] leading-tight text-surface-500 dark:text-surface-400">
                 {TABS_META[activeTab] ?? activeTab}
               </p>
             </div>
