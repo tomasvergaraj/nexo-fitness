@@ -105,6 +105,7 @@ class MembershipManualSaleRequest(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=2000)
     auto_renew: bool = False
     gift_card_code: Optional[str] = None
+    promo_code: Optional[str] = None
 
 
 class ManualPaymentResponse(BaseModel):

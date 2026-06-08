@@ -137,16 +137,28 @@ async def create_manual_membership_sale_endpoint(
     if not plan.is_active:
         raise HTTPException(status_code=400, detail="Solo puedes asignar planes activos")
 
-    # Gift card (Fase 6.6): se descuenta del monto a cobrar antes de crear la venta.
+    # Precio base: promo code (si viene) o monto custom/precio del plan.
     from decimal import Decimal
     from app.services import gift_card_service
     from app.services.membership_sale_service import resolve_plan_sale_amount
+    from app.services.promo_code_service import resolve_tenant_promo_pricing
 
+    promo_pricing = None
+    if data.promo_code and data.promo_code.strip():
+        promo_pricing = await resolve_tenant_promo_pricing(
+            db, tenant_id=ctx.tenant_id, plan_id=plan.id, promo_code=data.promo_code.strip()
+        )
+        if not promo_pricing.valid or promo_pricing.final_price is None:
+            raise HTTPException(status_code=400, detail=promo_pricing.reason or "Código promocional no válido.")
+        base_amount = promo_pricing.final_price
+    else:
+        base_amount = resolve_plan_sale_amount(plan, data.amount)
+
+    # Gift card (Fase 6.6): se descuenta del monto a cobrar (después de la promo).
     gift_card_applied = Decimal("0")
     gift_redemption = None
-    charge_amount = data.amount
+    charge_amount = base_amount
     if data.gift_card_code and data.gift_card_code.strip():
-        base_amount = resolve_plan_sale_amount(plan, data.amount)
         try:
             gift_redemption = await gift_card_service.redeem(
                 db,
@@ -182,6 +194,11 @@ async def create_manual_membership_sale_endpoint(
     # Vincular la redención al pago recién creado.
     if gift_redemption is not None:
         gift_redemption.payment_id = result.payment.id
+        await db.flush()
+
+    # Contabilizar el uso del promo code.
+    if promo_pricing is not None and promo_pricing.promo is not None:
+        promo_pricing.promo.uses_count = (promo_pricing.promo.uses_count or 0) + 1
         await db.flush()
 
     effective_plan = None
