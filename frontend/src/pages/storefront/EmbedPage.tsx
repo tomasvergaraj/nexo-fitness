@@ -160,7 +160,7 @@ export default function EmbedPage() {
           Ver todo y reservar <ArrowRight size={15} />
         </button>
 
-        <p className="mt-2 text-center text-[10px] text-surface-400">
+        <p className="mt-2 text-center text-[10px] text-surface-500">
           Reservas por{' '}
           <a href="https://nexofitness.cl" target="_blank" rel="noopener noreferrer" className="underline">
             Nexo Fitness

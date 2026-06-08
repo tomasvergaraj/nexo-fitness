@@ -76,10 +76,10 @@ export default function NpsPrompt() {
                 aria-label={`Puntaje ${n}`}
                 aria-pressed={selected}
                 className={cn(
-                  'flex h-10 items-center justify-center rounded-lg text-sm font-bold transition-colors',
+                  'flex h-11 min-w-0 items-center justify-center rounded-lg text-sm font-bold transition-colors',
                   selected
                     ? 'text-white'
-                    : 'bg-surface-100 text-surface-600 hover:bg-surface-200 dark:bg-white/5 dark:text-surface-300 dark:hover:bg-white/10',
+                    : 'bg-surface-100 text-surface-700 hover:bg-surface-200 dark:bg-white/5 dark:text-surface-200 dark:hover:bg-white/10',
                 )}
                 style={selected ? { background: brandGradient } : undefined}
               >
@@ -88,7 +88,7 @@ export default function NpsPrompt() {
             );
           })}
         </div>
-        <div className="mt-1.5 flex justify-between text-[11px] text-surface-400 dark:text-surface-500">
+        <div className="mt-1.5 flex justify-between text-[11px] text-surface-500 dark:text-surface-400">
           <span>Nada probable</span>
           <span>Muy probable</span>
         </div>

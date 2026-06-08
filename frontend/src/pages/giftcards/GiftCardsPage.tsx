@@ -4,6 +4,8 @@ import { Gift, Copy, Loader2, Plus, Ban } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { giftCardsApi } from '@/services/api';
 import { cn, formatCurrency, getApiError } from '@/utils';
+import EmptyState from '@/components/ui/EmptyState';
+import Modal from '@/components/ui/Modal';
 
 interface GiftCard {
   id: string;
@@ -22,9 +24,9 @@ interface GiftCard {
 const PRESETS = [10000, 25000, 50000, 100000];
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
-  active: { label: 'Activa', cls: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400' },
-  depleted: { label: 'Sin saldo', cls: 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400' },
-  void: { label: 'Anulada', cls: 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400' },
+  active: { label: 'Activa', cls: 'badge badge-success' },
+  depleted: { label: 'Sin saldo', cls: 'badge badge-neutral' },
+  void: { label: 'Anulada', cls: 'badge badge-danger' },
 };
 
 export default function GiftCardsPage() {
@@ -33,6 +35,7 @@ export default function GiftCardsPage() {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [message, setMessage] = useState('');
+  const [cardToVoid, setCardToVoid] = useState<GiftCard | null>(null);
 
   const { data, isLoading } = useQuery<GiftCard[]>({
     queryKey: ['gift-cards'],
@@ -63,6 +66,7 @@ export default function GiftCardsPage() {
     mutationFn: (id: string) => giftCardsApi.void(id),
     onSuccess: () => {
       toast.success('Gift card anulada');
+      setCardToVoid(null);
       void qc.invalidateQueries({ queryKey: ['gift-cards'] });
     },
     onError: (e) => toast.error(getApiError(e, 'No se pudo anular')),
@@ -147,7 +151,11 @@ export default function GiftCardsPage() {
         {isLoading ? (
           <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-brand-500" /></div>
         ) : !data?.length ? (
-          <p className="py-8 text-center text-sm text-surface-400">Aún no has emitido gift cards.</p>
+          <EmptyState
+            icon={Gift}
+            title="Aún no has emitido gift cards"
+            description="Emite la primera con el formulario de arriba. Tu cliente recibe un código y el saldo se descuenta en POS o al comprar un plan."
+          />
         ) : (
           <div className="space-y-2">
             {data.map((c) => {
@@ -159,9 +167,9 @@ export default function GiftCardsPage() {
                       <button type="button" onClick={() => copyCode(c.code)} className="inline-flex items-center gap-1.5 font-mono text-sm font-bold text-surface-900 hover:text-brand-600 dark:text-white">
                         {c.code} <Copy size={12} />
                       </button>
-                      <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', meta.cls)}>{meta.label}</span>
+                      <span className={meta.cls}>{meta.label}</span>
                     </div>
-                    <p className="mt-1 text-xs text-surface-500">
+                    <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                       {c.recipient_email ? `Para ${c.recipient_name || c.recipient_email}` : 'Sin destinatario'}
                     </p>
                   </div>
@@ -170,14 +178,14 @@ export default function GiftCardsPage() {
                       <p className="text-sm font-bold text-surface-900 dark:text-white">
                         {formatCurrency(c.balance, c.currency)}
                       </p>
-                      <p className="text-xs text-surface-400">de {formatCurrency(c.initial_amount, c.currency)}</p>
+                      <p className="text-xs text-surface-500 dark:text-surface-400">de {formatCurrency(c.initial_amount, c.currency)}</p>
                     </div>
                     {c.status === 'active' ? (
                       <button
                         type="button"
-                        onClick={() => { if (confirm(`¿Anular la gift card ${c.code}? Su saldo dejará de poder usarse.`)) voidMutation.mutate(c.id); }}
-                        className="rounded-lg p-2 text-surface-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
-                        aria-label="Anular"
+                        onClick={() => setCardToVoid(c)}
+                        className="rounded-lg p-2 text-surface-500 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-surface-400 dark:hover:bg-red-950/30"
+                        aria-label={`Anular gift card ${c.code}`}
                       >
                         <Ban size={16} />
                       </button>
@@ -189,6 +197,36 @@ export default function GiftCardsPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={!!cardToVoid}
+        title="Anular gift card"
+        onClose={() => { if (!voidMutation.isPending) setCardToVoid(null); }}
+      >
+        <div className="space-y-5">
+          <p className="text-sm text-surface-600 dark:text-surface-300">
+            Vas a anular la gift card{' '}
+            <span className="font-mono font-semibold text-surface-900 dark:text-white">{cardToVoid?.code}</span>.
+            {cardToVoid && cardToVoid.balance > 0 ? (
+              <> Su saldo de <span className="font-semibold">{formatCurrency(cardToVoid.balance, cardToVoid.currency)}</span> dejará de poder usarse.</>
+            ) : null} Esta acción no se puede deshacer.
+          </p>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button type="button" className="btn-secondary" onClick={() => setCardToVoid(null)} disabled={voidMutation.isPending}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={() => cardToVoid && voidMutation.mutate(cardToVoid.id)}
+              disabled={voidMutation.isPending}
+            >
+              {voidMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
+              Anular gift card
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -281,9 +281,9 @@ export default function RetentionPage() {
 }
 
 function npsScoreColor(score: number): string {
-  if (score >= 50) return 'text-emerald-500';
-  if (score >= 0) return 'text-amber-500';
-  return 'text-red-500';
+  if (score >= 50) return 'text-emerald-600 dark:text-emerald-400';
+  if (score >= 0) return 'text-amber-600 dark:text-amber-400';
+  return 'text-red-600 dark:text-red-400';
 }
 
 function NpsPanel({ nps, months }: { nps: NpsSummary; months: number }) {
@@ -305,7 +305,7 @@ function NpsPanel({ nps, months }: { nps: NpsSummary; months: number }) {
       </div>
 
       {total === 0 ? (
-        <p className="py-6 text-center text-sm text-surface-400">
+        <p className="py-6 text-center text-sm text-surface-500 dark:text-surface-400">
           Aún no hay respuestas. Se envía una encuesta automática ~24h después de cada check-in en clase.
         </p>
       ) : (
@@ -314,11 +314,11 @@ function NpsPanel({ nps, months }: { nps: NpsSummary; months: number }) {
             <p className={cn('text-4xl font-bold', npsScoreColor(nps.nps_score ?? 0))}>
               {nps.nps_score! > 0 ? '+' : ''}{nps.nps_score}
             </p>
-            <p className="mt-0.5 text-xs text-surface-400">
+            <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">
               NPS · {total} {total === 1 ? 'respuesta' : 'respuestas'}
             </p>
             {nps.average !== null && (
-              <p className="text-xs text-surface-400">Promedio {nps.average}/10</p>
+              <p className="text-xs text-surface-500 dark:text-surface-400">Promedio {nps.average}/10</p>
             )}
           </div>
 
@@ -346,7 +346,7 @@ function SegLabel({ color, label, value, sub }: { color: string; label: string; 
       <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', color)} />
       <div className="min-w-0">
         <p className="truncate font-medium text-surface-700 dark:text-surface-300">{label}</p>
-        <p className="text-surface-400">{value} · {sub}</p>
+        <p className="text-surface-500 dark:text-surface-400">{value} · {sub}</p>
       </div>
     </div>
   );
@@ -376,11 +376,11 @@ function ReferralPanel({ data }: { data: ReferralMetrics }) {
 
       {data.top_referrers.length > 0 ? (
         <div className="mt-4 border-t border-surface-100 pt-3 dark:border-surface-800">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-surface-400">Ranking de referrers</p>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-surface-500 dark:text-surface-400">Ranking de referrers</p>
           <div className="space-y-1.5">
             {data.top_referrers.map((r, i) => (
               <div key={r.user_id} className="flex items-center gap-3 text-sm">
-                <span className="w-5 shrink-0 text-center text-xs font-bold text-surface-400">{i + 1}</span>
+                <span className="w-5 shrink-0 text-center text-xs font-bold text-surface-400 dark:text-surface-500">{i + 1}</span>
                 <span className="min-w-0 flex-1 truncate text-surface-700 dark:text-surface-300">{r.name}</span>
                 <span className="shrink-0 text-xs text-surface-500">
                   {r.referred_count} {r.referred_count === 1 ? 'referido' : 'referidos'}
@@ -391,7 +391,7 @@ function ReferralPanel({ data }: { data: ReferralMetrics }) {
           </div>
         </div>
       ) : (
-        <p className="mt-4 border-t border-surface-100 pt-3 text-center text-sm text-surface-400 dark:border-surface-800">
+        <p className="mt-4 border-t border-surface-100 pt-3 text-center text-sm text-surface-500 dark:border-surface-800 dark:text-surface-400">
           Aún no hay clientes referidos. Compártelo: cada miembro tiene un link en su perfil.
         </p>
       )}
@@ -404,7 +404,7 @@ function MiniStat({ label, value, hint }: { label: string; value: string; hint?:
     <div className="rounded-xl bg-surface-50 px-3 py-2.5 dark:bg-surface-800/40">
       <p className="text-xs font-medium uppercase tracking-wide text-surface-500">{label}</p>
       <p className="mt-0.5 text-xl font-bold text-surface-900 dark:text-white">{value}</p>
-      {hint && <p className="mt-0.5 truncate text-xs text-surface-400">{hint}</p>}
+      {hint && <p className="mt-0.5 truncate text-xs text-surface-500 dark:text-surface-400">{hint}</p>}
     </div>
   );
 }
