@@ -1021,7 +1021,7 @@ export default function SettingsPage() {
                       <pre className="mt-3 whitespace-pre-wrap break-all rounded-xl bg-surface-100 px-3 py-2.5 font-mono text-xs leading-relaxed text-surface-700 dark:bg-surface-950/50 dark:text-surface-300">
                         <code>{snippet}</code>
                       </pre>
-                      <div className="mt-2 flex gap-2">
+                      <div className="mt-2 flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={async () => {
