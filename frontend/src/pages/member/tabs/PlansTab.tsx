@@ -30,6 +30,8 @@ export default function PlansTab() {
       const payload: Record<string, unknown> = {
         plan_id: planId,
         member_user_id: user.id,
+        customer_name: `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim() || user.email,
+        customer_email: user.email,
         success_url: `${returnBase}?tab=payments&checkout=success`,
         cancel_url: `${returnBase}?tab=plans&checkout=cancelled`,
       };
