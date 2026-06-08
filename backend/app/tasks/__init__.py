@@ -19,6 +19,7 @@ celery = Celery(
         "app.tasks.class_reminders",
         "app.tasks.class_status_updater",
         "app.tasks.auto_renewal",
+        "app.tasks.nps_surveys",
     ],
 )
 
@@ -66,6 +67,11 @@ celery.conf.update(
         "process-auto-renewals": {
             "task": "app.tasks.auto_renewal.process_auto_renewals",
             "schedule": 86400,  # cada 24 horas
+        },
+        # Encuesta NPS post-clase: cada hora, push ~24h tras check-in
+        "send-nps-surveys": {
+            "task": "app.tasks.nps_surveys.send_nps_surveys",
+            "schedule": 3600,  # cada hora
         },
     },
 )

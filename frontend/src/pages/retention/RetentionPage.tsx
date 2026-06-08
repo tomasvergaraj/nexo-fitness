@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Heart, Loader2, TrendingDown, Users, Clock, Megaphone } from 'lucide-react';
+import { AlertTriangle, Heart, Loader2, TrendingDown, Users, Clock, Megaphone, Smile } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { retentionApi } from '@/services/api';
 import { cn } from '@/utils';
@@ -16,6 +16,15 @@ interface RetentionDashboard {
   at_risk: AtRiskSummary;
   avg_lifetime_days: number | null;
   months_window: number;
+}
+interface NpsSummary {
+  nps_score: number | null;
+  total: number;
+  promoters: number;
+  passives: number;
+  detractors: number;
+  average: number | null;
+  days: number;
 }
 
 const MONTH_OPTIONS = [3, 6, 12];
@@ -42,6 +51,13 @@ export default function RetentionPage() {
   const { data, isLoading, isError } = useQuery<RetentionDashboard>({
     queryKey: ['retention-dashboard', months],
     queryFn: async () => (await retentionApi.getDashboard(months)).data,
+    staleTime: 5 * 60_000,
+  });
+
+  const npsDays = months * 30;
+  const { data: nps } = useQuery<NpsSummary>({
+    queryKey: ['retention-nps', npsDays],
+    queryFn: async () => (await retentionApi.getNps(npsDays)).data,
     staleTime: 5 * 60_000,
   });
 
@@ -116,6 +132,9 @@ export default function RetentionPage() {
               hint="Memberships canceladas"
             />
           </motion.div>
+
+          {/* ── NPS post-clase ─────────────────────────────────────────── */}
+          {nps && <NpsPanel nps={nps} months={months} />}
 
           {/* ── At-risk CTA ────────────────────────────────────────────── */}
           {data.at_risk.high > 0 && (
@@ -239,6 +258,78 @@ export default function RetentionPage() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function npsScoreColor(score: number): string {
+  if (score >= 50) return 'text-emerald-500';
+  if (score >= 0) return 'text-amber-500';
+  return 'text-red-500';
+}
+
+function NpsPanel({ nps, months }: { nps: NpsSummary; months: number }) {
+  const total = nps.total;
+  const seg = (n: number) => (total > 0 ? (n / total) * 100 : 0);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mb-6 rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-800 dark:bg-surface-900 sm:p-6"
+    >
+      <div className="mb-4 flex items-center gap-2">
+        <Smile size={16} className="text-brand-500" />
+        <div>
+          <h2 className="text-sm font-semibold text-surface-900 dark:text-white">NPS post-clase</h2>
+          <p className="text-xs text-surface-500">Satisfacción de miembros tras asistir a clase · últimos {months}m</p>
+        </div>
+      </div>
+
+      {total === 0 ? (
+        <p className="py-6 text-center text-sm text-surface-400">
+          Aún no hay respuestas. Se envía una encuesta automática ~24h después de cada check-in en clase.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+          <div className="shrink-0 text-center sm:w-32">
+            <p className={cn('text-4xl font-bold', npsScoreColor(nps.nps_score ?? 0))}>
+              {nps.nps_score! > 0 ? '+' : ''}{nps.nps_score}
+            </p>
+            <p className="mt-0.5 text-xs text-surface-400">
+              NPS · {total} {total === 1 ? 'respuesta' : 'respuestas'}
+            </p>
+            {nps.average !== null && (
+              <p className="text-xs text-surface-400">Promedio {nps.average}/10</p>
+            )}
+          </div>
+
+          <div className="flex-1 space-y-2">
+            <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface-100 dark:bg-surface-800">
+              <div className="h-full bg-emerald-500" style={{ width: `${seg(nps.promoters)}%` }} />
+              <div className="h-full bg-amber-400" style={{ width: `${seg(nps.passives)}%` }} />
+              <div className="h-full bg-red-400" style={{ width: `${seg(nps.detractors)}%` }} />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <SegLabel color="bg-emerald-500" label="Promotores" value={nps.promoters} sub="9-10" />
+              <SegLabel color="bg-amber-400" label="Pasivos" value={nps.passives} sub="7-8" />
+              <SegLabel color="bg-red-400" label="Detractores" value={nps.detractors} sub="0-6" />
+            </div>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function SegLabel({ color, label, value, sub }: { color: string; label: string; value: number; sub: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', color)} />
+      <div className="min-w-0">
+        <p className="truncate font-medium text-surface-700 dark:text-surface-300">{label}</p>
+        <p className="text-surface-400">{value} · {sub}</p>
+      </div>
     </div>
   );
 }

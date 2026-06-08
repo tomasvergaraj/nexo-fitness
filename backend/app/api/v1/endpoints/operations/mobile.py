@@ -55,6 +55,7 @@ from app.schemas.platform import (
 )
 from app.services.calendar_export_service import build_member_calendar_ical
 from app.services.custom_domain_service import build_storefront_url
+from app.services import nps_service
 from app.services.membership_sale_service import (
     membership_status_value,
     sync_membership_timeline,
@@ -1088,3 +1089,67 @@ async def delete_progress_photo(
         pass
     await db.delete(photo)
     await db.commit()
+
+
+# ─── NPS post-clase ───────────────────────────────────────────────────────────
+
+class NPSPendingResponse(BaseModel):
+    checkin_id: UUID
+    gym_class_id: UUID
+    class_name: str
+    class_start_time: datetime
+    checked_in_at: datetime
+
+
+class NPSSubmitRequest(BaseModel):
+    checkin_id: UUID
+    score: int
+    comment: Optional[str] = None
+
+
+class NPSSubmitResponse(BaseModel):
+    id: UUID
+    score: int
+    comment: Optional[str] = None
+    created_at: datetime
+
+
+@mobile_router.get("/nps/pending", response_model=Optional[NPSPendingResponse])
+async def mobile_pending_nps(
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[NPSPendingResponse]:
+    pending = await nps_service.get_pending_survey(
+        db, tenant_id=tenant.id, user_id=current_user.id
+    )
+    if pending is None:
+        return None
+    return NPSPendingResponse(**pending)
+
+
+@mobile_router.post("/nps", response_model=NPSSubmitResponse, status_code=201)
+async def mobile_submit_nps(
+    body: NPSSubmitRequest,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NPSSubmitResponse:
+    try:
+        response = await nps_service.submit_nps(
+            db,
+            tenant_id=tenant.id,
+            user_id=current_user.id,
+            checkin_id=body.checkin_id,
+            score=body.score,
+            comment=body.comment,
+        )
+    except nps_service.NPSValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await db.commit()
+    return NPSSubmitResponse(
+        id=response.id,
+        score=response.score,
+        comment=response.comment,
+        created_at=response.created_at,
+    )

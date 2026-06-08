@@ -502,6 +502,28 @@ class FeedbackSubmission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class NPSResponse(Base):
+    """Respuesta NPS de un miembro tras asistir a una clase (0-10).
+
+    Disparada por la tarea Celery ~24h después del check-in. Un check-in
+    genera a lo sumo una respuesta (constraint único) para evitar duplicados.
+    """
+
+    __tablename__ = "nps_responses"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "checkin_id", name="uq_nps_response_per_checkin"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    checkin_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("checkins.id", ondelete="SET NULL"), index=True)
+    gym_class_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("gym_classes.id", ondelete="SET NULL"))
+    score: Mapped[int] = mapped_column(Integer, nullable=False)  # 0-10
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 # ─── Audit Log ────────────────────────────────────────────────────────────────
 
 class AuditLog(Base):

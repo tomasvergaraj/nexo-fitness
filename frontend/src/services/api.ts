@@ -203,6 +203,8 @@ export const dashboardApi = {
 export const retentionApi = {
   getDashboard: (months: number = 6) =>
     api.get('/retention/dashboard', { params: { months } }),
+  getNps: (days: number = 90) =>
+    api.get('/retention/nps', { params: { days } }),
 };
 
 export const classesApi = {
@@ -447,6 +449,8 @@ export const mobileApi = {
   listPersonalRecords: (exercise?: string) => api.get('/mobile/personal-records', { params: exercise ? { exercise } : undefined }),
   createPersonalRecord: (data: Record<string, unknown>) => api.post('/mobile/personal-records', data),
   deletePersonalRecord: (id: string) => api.delete(`/mobile/personal-records/${id}`),
+  getPendingNps: () => api.get('/mobile/nps/pending'),
+  submitNps: (data: { checkin_id: string; score: number; comment?: string }) => api.post('/mobile/nps', data),
 };
 
 export const apiClientsApi = {

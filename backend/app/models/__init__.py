@@ -20,7 +20,7 @@ from app.models.business import (
     CheckIn, CheckInInvestigationCase, Payment, PaymentStatus, PaymentMethod,
     Campaign, CampaignStatus, CampaignChannel,
     SupportInteraction, InteractionChannel,
-    FeedbackSubmission, FeedbackCategory,
+    FeedbackSubmission, FeedbackCategory, NPSResponse,
     AuditLog, Notification, TrainingProgram, TrainingProgramEnrollment,
 )
 from app.models.pos import (
@@ -43,7 +43,7 @@ __all__ = [
     "CheckIn", "CheckInInvestigationCase", "Payment", "PaymentStatus", "PaymentMethod",
     "Campaign", "CampaignStatus", "CampaignChannel",
     "SupportInteraction", "InteractionChannel",
-    "FeedbackSubmission", "FeedbackCategory",
+    "FeedbackSubmission", "FeedbackCategory", "NPSResponse",
     "AuditLog", "Notification", "TrainingProgram", "TrainingProgramEnrollment",
     # POS
     "ProductCategory", "Product", "ProductUnit",

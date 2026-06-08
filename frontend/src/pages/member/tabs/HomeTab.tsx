@@ -31,6 +31,7 @@ import {
   formatRelative,
 } from '@/utils';
 import { useMemberContext } from '../MemberContext';
+import NpsPrompt from '../components/NpsPrompt';
 
 export default function HomeTab() {
   const {
@@ -70,6 +71,9 @@ export default function HomeTab() {
       transition={{ duration: 0.28, ease: [0.25, 0.1, 0.25, 1] }}
       className="space-y-4"
     >
+      {/* ── NPS post-clase (solo si hay encuesta pendiente) ───────────── */}
+      <NpsPrompt />
+
       {/* ── Stats row ─────────────────────────────────────────────────── */}
       {isWalletLoading ? (
         <SkeletonMetricCards />

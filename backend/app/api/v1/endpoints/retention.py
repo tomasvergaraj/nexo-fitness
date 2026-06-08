@@ -256,3 +256,30 @@ async def get_retention_dashboard(
         avg_lifetime_days=avg_lifetime_days,
         months_window=months,
     )
+
+
+# ─── NPS post-clase ───────────────────────────────────────────────────────────
+
+
+class NPSSummaryResponse(BaseModel):
+    nps_score: Optional[int]
+    total: int
+    promoters: int
+    passives: int
+    detractors: int
+    average: Optional[float]
+    days: int
+
+
+@retention_router.get("/nps", response_model=NPSSummaryResponse)
+async def get_nps_summary(
+    days: int = 90,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+) -> NPSSummaryResponse:
+    from app.services import nps_service
+
+    window = max(7, min(days, 365))
+    summary = await nps_service.get_nps_summary(db, tenant_id=ctx.tenant_id, days=window)
+    return NPSSummaryResponse(**summary)
