@@ -7,6 +7,7 @@ All routers are re-exported here so main.py keeps importing them as
 from .branches import branches_router  # noqa: F401
 from .campaigns import campaigns_router  # noqa: F401
 from .feedback import feedback_router  # noqa: F401
+from .gift_cards import gift_cards_router  # noqa: F401
 from .memberships import memberships_router  # noqa: F401
 from .mobile import mobile_router  # noqa: F401
 from .notifications import notifications_router  # noqa: F401

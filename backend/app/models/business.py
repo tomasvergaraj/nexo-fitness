@@ -548,6 +548,50 @@ class ReferralReward(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class GiftCard(Base):
+    """Tarjeta de regalo con saldo (Fase 6.6).
+
+    Emitida manualmente por el staff. Se redime parcialmente en POS o en venta
+    de plan: cada uso descuenta `balance` y registra un GiftCardRedemption.
+    `status`: active (saldo > 0) | depleted (saldo 0) | void (anulada).
+    """
+
+    __tablename__ = "gift_cards"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_gift_card_code"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    initial_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="CLP")
+    recipient_email: Mapped[Optional[str]] = mapped_column(String(255))
+    recipient_name: Mapped[Optional[str]] = mapped_column(String(255))
+    message: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)  # active | depleted | void
+    issued_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class GiftCardRedemption(Base):
+    """Registro de cada uso (descuento) de una gift card."""
+
+    __tablename__ = "gift_card_redemptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    gift_card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("gift_cards.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    context: Mapped[str] = mapped_column(String(20), nullable=False)  # pos | membership
+    payment_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("payments.id", ondelete="SET NULL"))
+    pos_transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("pos_transactions.id", ondelete="SET NULL"))
+    redeemed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 # ─── Audit Log ────────────────────────────────────────────────────────────────
 
 class AuditLog(Base):

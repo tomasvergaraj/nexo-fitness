@@ -21,6 +21,7 @@ from app.models.business import (
     Campaign, CampaignStatus, CampaignChannel,
     SupportInteraction, InteractionChannel,
     FeedbackSubmission, FeedbackCategory, NPSResponse, ReferralReward,
+    GiftCard, GiftCardRedemption,
     AuditLog, Notification, TrainingProgram, TrainingProgramEnrollment,
 )
 from app.models.pos import (
@@ -44,6 +45,7 @@ __all__ = [
     "Campaign", "CampaignStatus", "CampaignChannel",
     "SupportInteraction", "InteractionChannel",
     "FeedbackSubmission", "FeedbackCategory", "NPSResponse", "ReferralReward",
+    "GiftCard", "GiftCardRedemption",
     "AuditLog", "Notification", "TrainingProgram", "TrainingProgramEnrollment",
     # POS
     "ProductCategory", "Product", "ProductUnit",

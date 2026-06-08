@@ -939,6 +939,7 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
         cashier_name=f"{cashier.first_name} {cashier.last_name}" if cashier else None,
         subtotal=tx.subtotal,
         discount_amount=tx.discount_amount,
+        gift_card_amount=tx.gift_card_amount,
         total=tx.total,
         payment_method=tx.payment_method,
         status=tx.status.value if hasattr(tx.status, "value") else tx.status,
@@ -1070,6 +1071,25 @@ async def create_transaction(
                 created_at=now,
             )
         )
+
+    # ── gift card: descuenta saldo del total (Fase 6.6) ───────────────────────
+    if body.gift_card_code and body.gift_card_code.strip() and tx.total > 0:
+        from app.services import gift_card_service
+
+        try:
+            redemption = await gift_card_service.redeem(
+                db,
+                tenant_id=ctx.tenant_id,
+                code=body.gift_card_code,
+                total=tx.total,
+                context="pos",
+                redeemed_by=user.id,
+                pos_transaction_id=tx.id,
+            )
+        except gift_card_service.GiftCardError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        tx.gift_card_amount = redemption.amount
+        tx.total = tx.total - redemption.amount
 
     await db.commit()
     await db.refresh(tx)

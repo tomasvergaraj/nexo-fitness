@@ -298,6 +298,8 @@ class POSTransaction(Base):
     )
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # Monto cubierto por gift card (Fase 6.6). total = subtotal - discount - gift_card_amount.
+    gift_card_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), server_default="0")
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     # reutiliza PaymentMethod del módulo de membresías
     payment_method: Mapped[str] = mapped_column(String(20), nullable=False)

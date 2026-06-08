@@ -22,6 +22,7 @@ const ClassesPage = lazy(() => import('@/pages/classes/ClassesPage'));
 const ClientsPage = lazy(() => import('@/pages/clients/ClientsPage'));
 const PlansPage = lazy(() => import('@/pages/plans/PlansPage'));
 const PromoCodesPage = lazy(() => import('@/pages/promo/PromoCodesPage'));
+const GiftCardsPage = lazy(() => import('@/pages/giftcards/GiftCardsPage'));
 const ApiClientsPage = lazy(() => import('@/pages/developer/ApiClientsPage'));
 const CheckInPage = lazy(() => import('@/pages/checkin/CheckInPage'));
 const ReceptionCheckInPage = lazy(() => import('@/pages/checkin/ReceptionCheckInPage'));
@@ -153,6 +154,7 @@ export const router = createBrowserRouter([
       { path: 'clients', element: <ClientsPage /> },
       { path: 'plans', element: <PlansPage /> },
       { path: 'promo-codes', element: <PromoCodesPage /> },
+      { path: 'gift-cards', element: <AuthGuard roles={['owner', 'admin', 'reception']}><GiftCardsPage /></AuthGuard> },
       {
         path: 'api-clients',
         element: (

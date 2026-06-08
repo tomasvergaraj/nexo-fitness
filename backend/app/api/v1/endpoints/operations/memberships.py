@@ -137,6 +137,30 @@ async def create_manual_membership_sale_endpoint(
     if not plan.is_active:
         raise HTTPException(status_code=400, detail="Solo puedes asignar planes activos")
 
+    # Gift card (Fase 6.6): se descuenta del monto a cobrar antes de crear la venta.
+    from decimal import Decimal
+    from app.services import gift_card_service
+    from app.services.membership_sale_service import resolve_plan_sale_amount
+
+    gift_card_applied = Decimal("0")
+    gift_redemption = None
+    charge_amount = data.amount
+    if data.gift_card_code and data.gift_card_code.strip():
+        base_amount = resolve_plan_sale_amount(plan, data.amount)
+        try:
+            gift_redemption = await gift_card_service.redeem(
+                db,
+                tenant_id=ctx.tenant_id,
+                code=data.gift_card_code,
+                total=base_amount,
+                context="membership",
+                redeemed_by=_user.id,
+            )
+        except gift_card_service.GiftCardError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        gift_card_applied = gift_redemption.amount
+        charge_amount = base_amount - gift_card_applied
+
     try:
         result = await create_manual_membership_sale(
             db,
@@ -146,7 +170,7 @@ async def create_manual_membership_sale_endpoint(
             starts_at=data.starts_at,
             expires_at=data.expires_at,
             payment_method=data.payment_method,
-            amount=data.amount,
+            amount=charge_amount,
             currency=data.currency,
             description=data.description,
             notes=data.notes,
@@ -154,6 +178,11 @@ async def create_manual_membership_sale_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Vincular la redención al pago recién creado.
+    if gift_redemption is not None:
+        gift_redemption.payment_id = result.payment.id
+        await db.flush()
 
     effective_plan = None
     if result.effective_membership:
@@ -187,6 +216,7 @@ async def create_manual_membership_sale_endpoint(
             else None
         ),
         scheduled=result.scheduled,
+        gift_card_applied=gift_card_applied,
     )
 
 

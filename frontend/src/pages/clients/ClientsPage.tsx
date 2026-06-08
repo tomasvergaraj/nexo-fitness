@@ -164,6 +164,7 @@ type ManualSaleForm = {
   currency: string;
   description: string;
   notes: string;
+  gift_card_code: string;
 };
 
 function createNotificationForm(client?: User): NotificationForm {
@@ -220,6 +221,7 @@ function createManualSaleForm(plan?: Plan | null, client?: User | null): ManualS
     currency: plan?.currency ?? 'CLP',
     description: plan ? `Venta manual del plan ${plan.name}` : '',
     notes: '',
+    gift_card_code: '',
   };
 }
 
@@ -748,15 +750,19 @@ export default function ClientsPage() {
         description: manualSaleForm.description.trim() || null,
         notes: manualSaleForm.notes.trim() || null,
         auto_renew: false,
+        gift_card_code: manualSaleForm.gift_card_code.trim() || null,
       });
       return response.data as MembershipManualSaleResult;
     },
     onSuccess: (result) => {
       const amountLabel = formatCurrency(parseApiNumber(result.payment.amount), result.payment.currency);
+      const giftApplied = parseApiNumber((result as { gift_card_applied?: number }).gift_card_applied ?? 0);
       const scheduledStart = result.scheduled_membership?.starts_at || result.membership.starts_at;
       toast.success(
         result.scheduled
           ? `Renovación programada desde ${formatDate(scheduledStart)} por ${amountLabel}.`
+          : giftApplied > 0
+          ? `Venta registrada por ${amountLabel} (gift card: -${formatCurrency(giftApplied, result.payment.currency)}).`
           : `Venta manual registrada por ${amountLabel}.`,
       );
       setManualSaleClient(null);
@@ -1887,6 +1893,17 @@ export default function ClientsPage() {
                       onChange={(event) => setManualSaleForm((current) => ({ ...current, currency: event.target.value.toUpperCase() }))}
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Gift card (opcional)</label>
+                  <input
+                    className="input font-mono uppercase"
+                    value={manualSaleForm.gift_card_code}
+                    onChange={(event) => setManualSaleForm((current) => ({ ...current, gift_card_code: event.target.value.toUpperCase() }))}
+                    placeholder="GIFT-XXXX-XXXX"
+                  />
+                  <p className="mt-1 text-xs text-surface-500">Si el cliente tiene una gift card, su saldo se descuenta automáticamente del monto a cobrar.</p>
                 </div>
 
                 <div>

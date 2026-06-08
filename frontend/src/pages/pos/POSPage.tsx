@@ -9,7 +9,7 @@ import {
 import Modal from '@/components/ui/Modal';
 import Drawer from '@/components/ui/Drawer';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { posApi } from '@/services/api';
+import { posApi, giftCardsApi } from '@/services/api';
 import { cn, getApiError } from '@/utils';
 import type { Product, ProductCategory, POSTransaction, CashSession } from '@/types';
 
@@ -94,6 +94,9 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes] = useState('');
+  const [giftCode, setGiftCode] = useState('');
+  const [giftApplied, setGiftApplied] = useState(0);
+  const [giftChecking, setGiftChecking] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const isCompact = useMediaQuery('(max-width: 1279px)');
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
@@ -143,6 +146,8 @@ export default function POSPage() {
       setCart([]);
       setDiscount(0);
       setNotes('');
+      setGiftCode('');
+      setGiftApplied(0);
       setCheckoutOpen(false);
       queryClient.invalidateQueries({ queryKey: ['pos-transactions-today'] });
       queryClient.invalidateQueries({ queryKey: ['pos-products'] });
@@ -224,12 +229,34 @@ export default function POSPage() {
     .filter(t => t.status === 'completed')
     .reduce((s, t) => s + Number(t.total), 0);
 
+  // ── Gift card ───────────────────────────────────────────────────────────────
+  const giftShown = Math.min(giftApplied, total);
+  const finalTotal = Math.max(0, total - giftShown);
+
+  async function validateGift() {
+    const code = giftCode.trim();
+    if (!code) return;
+    if (total <= 0) { toast.error('Agrega productos antes de aplicar la gift card'); return; }
+    setGiftChecking(true);
+    try {
+      const res = await giftCardsApi.validate(code, total);
+      setGiftApplied(Number(res.data.applied) || 0);
+      toast.success(`Gift card aplicada: -${formatCLP(Number(res.data.applied) || 0)}`);
+    } catch (e) {
+      setGiftApplied(0);
+      toast.error(getApiError(e, 'Gift card inválida o sin saldo'));
+    } finally {
+      setGiftChecking(false);
+    }
+  }
+
   // ── Checkout ──────────────────────────────────────────────────────────────
   function handleCheckout() {
     saleMutation.mutate({
       items: cart.map(i => ({ product_id: i.product.id, quantity: i.quantity })),
       payment_method: paymentMethod,
       discount_amount: discount,
+      gift_card_code: giftApplied > 0 && giftCode.trim() ? giftCode.trim() : undefined,
       notes: notes || undefined,
     });
   }
@@ -611,10 +638,41 @@ export default function POSPage() {
                 <span>- {formatCLP(discount)}</span>
               </div>
             )}
+            {giftShown > 0 && (
+              <div className="flex justify-between text-sm text-emerald-600">
+                <span>Gift card</span>
+                <span>- {formatCLP(giftShown)}</span>
+              </div>
+            )}
             <div className="flex justify-between font-bold text-lg border-t border-surface-200 dark:border-surface-700 pt-2">
               <span>Total</span>
-              <span>{formatCLP(total)}</span>
+              <span>{formatCLP(finalTotal)}</span>
             </div>
+          </div>
+
+          {/* Gift card */}
+          <div>
+            <label className="text-xs text-surface-500 block mb-1">Gift card (opcional)</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={giftCode}
+                onChange={e => { setGiftCode(e.target.value.toUpperCase()); setGiftApplied(0); }}
+                placeholder="GIFT-XXXX-XXXX"
+                className="input min-w-0 flex-1 text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={validateGift}
+                disabled={giftChecking || !giftCode.trim()}
+                className="btn-secondary shrink-0 text-sm"
+              >
+                {giftChecking ? <Loader2 size={14} className="animate-spin" /> : 'Aplicar'}
+              </button>
+            </div>
+            {giftApplied > 0 && (
+              <p className="mt-1 text-xs text-emerald-600">Se descontarán {formatCLP(giftShown)} del total.</p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 p-3 bg-surface-100 dark:bg-surface-800 rounded-xl">

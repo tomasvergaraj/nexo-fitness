@@ -335,6 +335,14 @@ export const membershipsApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/memberships/${id}`, data),
 };
 
+export const giftCardsApi = {
+  list: () => api.get('/gift-cards'),
+  issue: (data: { amount: number; recipient_email?: string; recipient_name?: string; message?: string }) =>
+    api.post('/gift-cards', data),
+  validate: (code: string, total: number) => api.post('/gift-cards/validate', { code, total }),
+  void: (id: string) => api.post(`/gift-cards/${id}/void`, {}),
+};
+
 export const campaignsApi = {
   list: (params?: Record<string, unknown>) => api.get('/campaigns', { params }),
   overview: () => api.get('/campaigns/overview'),

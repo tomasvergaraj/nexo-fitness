@@ -209,6 +209,7 @@ class POSTransactionCreate(BaseModel):
     items: List[POSTransactionItemIn] = Field(min_length=1)
     payment_method: str = "cash"
     discount_amount: Decimal = Decimal("0")
+    gift_card_code: Optional[str] = None
     branch_id: Optional[UUID] = None
     notes: Optional[str] = None
 
@@ -231,6 +232,7 @@ class POSTransactionResponse(BaseModel):
     cashier_name: Optional[str] = None
     subtotal: Decimal
     discount_amount: Decimal
+    gift_card_amount: Decimal = Decimal("0")
     total: Decimal
     payment_method: str
     status: str

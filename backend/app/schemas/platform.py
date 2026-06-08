@@ -104,6 +104,7 @@ class MembershipManualSaleRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=255)
     notes: Optional[str] = Field(default=None, max_length=2000)
     auto_renew: bool = False
+    gift_card_code: Optional[str] = None
 
 
 class ManualPaymentResponse(BaseModel):
@@ -133,6 +134,7 @@ class MembershipManualSaleResponse(BaseModel):
     effective_membership: Optional[MembershipResponse] = None
     scheduled_membership: Optional[MembershipResponse] = None
     scheduled: bool = False
+    gift_card_applied: Decimal = Decimal("0")
 
 
 class PromoCodeCreate(BaseModel):

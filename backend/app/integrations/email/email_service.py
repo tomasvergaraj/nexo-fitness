@@ -551,5 +551,56 @@ class EmailService:
         """
         return await self.send(to_email, f"{action_label} — Nexo Fitness", html)
 
+    async def send_gift_card(
+        self,
+        *,
+        to_email: str,
+        gym_name: str,
+        recipient_name: str | None,
+        code: str,
+        amount,
+        currency: str = "CLP",
+        message: str | None = None,
+    ) -> bool:
+        """Envía la gift card al destinatario con el código y las instrucciones."""
+        try:
+            amt = float(amount)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if currency.upper() == "CLP":
+            amount_str = "$" + f"{int(round(amt)):,}".replace(",", ".")
+        else:
+            amount_str = f"{currency.upper()} {amt:,.2f}"
+
+        greeting = f"Hola <strong>{recipient_name}</strong>," if recipient_name else "¡Hola!"
+        personal = (
+            f'<p style="color:#4b5563;line-height:1.6;font-style:italic;">"{message}"</p>' if message else ""
+        )
+        html = f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;background:#ffffff;">
+            <div style="background:linear-gradient(135deg,#0f766e,#0891b2);padding:44px 40px;text-align:center;border-radius:12px 12px 0 0;">
+                <h1 style="color:white;margin:0;font-size:26px;font-weight:700;">🎁 ¡Tienes un regalo!</h1>
+                <p style="color:rgba(255,255,255,0.9);margin:12px 0 0;font-size:16px;">Una gift card para {gym_name}</p>
+            </div>
+            <div style="padding:40px;background:#f9fafb;">
+                <p style="font-size:16px;color:#374151;">{greeting}</p>
+                <p style="color:#4b5563;line-height:1.6;">Recibiste una gift card de <strong>{gym_name}</strong> por:</p>
+                {personal}
+                <div style="background:#ffffff;border:2px dashed #0891b2;border-radius:12px;padding:28px;margin:24px 0;text-align:center;">
+                    <p style="margin:0;font-size:13px;color:#6b7280;letter-spacing:.08em;text-transform:uppercase;">Saldo</p>
+                    <p style="margin:6px 0 18px;font-size:34px;font-weight:800;color:#0f766e;">{amount_str}</p>
+                    <p style="margin:0;font-size:13px;color:#6b7280;letter-spacing:.08em;text-transform:uppercase;">Código</p>
+                    <p style="margin:6px 0 0;font-size:24px;font-weight:700;letter-spacing:.12em;color:#111827;font-family:monospace;">{code}</p>
+                </div>
+                <p style="color:#4b5563;line-height:1.6;">
+                    Presenta este código en <strong>{gym_name}</strong> al inscribirte en un plan o comprar en el local.
+                    El saldo se descuenta automáticamente y puedes usarlo en varias compras hasta agotarlo.
+                </p>
+                <p style="color:#9ca3af;font-size:13px;margin-top:32px;text-align:center;">— El equipo de {gym_name}</p>
+            </div>
+        </div>
+        """
+        return await self.send(to_email, f"🎁 Tienes una gift card de {gym_name}", html)
+
 
 email_service = EmailService()
