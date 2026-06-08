@@ -1018,7 +1018,7 @@ export default function SettingsPage() {
                       <p className="mt-0.5 text-xs text-surface-500">
                         Pega este código en tu sitio para mostrar tus clases y planes. El botón abre tu tienda para completar la inscripción.
                       </p>
-                      <pre className="mt-3 overflow-x-auto rounded-xl bg-surface-100 px-3 py-2.5 text-xs text-surface-700 dark:bg-surface-950/50 dark:text-surface-300">
+                      <pre className="mt-3 whitespace-pre-wrap break-all rounded-xl bg-surface-100 px-3 py-2.5 font-mono text-xs leading-relaxed text-surface-700 dark:bg-surface-950/50 dark:text-surface-300">
                         <code>{snippet}</code>
                       </pre>
                       <div className="mt-2 flex gap-2">
