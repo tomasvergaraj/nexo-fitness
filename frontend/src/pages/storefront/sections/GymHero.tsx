@@ -68,19 +68,19 @@ export default function GymHero({ profile, onCtaClick }: Props) {
             transition={{ duration: 0.5, delay: 0.22, ease: 'easeOut' }}
           >
             {(city || address) && (
-              <span className="sf-chip flex items-center gap-1.5">
+              <span className="sf-chip sf-chip-contact flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5" />
                 {address ?? city}
               </span>
             )}
             {phone && (
-              <a href={`tel:${phone}`} className="sf-chip flex items-center gap-1.5 hover:sf-chip-hover transition-colors">
+              <a href={`tel:${phone}`} className="sf-chip sf-chip-contact sf-chip-link flex items-center gap-1.5">
                 <Phone className="w-3.5 h-3.5" />
                 {phone}
               </a>
             )}
             {email && (
-              <a href={`mailto:${email}`} className="sf-chip flex items-center gap-1.5 hover:sf-chip-hover transition-colors">
+              <a href={`mailto:${email}`} className="sf-chip sf-chip-contact sf-chip-link flex items-center gap-1.5">
                 <Mail className="w-3.5 h-3.5" />
                 {email}
               </a>

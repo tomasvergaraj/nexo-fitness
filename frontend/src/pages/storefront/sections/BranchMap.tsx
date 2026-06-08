@@ -27,28 +27,30 @@ export default function BranchMap({ branches }: Props) {
           {branches.map((branch, i) => (
             <motion.div
               key={branch.id}
-              className="sf-card rounded-2xl p-5 flex flex-col gap-2"
+              className="sf-card rounded-2xl p-5 flex items-start gap-4"
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: '-20px' }}
               transition={{ duration: 0.45, delay: i * 0.07 }}
             >
-              <span className="sf-text-strong font-bold">{branch.name}</span>
-              {(branch.address || branch.city) && (
-                <span className="sf-text-muted text-sm flex items-start gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                  {branch.address ?? branch.city}
-                </span>
-              )}
-              {branch.phone && (
-                <a
-                  href={`tel:${branch.phone}`}
-                  className="sf-text-muted text-sm flex items-center gap-1.5 hover:sf-brand-text transition-colors"
-                >
-                  <Phone className="w-3.5 h-3.5 flex-shrink-0" />
-                  {branch.phone}
-                </a>
-              )}
+              <span className="sf-check-icon flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center">
+                <MapPin className="w-5 h-5" />
+              </span>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <span className="sf-text-strong font-bold">{branch.name}</span>
+                {(branch.address || branch.city) && (
+                  <span className="sf-text-muted text-sm">{branch.address ?? branch.city}</span>
+                )}
+                {branch.phone && (
+                  <a
+                    href={`tel:${branch.phone}`}
+                    className="sf-text-muted text-sm inline-flex items-center gap-1.5 hover:sf-brand-text transition-colors"
+                  >
+                    <Phone className="w-3.5 h-3.5 flex-shrink-0" />
+                    {branch.phone}
+                  </a>
+                )}
+              </div>
             </motion.div>
           ))}
         </div>

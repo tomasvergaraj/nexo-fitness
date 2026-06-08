@@ -339,6 +339,17 @@
   border: 1px solid rgba(var(--gym-brand-rgb), 0.25);
   color: var(--gym-brand-ink, var(--gym-brand));
 }
+/* Contacto en hero: touch target AAA (44px) + hover real para links */
+.sf-chip-contact {
+  min-height: 44px;
+  padding: 0 1rem;
+  font-size: 0.8rem;
+}
+.sf-chip-link { transition: background 0.2s, border-color 0.2s; }
+.sf-chip-link:hover {
+  background: rgba(var(--gym-brand-rgb), 0.22);
+  border-color: rgba(var(--gym-brand-rgb), 0.42);
+}
 .sf-chip-sm {
   display: inline-flex;
   align-items: center;
@@ -379,22 +390,33 @@
 
 /* ── Plan cards ───────────────────────────────────────────── */
 .sf-plan-card {
-  background: rgba(10,28,40,0.75);
-  border: 1px solid rgba(var(--gym-brand-rgb), 0.16);
+  background: rgba(10,28,40,0.6);
+  border: 1px solid rgba(var(--gym-brand-rgb), 0.1);
   backdrop-filter: blur(10px);
   transition: border-color 0.25s, box-shadow 0.25s;
 }
 .sf-root:not(.dark) .sf-plan-card {
-  background: rgba(255,255,255,0.95);
-  border-color: rgba(var(--gym-brand-rgb), 0.2);
+  background: rgba(255,255,255,0.9);
+  border-color: rgba(var(--gym-brand-rgb), 0.14);
 }
 .sf-plan-featured {
-  border-color: rgba(var(--gym-brand-rgb), 0.45) !important;
+  border-color: rgba(var(--gym-brand-rgb), 0.5) !important;
   box-shadow: 0 14px 44px -18px rgba(var(--gym-brand-rgb), 0.35);
   background: linear-gradient(160deg,
     rgba(var(--gym-brand-rgb),0.12) 0%,
     rgba(10,28,40,0.85) 60%
   ) !important;
+}
+/* Barra de acento superior — distingue el plan recomendado de un vistazo */
+.sf-plan-featured::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 1.75rem;
+  right: 1.75rem;
+  height: 3px;
+  border-radius: 0 0 999px 999px;
+  background: linear-gradient(90deg, var(--gym-brand), var(--gym-brand-2));
 }
 .sf-root:not(.dark) .sf-plan-featured {
   background: linear-gradient(160deg,
