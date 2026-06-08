@@ -50,6 +50,7 @@ const PlatformPromoCodesPage = lazy(() => import('@/pages/platform/PlatformPromo
 // Públicas / legales
 const TenantStorefrontPage = lazy(() => import('@/pages/public/TenantStorefrontPage'));
 const StorefrontPage = lazy(() => import('@/pages/storefront/StorefrontPage'));
+const EmbedPage = lazy(() => import('@/pages/storefront/EmbedPage'));
 const MemberAppPage = lazy(() => import('@/pages/member/MemberAppPage'));
 const TermsPage = lazy(() => import('@/pages/legal/TermsPage'));
 const PrivacyPage = lazy(() => import('@/pages/legal/PrivacyPage'));
@@ -82,6 +83,10 @@ export const router = createBrowserRouter([
   {
     path: '/s/:slug',
     element: <StorefrontPage />,
+  },
+  {
+    path: '/embed/:slug',
+    element: <EmbedPage />,
   },
   {
     path: '/login',

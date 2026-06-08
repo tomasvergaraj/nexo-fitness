@@ -1002,6 +1002,49 @@ export default function SettingsPage() {
                   : 'Mientras no configures un dominio personalizado, este enlace público seguirá usando la ruta /store/:slug de la cuenta.'}
               </p>
             </div>
+
+            {/* Widget embebible (Fase 6.7) */}
+            {(() => {
+              const embedUrl = `${window.location.origin}/embed/${form.slug}`;
+              const snippet = `<iframe src="${embedUrl}" width="100%" height="640" style="border:0;border-radius:16px;max-width:480px" title="Reservas ${form.gym_name}" loading="lazy"></iframe>`;
+              return (
+                <div className="mt-5 rounded-2xl border border-surface-200 px-4 py-4 dark:border-surface-800">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-500 dark:bg-brand-950/40">
+                      <Store size={16} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-surface-900 dark:text-white">Widget de reservas para tu web</p>
+                      <p className="mt-0.5 text-xs text-surface-500">
+                        Pega este código en tu sitio para mostrar tus clases y planes. El botón abre tu tienda para completar la inscripción.
+                      </p>
+                      <pre className="mt-3 overflow-x-auto rounded-xl bg-surface-100 px-3 py-2.5 text-xs text-surface-700 dark:bg-surface-950/50 dark:text-surface-300">
+                        <code>{snippet}</code>
+                      </pre>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(snippet);
+                              toast.success('Código copiado');
+                            } catch {
+                              toast.error('No se pudo copiar. Cópialo manualmente.');
+                            }
+                          }}
+                          className="btn-secondary inline-flex items-center gap-1.5 text-sm"
+                        >
+                          <Copy size={13} /> Copiar código
+                        </button>
+                        <a href={embedUrl} target="_blank" rel="noopener noreferrer" className="btn-secondary text-sm">
+                          Previsualizar
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </motion.div>
 
           <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-6 dark:border-surface-800/50 dark:bg-surface-900">
