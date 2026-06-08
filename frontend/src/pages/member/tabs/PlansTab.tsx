@@ -17,6 +17,7 @@ export default function PlansTab() {
     Record<string, PromoCodeValidateResponse | null>
   >({});
   const [promoValidatingPlan, setPromoValidatingPlan] = useState<string | null>(null);
+  const [giftInputByPlan, setGiftInputByPlan] = useState<Record<string, string>>({});
   const [checkoutSession, setCheckoutSession] = useState<PublicCheckoutSession | null>(null);
 
   const tenantSlug = wallet?.tenant_slug;
@@ -37,6 +38,10 @@ export default function PlansTab() {
       };
       if (promoCodeId) {
         payload.promo_code_id = promoCodeId;
+      }
+      const giftCode = (giftInputByPlan[planId] ?? '').trim();
+      if (giftCode) {
+        payload.gift_card_code = giftCode.toUpperCase();
       }
       const response = await publicApi.createCheckoutSession(tenantSlug, payload);
       const session = response.data as PublicCheckoutSession;
@@ -196,6 +201,20 @@ export default function PlansTab() {
                     </p>
                   </div>
                 ) : null}
+
+                {/* Gift card */}
+                <div className="mt-3">
+                  <input
+                    type="text"
+                    value={giftInputByPlan[plan.id] ?? ''}
+                    onChange={(e) =>
+                      setGiftInputByPlan((prev) => ({ ...prev, [plan.id]: e.target.value.toUpperCase() }))
+                    }
+                    placeholder="Gift card (opcional) — GIFT-XXXX-XXXX"
+                    className="input w-full text-sm font-mono uppercase"
+                  />
+                  <p className="mt-1 text-xs text-surface-400">El saldo se descuenta del total al pagar.</p>
+                </div>
 
                 <button
                   type="button"

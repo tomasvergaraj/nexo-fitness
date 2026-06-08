@@ -745,6 +745,7 @@ class PublicCheckoutSessionRequest(BaseModel):
     promo_code_id: Optional[UUID] = None
     verification_token: Optional[str] = None
     referral_code: Optional[str] = Field(default=None, max_length=20)
+    gift_card_code: Optional[str] = Field(default=None, max_length=24)
 
 
 class PublicCheckoutSessionResponse(BaseModel):

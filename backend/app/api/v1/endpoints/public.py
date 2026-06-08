@@ -558,6 +558,35 @@ async def _activate_checkout_purchase(
         except Exception:
             pass  # Don't fail the checkout on promo tracking error
 
+    # Gift card redemption (Fase 6.6): si el checkout traía gift card, descontar su
+    # saldo ahora que el pago se confirmó. Idempotente por payment_id. No falla la
+    # activación si la gift card cambió (se loggea).
+    gift_code = str(metadata.get("gift_card_code") or "").strip()
+    gift_amount_raw = str(metadata.get("gift_card_amount") or "").strip()
+    if gift_code and gift_amount_raw and payment is not None and payment.id:
+        try:
+            from app.models.business import GiftCardRedemption
+            from app.services import gift_card_service
+
+            already = (await db.execute(
+                select(GiftCardRedemption).where(GiftCardRedemption.payment_id == payment.id)
+            )).scalars().first()
+            if already is None:
+                gift_total = Decimal(gift_amount_raw)
+                if gift_total > 0:
+                    await gift_card_service.redeem(
+                        db,
+                        tenant_id=tenant.id,
+                        code=gift_code,
+                        total=gift_total,
+                        context="membership",
+                        payment_id=payment.id,
+                        redeemed_by=user.id,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            import structlog as _sl
+            _sl.get_logger().warning("checkout_gift_card_redeem_failed", payment_id=str(payment.id), exc_info=exc)
+
     if is_new_user and settings.RESEND_API_KEY.strip():
         await email_service.send_password_reset(customer_email, _build_checkout_reset_url(user.id))
 
@@ -1141,6 +1170,77 @@ async def _create_public_checkout_session_for_tenant(
         tenant.custom_domain,
     )
 
+    # ── Gift card (Fase 6.6): reduce el monto a cobrar por la pasarela ───────
+    # El saldo NO se descuenta aquí; se redime al confirmarse el pago (webhook /
+    # activación), leyendo gift_card_code + gift_card_amount del metadata. Si la
+    # gift card cubre el total, se activa la membresía sin pasarela.
+    from decimal import Decimal as _Decimal
+    from app.services import gift_card_service
+
+    gift_code = (data.gift_card_code or "").strip().upper()
+    gift_applied = _Decimal("0")
+    if gift_code:
+        try:
+            gift_preview = await gift_card_service.preview_redemption(
+                db, tenant_id=tenant.id, code=gift_code, total=pricing.final_price
+            )
+        except gift_card_service.GiftCardError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        gift_applied = _Decimal(str(gift_preview["applied"]))
+
+    charge_amount = pricing.final_price - gift_applied
+    if charge_amount < 0:
+        charge_amount = _Decimal("0")
+
+    gift_meta = (
+        {"gift_card_code": gift_code, "gift_card_amount": str(gift_applied)} if gift_code and gift_applied > 0 else {}
+    )
+
+    # Cubierto 100% por la gift card → activar sin pasarela.
+    if gift_code and gift_applied > 0 and charge_amount <= 0:
+        activation_meta = {
+            "tenant_id": str(tenant.id),
+            "plan_id": str(plan.id),
+            "plan_name": plan.name,
+            "session_reference": session_reference,
+            "customer_name": data.customer_name or "",
+            "customer_email": data.customer_email,
+            "customer_phone": data.customer_phone or "",
+            "customer_date_of_birth": data.customer_date_of_birth.isoformat() if data.customer_date_of_birth else "",
+            "promo_code_id": str(data.promo_code_id) if data.promo_code_id else "",
+            "final_price": str(pricing.final_price),
+            **gift_meta,
+        }
+        try:
+            await _activate_checkout_purchase(
+                db,
+                tenant_id=str(tenant.id),
+                plan_id=str(plan.id),
+                customer_email=data.customer_email,
+                customer_name=data.customer_name or "",
+                customer_phone=data.customer_phone or None,
+                customer_date_of_birth=data.customer_date_of_birth,
+                external_payment_id=f"giftcard-{session_reference}",
+                session_reference=session_reference,
+                checkout_session_id=session_reference,
+                amount=_Decimal("0"),
+                currency=plan.currency or "CLP",
+                payment_method=PaymentMethod.OTHER,
+                metadata=activation_meta,
+                promo_code_id=str(data.promo_code_id) if data.promo_code_id else None,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return PublicCheckoutSessionResponse(
+            provider="gift_card",
+            status="completed",
+            checkout_url=data.success_url or success_url,
+            payment_link_url=data.success_url or success_url,
+            qr_payload=data.success_url or success_url,
+            session_reference=session_reference,
+            widget_token=None,
+        )
+
     # ── Fintoc: crear checkout hosted y devolver redirect URL ───────────────
     if account.provider == "fintoc":
         account_metadata = _loads_dict(account.metadata_json)
@@ -1149,7 +1249,7 @@ async def _create_public_checkout_session_for_tenant(
             raise HTTPException(status_code=400, detail="Fintoc no configurado: agrega la API key secreta en la cuenta de pago.")
         try:
             checkout_session = await fintoc_service.create_checkout_session(
-                amount=int(pricing.final_price),
+                amount=int(charge_amount),
                 currency=plan.currency or "CLP",
                 customer_name=data.customer_name or "",
                 customer_email=data.customer_email or "",
@@ -1168,6 +1268,7 @@ async def _create_public_checkout_session_for_tenant(
                     "price_before_promo": str(pricing.price_before_promo or ""),
                     "promo_discount_amount": str(pricing.promo_discount_amount or ""),
                     "final_price": str(pricing.final_price),
+                    **gift_meta,
                 },
                 secret_key=tenant_fintoc_key,
             )
@@ -1205,7 +1306,7 @@ async def _create_public_checkout_session_for_tenant(
                 tenant=tenant,
                 payment_account=account,
                 user=None,
-                amount=pricing.final_price,
+                amount=charge_amount,
                 currency=plan.currency or "CLP",
                 flow_type="tenant_plan_checkout",
                 flow_reference=tuu_reference,
@@ -1226,6 +1327,7 @@ async def _create_public_checkout_session_for_tenant(
                     "promo_discount_amount": str(pricing.promo_discount_amount or ""),
                     "final_price": str(pricing.final_price),
                     "payment_account_id": str(account.id),
+                    **gift_meta,
                 },
             )
             return PublicCheckoutSessionResponse(
@@ -1249,7 +1351,7 @@ async def _create_public_checkout_session_for_tenant(
                 tenant=tenant,
                 payment_account=account,
                 user=None,
-                amount=pricing.final_price,
+                amount=charge_amount,
                 currency=plan.currency or "CLP",
                 flow_type="tenant_plan_checkout",
                 flow_reference=session_reference,
@@ -1269,6 +1371,7 @@ async def _create_public_checkout_session_for_tenant(
                     "promo_discount_amount": str(pricing.promo_discount_amount or ""),
                     "final_price": str(pricing.final_price),
                     "payment_account_id": str(account.id),
+                    **gift_meta,
                 },
             )
             return PublicCheckoutSessionResponse(
@@ -1285,6 +1388,13 @@ async def _create_public_checkout_session_for_tenant(
             raise HTTPException(status_code=502, detail=f"Error de Webpay: {exc}") from exc
 
     # ── Otros providers (Stripe, MercadoPago) ────────────────────────────────
+    # Estos no propagan la redención de gift card al webhook; para no descontar
+    # el cobro sin descontar el saldo, rechazamos gift cards con estos proveedores.
+    if gift_applied > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Las gift cards no están disponibles con este proveedor de pago.",
+        )
     checkout_base = account.checkout_base_url or f"https://checkout.nexofitness.cl/{tenant.slug}"
     checkout_url, payment_link_url = build_public_checkout_urls(
         checkout_base_url=checkout_base,

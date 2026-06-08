@@ -25,6 +25,8 @@ export interface CheckoutState {
   // promo
   promoInput: string;
   promoResult: PromoCodeValidateResponse | null;
+  // gift card
+  giftCardInput: string;
   // loading / errors
   loading: boolean;
   error: string;
@@ -44,6 +46,7 @@ const initial: Omit<CheckoutState, 'open' | 'planId'> = {
   existingPassword: '',
   promoInput: '',
   promoResult: null,
+  giftCardInput: '',
   loading: false,
   error: '',
 };
@@ -157,6 +160,9 @@ export function useCheckout(slug: string) {
       }
       if (state.promoResult?.promo_code_id) {
         payload.promo_code_id = state.promoResult.promo_code_id;
+      }
+      if (state.giftCardInput.trim()) {
+        payload.gift_card_code = state.giftCardInput.trim().toUpperCase();
       }
 
       // Programa de referidos: si llegaste desde un link ?ref=CODE,

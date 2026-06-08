@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Tag, X, Loader2, ShieldCheck, ChevronDown } from 'lucide-react';
+import { Tag, X, Loader2, ShieldCheck, ChevronDown, Gift } from 'lucide-react';
 import { formatCurrency, formatDurationLabel } from '@/utils';
 import type { TenantPublicProfile } from '@/types';
 import type { useCheckout } from '../hooks/useCheckout';
@@ -17,6 +17,7 @@ interface Props {
 export default function StepSummary({ checkout, plan, slug }: Props) {
   const { state, set, validatePromo, clearPromo, pay } = checkout;
   const [promoOpen, setPromoOpen] = useState(false);
+  const [giftOpen, setGiftOpen] = useState(false);
 
   if (!plan) return null;
 
@@ -130,6 +131,39 @@ export default function StepSummary({ checkout, plan, slug }: Props) {
         )}
         {state.error && !state.promoResult && (
           <p className="sf-error text-xs mt-1">{state.error}</p>
+        )}
+      </div>
+
+      {/* Gift card */}
+      <div>
+        <button
+          onClick={() => setGiftOpen(o => !o)}
+          className="flex items-center gap-2 sf-text-muted text-xs hover:sf-text-strong transition-colors"
+        >
+          <Gift className="w-3.5 h-3.5" />
+          {state.giftCardInput.trim() ? `Gift card: ${state.giftCardInput.trim()}` : '¿Tienes una gift card?'}
+          <motion.span animate={{ rotate: giftOpen ? 180 : 0 }} transition={{ duration: 0.2 }}>
+            <ChevronDown className="w-3.5 h-3.5" />
+          </motion.span>
+        </button>
+
+        {giftOpen && (
+          <motion.div
+            className="mt-2"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+          >
+            <input
+              type="text"
+              aria-label="Código de gift card"
+              value={state.giftCardInput}
+              onChange={e => set({ giftCardInput: e.target.value.toUpperCase(), error: '' })}
+              placeholder="GIFT-XXXX-XXXX"
+              className="sf-input w-full text-sm uppercase"
+            />
+            <p className="sf-text-muted text-xs mt-1">El saldo se descuenta del total al pagar.</p>
+          </motion.div>
         )}
       </div>
 
