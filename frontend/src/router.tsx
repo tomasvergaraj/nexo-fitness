@@ -33,6 +33,7 @@ const RetentionPage = lazy(() => import('@/pages/retention/RetentionPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const SubscriptionPage = lazy(() => import('@/pages/subscription/SubscriptionPage'));
 const SupportPage = lazy(() => import('@/pages/support/SupportPage'));
+const AuditPage = lazy(() => import('@/pages/audit/AuditPage'));
 const FeedbackPage = lazy(() => import('@/pages/feedback/FeedbackPage'));
 const POSPage = lazy(() => import('@/pages/pos/POSPage'));
 const InventoryPage = lazy(() => import('@/pages/inventory/InventoryPage'));
@@ -209,6 +210,14 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'support', element: <SupportPage /> },
+      {
+        path: 'audit',
+        element: (
+          <AuthGuard roles={['owner']}>
+            <AuditPage />
+          </AuthGuard>
+        ),
+      },
       {
         path: 'feedback',
         element: (

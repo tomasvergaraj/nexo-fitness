@@ -484,3 +484,35 @@ class PaginatedResponse(BaseModel):
     page: int = 1
     per_page: int = 20
     pages: int = 0
+
+
+# ─── Audit Log ────────────────────────────────────────────────────────────────
+
+class AuditLogResponse(BaseModel):
+    id: UUID
+    action: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    details: Optional[dict] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+    actor_id: Optional[UUID] = None
+    actor_name: Optional[str] = None
+    actor_email: Optional[str] = None
+
+
+class AuditFilterOption(BaseModel):
+    value: str
+    label: str
+
+
+class AuditActorOption(BaseModel):
+    id: UUID
+    name: str
+    email: Optional[str] = None
+
+
+class AuditFiltersResponse(BaseModel):
+    actions: List[AuditFilterOption] = []
+    entity_types: List[AuditFilterOption] = []
+    actors: List[AuditActorOption] = []

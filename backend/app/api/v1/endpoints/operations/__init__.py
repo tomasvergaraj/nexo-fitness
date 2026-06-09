@@ -4,6 +4,7 @@ All routers are re-exported here so main.py keeps importing them as
 `operations.<name>_router`.
 """
 
+from .audit import audit_router  # noqa: F401
 from .branches import branches_router  # noqa: F401
 from .campaigns import campaigns_router  # noqa: F401
 from .feedback import feedback_router  # noqa: F401

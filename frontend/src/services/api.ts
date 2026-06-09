@@ -356,6 +356,11 @@ export const supportApi = {
   update: (id: string, data: Record<string, unknown>) => api.patch(`/support/interactions/${id}`, data),
 };
 
+export const auditApi = {
+  list: (params?: Record<string, unknown>) => api.get('/audit/logs', { params }),
+  filters: () => api.get('/audit/filters'),
+};
+
 export const feedbackApi = {
   list: (params?: Record<string, unknown>) => api.get('/feedback/submissions', { params }),
   create: (formData: FormData) => api.post('/feedback/submissions', formData, {
