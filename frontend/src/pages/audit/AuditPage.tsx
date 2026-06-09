@@ -133,7 +133,7 @@ export default function AuditPage() {
           ) : null}
         </div>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Actor</span>
             <select className="input" value={actorId} onChange={(e) => withPageReset(setActorId)(e.target.value)}>
@@ -169,7 +169,9 @@ export default function AuditPage() {
               ))}
             </select>
           </label>
+        </div>
 
+        <div className="mt-3 grid gap-3 border-t border-surface-200/70 pt-4 sm:grid-cols-2 dark:border-white/10">
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Desde</span>
             <input
@@ -264,13 +266,16 @@ export default function AuditPage() {
                               {entityLabel.get(log.entity_type) || log.entity_type}
                             </p>
                             {log.entity_id ? (
-                              <p className="mt-0.5 font-mono text-xs text-surface-500 dark:text-surface-400">
+                              <p
+                                className="mt-0.5 font-mono text-xs text-surface-500 dark:text-surface-400"
+                                title={log.entity_id}
+                              >
                                 {log.entity_id.length > 12 ? `${log.entity_id.slice(0, 8)}…` : log.entity_id}
                               </p>
                             ) : null}
                           </>
                         ) : (
-                          <span className="text-sm text-surface-400">—</span>
+                          <span className="text-sm text-surface-500 dark:text-surface-400">—</span>
                         )}
                       </td>
                       <td className="px-4 py-4 align-top">
@@ -289,7 +294,7 @@ export default function AuditPage() {
                             Ver
                           </button>
                         ) : (
-                          <span className="text-sm text-surface-400">—</span>
+                          <span className="text-sm text-surface-500 dark:text-surface-400">—</span>
                         )}
                       </td>
                     </tr>
