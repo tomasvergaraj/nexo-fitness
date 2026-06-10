@@ -28,7 +28,6 @@ export default function Nav() {
             <a className="nav-link" href="#solucion">Solución</a>
             <a className="nav-link" href="#como-funciona">Cómo funciona</a>
             <a className="nav-link" href="#precios">Precios</a>
-            <a className="nav-link" href="#testimonios">Testimonios</a>
             <a className="nav-link" href="#faq">FAQ</a>
           </nav>
 
@@ -48,9 +47,9 @@ export default function Nav() {
       </header>
 
       <div className={`mobile-drawer${menuOpen ? ' open' : ''}`} ref={drawerRef} aria-hidden={!menuOpen}>
-        {(['solucion', 'como-funciona', 'precios', 'testimonios', 'faq'] as const).map((id) => (
+        {(['solucion', 'como-funciona', 'precios', 'faq'] as const).map((id) => (
           <a key={id} className="nav-link" href={`#${id}`} onClick={closeMenu}>
-            {{ solucion: 'Solución', 'como-funciona': 'Cómo funciona', precios: 'Precios', testimonios: 'Testimonios', faq: 'FAQ' }[id]}
+            {{ solucion: 'Solución', 'como-funciona': 'Cómo funciona', precios: 'Precios', faq: 'FAQ' }[id]}
           </a>
         ))}
         <div className="mobile-ctas">
