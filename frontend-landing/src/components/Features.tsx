@@ -36,7 +36,7 @@ const VentaVisual = () => (
           <span className="bento-eyebrow-mini">Plan Trimestral · CrossFit Norte</span>
           <strong className="bento-venta-price">$94.990</strong>
         </div>
-        <span className="hero-mockup-chip mock-chip-ok">Activo</span>
+        <span className="chip chip-success">Activo</span>
       </div>
       <div className="bento-venta-row"><span>Subtotal</span><span>$79.823</span></div>
       <div className="bento-venta-row"><span>IVA 19%</span><span>$15.167</span></div>
