@@ -31,24 +31,23 @@ export default function Hero() {
         <p className="hero-trust">14 días gratis · Sin tarjeta · Cancela cuando quieras</p>
 
         <figure className="hero-shot">
-          {/* Placeholder 1440×900 (@2x 2880×1800). Reemplazar por screenshot real
-              del dashboard con los mismos nombres y dimensiones. */}
+          {/* Screenshot real del dashboard (fuente: docs/screens-fuente/, 1916×941) */}
           <picture>
             <source
               type="image/avif"
-              srcSet="/screens/dashboard-1440.avif 1440w, /screens/dashboard-2880.avif 2880w"
+              srcSet="/screens/dashboard-1440.avif?v=2 1440w, /screens/dashboard-1916.avif?v=2 1916w"
               sizes="(min-width: 1448px) 1400px, calc(100vw - 48px)"
             />
             <source
               type="image/webp"
-              srcSet="/screens/dashboard-1440.webp 1440w, /screens/dashboard-2880.webp 2880w"
+              srcSet="/screens/dashboard-1440.webp?v=2 1440w, /screens/dashboard-1916.webp?v=2 1916w"
               sizes="(min-width: 1448px) 1400px, calc(100vw - 48px)"
             />
             <img
-              src="/screens/dashboard-1440.png"
-              width={1440}
-              height={900}
-              alt="Panel de NexoFitness con las ventas, clases y check-in del día"
+              src="/screens/dashboard-1440.png?v=2"
+              width={1916}
+              height={941}
+              alt="Panel de NexoFitness con el plan contratado, miembros activos y la operación del día"
               loading="eager"
               fetchPriority="high"
               decoding="async"
