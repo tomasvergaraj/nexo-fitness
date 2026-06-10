@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScrollReveal from '../animations/ScrollReveal';
-import GlowButton from '../animations/GlowButton';
+import Button from './Button';
 
 const APP_ORIGIN = 'https://app.nexofitness.cl';
 const API_BASE = '/api/v1';
@@ -216,13 +216,13 @@ function PlanCard({ plan, index, monthlyPlan }: { plan: Plan; index: number; mon
       </div>
 
       <div className="plan-ctas">
-        <GlowButton
+        <Button
           href={`${APP_ORIGIN}/register`}
           variant={plan.highlighted ? 'primary' : 'secondary'}
           size="sm"
         >
           Comenzar prueba gratis
-        </GlowButton>
+        </Button>
       </div>
     </motion.article>
   );
@@ -232,7 +232,7 @@ export default function Pricing() {
   const [plans, setPlans] = useState<Plan[]>([]);
 
   useEffect(() => {
-    fetch(`${API_BASE}/public/plans`)
+    fetch(`${API_BASE}/billing/public/plans`)
       .then(r => { if (!r.ok) throw new Error('error'); return r.json(); })
       .then((data: unknown) => {
         const arr = Array.isArray(data) ? data : ((data as Record<string, unknown>).plans ?? (data as Record<string, unknown>).data ?? []) as Plan[];

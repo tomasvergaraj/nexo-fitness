@@ -33,7 +33,7 @@ export default function ValueShowcase() {
               <article className="card pillar-card">
                 <span className="pillar-num">{num}</span>
                 <div>
-                  <h3>{title}</h3>
+                  <p className="pillar-title">{title}</p>
                   <p>{desc}</p>
                 </div>
               </article>

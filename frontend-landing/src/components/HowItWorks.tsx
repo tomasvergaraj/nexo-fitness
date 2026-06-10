@@ -137,9 +137,9 @@ const StepVisual3 = () => (
 const StepVisual4 = () => {
   const segs = [
     { color: 'var(--brand)', dash: '32 100', offset: 0 },
-    { color: '#10b981', dash: '24 100', offset: -32 },
-    { color: '#a78bfa', dash: '18 100', offset: -56 },
-    { color: '#f97316', dash: '14 100', offset: -74 },
+    { color: 'var(--success-dark)', dash: '24 100', offset: -32 },
+    { color: 'var(--brand-dark)', dash: '18 100', offset: -56 },
+    { color: 'var(--brand)', dash: '14 100', offset: -74 },
   ];
   return (
     <div className="hiw-scene hiw-scene-4">

@@ -122,7 +122,7 @@ export default function HeroMockup() {
             <div className="hm2-content">
               <div className="hm2-page-head">
                 <div>
-                  <h4>Dashboard</h4>
+                  <p className="hm2-page-title">Dashboard</p>
                   <span>Resumen operativo del negocio</span>
                 </div>
                 <div className="hm2-page-actions">
@@ -142,7 +142,7 @@ export default function HeroMockup() {
                   <motion.div
                     key={s.label}
                     className="hm2-stat-card"
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={false}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.6 + i * 0.06, duration: 0.45, ease: 'easeOut' }}
                   >
@@ -162,7 +162,7 @@ export default function HeroMockup() {
                   <motion.div
                     key={s.label}
                     className="hm2-stat-card"
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={false}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.85 + i * 0.06, duration: 0.45, ease: 'easeOut' }}
                   >
@@ -188,7 +188,7 @@ export default function HeroMockup() {
                     {SPARK.map((h, i) => (
                       <motion.span
                         key={i}
-                        initial={{ scaleY: 0 }}
+                        initial={false}
                         animate={{ scaleY: 1 }}
                         transition={{ delay: 1 + i * 0.04, duration: 0.5, ease: 'easeOut' }}
                         style={{ height: `${h}%` }}
@@ -213,7 +213,7 @@ export default function HeroMockup() {
 
       <motion.div
         className="hero-mockup-toast"
-        initial={{ opacity: 0, y: 12, scale: 0.95 }}
+        initial={false}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ delay: 1.6, duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
       >

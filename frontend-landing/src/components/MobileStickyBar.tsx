@@ -18,7 +18,7 @@ export default function MobileStickyBar() {
   }, []);
 
   return (
-    <div className="mobile-sticky-bar" ref={barRef} aria-hidden="true">
+    <div className="mobile-sticky-bar" ref={barRef}>
       <a className="btn btn-secondary" style={{ flex: 1 }} href="https://app.nexofitness.cl/login">Ingresar</a>
       <a className="btn btn-primary" style={{ flex: 2 }} href="https://app.nexofitness.cl/register">Prueba gratis</a>
     </div>

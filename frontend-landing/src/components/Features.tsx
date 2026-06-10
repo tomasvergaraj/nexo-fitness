@@ -162,10 +162,10 @@ const MiembroVisual = () => (
 const ReportesVisual = () => {
   const segments = [
     { color: 'var(--brand)', dash: '32 100', offset: 0, label: 'Anual' },
-    { color: '#10b981', dash: '24 100', offset: -32, label: 'Trimestral' },
-    { color: '#a78bfa', dash: '18 100', offset: -56, label: 'Mensual' },
-    { color: '#f97316', dash: '14 100', offset: -74, label: 'Semestral' },
-    { color: '#9ca3af', dash: '12 100', offset: -88, label: 'Solo Clases' },
+    { color: 'var(--success-dark)', dash: '24 100', offset: -32, label: 'Trimestral' },
+    { color: 'var(--brand-dark)', dash: '18 100', offset: -56, label: 'Mensual' },
+    { color: 'var(--brand)', dash: '14 100', offset: -74, label: 'Semestral' },
+    { color: 'var(--surface-border-strong)', dash: '12 100', offset: -88, label: 'Solo Clases' },
   ];
   return (
     <div className="bento-reportes">

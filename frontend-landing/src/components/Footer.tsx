@@ -4,7 +4,7 @@ export default function Footer() {
       <div className="container footer-inner">
         <a className="brand" href="#top">
           <div className="brand-icon">
-            <img src="/icon.png" width="32" height="32" alt="Nexo" />
+            <img src="/logo-80.png" width="32" height="32" alt="" loading="lazy" />
           </div>
           <span className="brand-name" style={{ fontSize: '1rem' }}><strong>Nexo</strong><span>Fitness</span></span>
         </a>

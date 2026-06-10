@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import ScrollReveal from '../animations/ScrollReveal';
-import GlowButton from '../animations/GlowButton';
+import Button from './Button';
 
 const PlusIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -47,7 +47,7 @@ export default function FAQ() {
           <h2>Preguntas frecuentes.</h2>
           <p>¿Tienes dudas sobre la migración o el flujo? Escríbenos y te ayudamos antes de activar tu cuenta.</p>
           <div style={{ marginTop: '2rem' }}>
-            <GlowButton href="https://app.nexofitness.cl/register">Comenzar prueba gratis</GlowButton>
+            <Button href="https://app.nexofitness.cl/register">Comenzar prueba gratis</Button>
           </div>
         </ScrollReveal>
 

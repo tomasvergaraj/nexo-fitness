@@ -53,6 +53,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     cd frontend
     node_modules/.bin/vite build
     cd ..
+    echo "── 4b  vite build landing (prerender) ──────────────────────────"
+    cd frontend-landing
+    ../frontend/node_modules/.bin/vite build
+    cd ..
 else
     echo "── 4/4 vite build (SKIPPED) ────────────────────────────────────"
 fi

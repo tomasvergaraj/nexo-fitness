@@ -1,11 +1,11 @@
 import ScrollReveal from '../animations/ScrollReveal';
 
 const AVATARS = [
-  { letter: 'F', grad: 'linear-gradient(135deg,#0891b2,#0e7490)' },
-  { letter: 'R', grad: 'linear-gradient(135deg,#7c3aed,#6d28d9)' },
-  { letter: 'C', grad: 'linear-gradient(135deg,#059669,#047857)' },
-  { letter: 'M', grad: 'linear-gradient(135deg,#f97316,#ea580c)' },
-  { letter: 'D', grad: 'linear-gradient(135deg,#db2777,#be185d)' },
+  { letter: 'F', grad: 'var(--brand-dark)' },
+  { letter: 'R', grad: 'var(--muted)' },
+  { letter: 'C', grad: 'var(--success-dark)' },
+  { letter: 'M', grad: 'var(--brand-deep)' },
+  { letter: 'D', grad: 'var(--muted-strong)' },
 ];
 
 const CITIES = ['Santiago', 'Antofagasta', 'Viña del Mar', 'Concepción', 'La Serena', 'Valdivia'];

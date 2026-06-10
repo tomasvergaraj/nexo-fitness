@@ -1,7 +1,6 @@
 import { motion } from 'framer-motion';
-import Aurora from '../animations/Aurora';
 import BlurText from '../animations/BlurText';
-import GlowButton from '../animations/GlowButton';
+import Button from './Button';
 import HeroMockup from './HeroMockup';
 
 const ChevronIcon = () => (
@@ -19,12 +18,11 @@ const CheckIcon = () => (
 export default function Hero() {
   return (
     <section className="hero" id="hero">
-      <Aurora />
       <div className="container hero-grid">
         <div className="hero-copy">
           <motion.div
             className="hero-eyebrow"
-            initial={{ opacity: 0, y: 16 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
           >
@@ -39,7 +37,7 @@ export default function Hero() {
             <br />
             <motion.span
               className="brand-word"
-              initial={{ opacity: 0, filter: 'blur(14px)', y: 10 }}
+              initial={false}
               animate={{ opacity: 1, filter: 'blur(0px)', y: 0 }}
               transition={{ duration: 0.55, delay: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
               style={{ display: 'block' }}
@@ -51,7 +49,7 @@ export default function Hero() {
 
           <motion.p
             className="hero-lead"
-            initial={{ opacity: 0, y: 16 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.7, ease: 'easeOut' }}
           >
@@ -61,20 +59,20 @@ export default function Hero() {
 
           <motion.div
             className="hero-actions"
-            initial={{ opacity: 0, y: 16 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.9, ease: 'easeOut' }}
           >
-            <GlowButton href="https://app.nexofitness.cl/register" size="lg">
+            <Button href="https://app.nexofitness.cl/register" size="lg">
               <ChevronIcon />
               Activa tu prueba gratis
-            </GlowButton>
+            </Button>
             <a className="btn btn-secondary btn-lg" href="#precios">Ver planes</a>
           </motion.div>
 
           <motion.ul
             className="hero-trust-mini"
-            initial={{ opacity: 0, y: 12 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 1.05, ease: 'easeOut' }}
           >
@@ -86,7 +84,7 @@ export default function Hero() {
 
         <motion.div
           className="hero-mockup-wrap"
-          initial={{ opacity: 0, x: 28, rotateY: 8 }}
+          initial={false}
           animate={{ opacity: 1, x: 0, rotateY: 0 }}
           transition={{ duration: 0.75, delay: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
         >

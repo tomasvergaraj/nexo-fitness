@@ -25,7 +25,7 @@ const FEATURED = {
   gym: 'Studio Move',
   city: 'Santiago',
   initial: 'F',
-  gradient: 'linear-gradient(135deg,#0891b2,#0e7490)',
+  gradient: 'var(--brand-dark)',
   metrics: [
     { value: '+18 pts', label: 'Renovación mensual' },
     { value: '−2 hrs/día', label: 'Tiempo en recepción' },
@@ -41,7 +41,7 @@ const SECONDARY = [
     gym: 'CrossFit Norte',
     city: 'Antofagasta',
     initial: 'R',
-    gradient: 'linear-gradient(135deg,#7c3aed,#6d28d9)',
+    gradient: 'var(--muted)',
     metric: { value: '−32%', label: 'Tiempo coordinando staff' },
   },
   {
@@ -51,7 +51,7 @@ const SECONDARY = [
     gym: 'Reforma Pilates',
     city: 'Viña del Mar',
     initial: 'C',
-    gradient: 'linear-gradient(135deg,#059669,#047857)',
+    gradient: 'var(--success-dark)',
     metric: { value: '+24%', label: 'Renovación trimestral' },
   },
 ];
