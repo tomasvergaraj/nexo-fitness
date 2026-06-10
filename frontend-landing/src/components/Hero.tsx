@@ -31,23 +31,23 @@ export default function Hero() {
         <p className="hero-trust">14 días gratis · Sin tarjeta · Cancela cuando quieras</p>
 
         <figure className="hero-shot">
-          {/* Screenshot real del dashboard (fuente: docs/screens-fuente/, 1916×941) */}
+          {/* Screenshot del tenant demo (fuente: docs/screens-fuente/dashboard-demo-2x.png, 1916×943 @2x) */}
           <picture>
             <source
               type="image/avif"
-              srcSet="/screens/dashboard-1440.avif?v=2 1440w, /screens/dashboard-1916.avif?v=2 1916w"
+              srcSet="/screens/dashboard-1440.avif?v=3 1440w, /screens/dashboard-1916.avif?v=3 1916w, /screens/dashboard-2880.avif?v=3 2880w"
               sizes="(min-width: 1448px) 1400px, calc(100vw - 48px)"
             />
             <source
               type="image/webp"
-              srcSet="/screens/dashboard-1440.webp?v=2 1440w, /screens/dashboard-1916.webp?v=2 1916w"
+              srcSet="/screens/dashboard-1440.webp?v=3 1440w, /screens/dashboard-1916.webp?v=3 1916w, /screens/dashboard-2880.webp?v=3 2880w"
               sizes="(min-width: 1448px) 1400px, calc(100vw - 48px)"
             />
             <img
-              src="/screens/dashboard-1440.png?v=2"
+              src="/screens/dashboard-1440.png?v=3"
               width={1916}
-              height={941}
-              alt="Panel de NexoFitness con el plan contratado, miembros activos y la operación del día"
+              height={943}
+              alt="Panel de NexoFitness con los ingresos, clases, check-ins y reservas del día"
               loading="eager"
               fetchPriority="high"
               decoding="async"
