@@ -1,5 +1,4 @@
 import { useRef, useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import ScrollReveal from '../animations/ScrollReveal';
 
 const STEPS = [
@@ -81,12 +80,7 @@ const StepVisual2 = () => (
         Pagar con Webpay
       </button>
     </div>
-    <motion.div
-      className="hiw-success-toast"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.3, duration: 0.5 }}
-    >
+    <div className="hiw-success-toast">
       <div className="hiw-success-icon">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
       </div>
@@ -94,7 +88,7 @@ const StepVisual2 = () => (
         <strong>Plan activo</strong>
         <span>Boleta enviada al cliente</span>
       </div>
-    </motion.div>
+    </div>
   </div>
 );
 
@@ -117,11 +111,7 @@ const StepVisual3 = () => (
       </div>
     </div>
 
-    <motion.div
-      className="hiw-qr-card"
-      animate={{ scale: [1, 1.04, 1] }}
-      transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-    >
+    <div className="hiw-qr-card">
       <div className="hiw-qr-ring">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
           <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
@@ -130,7 +120,7 @@ const StepVisual3 = () => (
       </div>
       <strong>Check-in OK</strong>
       <span>Camila V. · 06:54</span>
-    </motion.div>
+    </div>
   </div>
 );
 
@@ -272,18 +262,10 @@ export default function HowItWorks() {
                   <span key={i} className={`hiw-pip${active >= i ? ' done' : ''}${active === i ? ' current' : ''}`} />
                 ))}
               </div>
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={active}
-                  initial={{ opacity: 0, y: 20, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -16, scale: 0.97 }}
-                  transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-                  className="hiw-stage-scene"
-                >
-                  <Scene />
-                </motion.div>
-              </AnimatePresence>
+              {/* key={active} remonta la escena → corre la animación CSS scene-in */}
+              <div key={active} className="hiw-stage-scene">
+                <Scene />
+              </div>
             </div>
           </div>
         </div>
