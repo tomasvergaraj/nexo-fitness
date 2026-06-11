@@ -135,6 +135,7 @@ async def get_tenant_settings(
         public_checkout_enabled=bool(features.get("public_checkout_enabled", True)),
         referral_reward_enabled=bool(features.get("referral_reward_enabled", False)),
         referral_reward_days=int(features.get("referral_reward_days", 7) or 7),
+        report_cutoff_day=int(features["report_cutoff_day"]) if features.get("report_cutoff_day") else None,
         branding={
             "logo_url": tenant.logo_url,
             "primary_color": primary_color,

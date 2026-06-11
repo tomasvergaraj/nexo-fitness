@@ -593,6 +593,14 @@ class ExpenseCategoryPoint(BaseModel):
     amount: float
 
 
+class CashflowMonthPoint(BaseModel):
+    label: str
+    income: float
+    costs: float
+    net: float
+    balance: float
+
+
 class ReportsOverviewResponse(BaseModel):
     # ── Membresías (existente) ────────────────────────────────────────────────
     revenue_total: Decimal = Decimal("0")
@@ -619,6 +627,11 @@ class ReportsOverviewResponse(BaseModel):
     total_revenue: Decimal = Decimal("0")
     net_profit: Decimal = Decimal("0")
     net_margin_pct: float = 0.0
+    # ── Flujo de caja con arrastre (saldo del mes anterior es pie del siguiente) ─
+    opening_balance: Decimal = Decimal("0")
+    closing_balance: Decimal = Decimal("0")
+    cashflow_series: list[CashflowMonthPoint] = Field(default_factory=list)
+    report_cutoff_day: Optional[int] = None
 
 
 class TenantBranding(BaseModel):
@@ -655,6 +668,8 @@ class TenantSettingsUpdateRequest(BaseModel):
     public_checkout_enabled: Optional[bool] = None
     referral_reward_enabled: Optional[bool] = None
     referral_reward_days: Optional[int] = Field(default=None, ge=0, le=90)
+    # Día de corte de reportería (1-28); None = mes calendario
+    report_cutoff_day: Optional[int] = Field(default=None, ge=1, le=28)
 
 
 class TenantSettingsResponse(BaseModel):
@@ -681,6 +696,7 @@ class TenantSettingsResponse(BaseModel):
     public_checkout_enabled: bool = True
     referral_reward_enabled: bool = False
     referral_reward_days: int = 7
+    report_cutoff_day: Optional[int] = None
     branding: TenantBranding
 
 

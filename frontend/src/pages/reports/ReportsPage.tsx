@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   BarChart2,
@@ -32,7 +32,7 @@ import {
   YAxis,
   Cell,
 } from 'recharts';
-import { reportsApi, posApi } from '@/services/api';
+import { reportsApi, posApi, settingsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatCurrency, parseApiNumber } from '@/utils';
 import type { ReportsOverview, SalesBreakdown, CashSession } from '@/types';
@@ -178,6 +178,21 @@ export default function ReportsPage() {
   const netProfit = parseApiNumber(data?.net_profit);
   const netMargin = parseApiNumber(data?.net_margin_pct);
 
+  const cashflowSeries = data?.cashflow_series ?? [];
+  const openingBalance = parseApiNumber(data?.opening_balance);
+  const closingBalance = parseApiNumber(data?.closing_balance);
+  const periodNet = closingBalance - openingBalance;
+  const cutoffDay = data?.report_cutoff_day ?? null;
+
+  const queryClient = useQueryClient();
+  const cutoffMutation = useMutation({
+    mutationFn: (day: number | null) => settingsApi.update({ report_cutoff_day: day }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports-overview'] });
+      queryClient.invalidateQueries({ queryKey: ['tenant-settings'] });
+    },
+  });
+
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-6">
       {/* Header */}
@@ -198,8 +213,15 @@ export default function ReportsPage() {
           <button
             type="button"
             onClick={() => exportCsv(`reportes-${range}.csv`, [
-              ['Periodo', 'Membresías', 'POS', 'Gastos'],
-              ...plCombinedSeries.map((item) => [item.label, String(item.membresias), String(item.pos), String(item.gastos)]),
+              ['Periodo', 'Membresías', 'POS', 'Gastos', 'Resultado', 'Saldo acumulado'],
+              ...plCombinedSeries.map((item, i) => [
+                item.label,
+                String(item.membresias),
+                String(item.pos),
+                String(item.gastos),
+                String(cashflowSeries[i]?.net ?? ''),
+                String(cashflowSeries[i]?.balance ?? ''),
+              ]),
             ])}
             className="btn-primary"
           >
@@ -466,6 +488,104 @@ export default function ReportsPage() {
               </div>
             ))}
           </div>
+
+          {/* Saldo acumulado con arrastre mes a mes */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Saldo acumulado</h2>
+                <p className="mt-1 text-sm text-surface-500">El excedente o déficit de cada mes queda como pie del mes siguiente</p>
+                <label className="mt-3 flex items-center gap-2 text-sm text-surface-500">
+                  Día de corte
+                  <select
+                    value={cutoffDay ?? ''}
+                    disabled={cutoffMutation.isPending}
+                    onChange={(e) => cutoffMutation.mutate(e.target.value === '' ? null : Number(e.target.value))}
+                    className="rounded-lg border border-surface-200 bg-white px-2 py-1.5 text-sm text-surface-900 focus:border-brand-500 focus:outline-none disabled:opacity-50 dark:border-surface-700 dark:bg-surface-800 dark:text-white"
+                  >
+                    <option value="">Fin de mes</option>
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                      <option key={day} value={day}>{day}</option>
+                    ))}
+                  </select>
+                  {cutoffDay != null && (
+                    <span className="text-xs text-surface-400">cada mes va del {cutoffDay + 1} al {cutoffDay}</span>
+                  )}
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-x-8 gap-y-2">
+                <div>
+                  <p className="text-xs text-surface-500">Saldo inicial del período</p>
+                  <p className="mt-1 text-lg font-bold font-display tabular-nums text-surface-900 dark:text-white">
+                    {isLoading ? '—' : formatCurrency(openingBalance)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-surface-500">Resultado del período</p>
+                  <p className={cn('mt-1 text-lg font-bold font-display tabular-nums', periodNet >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+                    {isLoading ? '—' : `${periodNet >= 0 ? '+' : ''}${formatCurrency(periodNet)}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-surface-500">Saldo actual</p>
+                  <p className={cn('mt-1 text-lg font-bold font-display tabular-nums', closingBalance >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+                    {isLoading ? '—' : formatCurrency(closingBalance)}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 h-[300px]">
+              {isLoading ? (
+                <div className="shimmer h-full rounded-2xl" />
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={cashflowSeries}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-surface-100 dark:text-surface-800" />
+                    <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <Tooltip formatter={(value: number, name: string) => [formatCurrency(value), name === 'net' ? 'Resultado del mes' : 'Saldo acumulado']} />
+                    <Legend formatter={(value) => value === 'net' ? 'Resultado del mes' : 'Saldo acumulado'} />
+                    <Bar dataKey="net" radius={[4, 4, 0, 0]}>
+                      {cashflowSeries.map((point) => (
+                        <Cell key={point.label} fill={point.net >= 0 ? '#10b981' : '#ef4444'} />
+                      ))}
+                    </Bar>
+                    <Line type="monotone" dataKey="balance" stroke="#06b6d4" strokeWidth={2.5} dot={{ fill: '#06b6d4', r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            {!isLoading && cashflowSeries.length > 1 && (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-surface-400">
+                      <th className="px-2 py-2 font-medium">Mes</th>
+                      <th className="px-2 py-2 text-right font-medium">Ingresos</th>
+                      <th className="px-2 py-2 text-right font-medium">Costos y gastos</th>
+                      <th className="px-2 py-2 text-right font-medium">Resultado</th>
+                      <th className="px-2 py-2 text-right font-medium">Saldo acumulado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
+                    {cashflowSeries.map((point) => (
+                      <tr key={point.label} className="text-surface-700 dark:text-surface-300">
+                        <td className="px-2 py-2.5 whitespace-nowrap font-medium">{point.label}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(point.income)}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums text-rose-600 dark:text-rose-400">− {formatCurrency(point.costs)}</td>
+                        <td className={cn('px-2 py-2.5 text-right tabular-nums font-medium', point.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+                          {point.net >= 0 ? '+' : ''}{formatCurrency(point.net)}
+                        </td>
+                        <td className={cn('px-2 py-2.5 text-right tabular-nums font-bold', point.balance >= 0 ? 'text-surface-900 dark:text-white' : 'text-rose-600 dark:text-rose-400')}>
+                          {formatCurrency(point.balance)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </motion.div>
 
           {/* Combined revenue vs expenses chart */}
           <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">

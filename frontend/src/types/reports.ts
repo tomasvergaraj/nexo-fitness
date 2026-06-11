@@ -21,4 +21,8 @@ export interface ReportsOverview {
   total_revenue: number;
   net_profit: number;
   net_margin_pct: number;
+  opening_balance: number;
+  closing_balance: number;
+  cashflow_series: { label: string; income: number; costs: number; net: number; balance: number }[];
+  report_cutoff_day: number | null;
 }

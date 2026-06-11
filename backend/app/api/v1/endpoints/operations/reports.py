@@ -1,6 +1,6 @@
 """Reports router: overview (P&L, members, attendance) and attendance ranking."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -28,15 +28,87 @@ from app.models.business import (
 from app.models.pos import Expense, POSTransaction, POSTransactionItem, POSTransactionStatus
 from app.models.user import User
 from app.schemas.platform import (
+    CashflowMonthPoint,
     ExpenseCategoryPoint,
     ReportSeriesPoint,
     ReportsOverviewResponse,
     TopProductPoint,
 )
+from app.core.timezone import tenant_zone
 from app.services.membership_sale_service import resolve_membership_timeline
+
+from ._common import _feature_map
 
 
 reports_router = APIRouter(prefix="/reports", tags=["Reports"])
+
+_MONTH_LABELS_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+
+
+def _period_key(day: date, cutoff_day: int | None) -> tuple[int, int]:
+    """Período (año, mes) al que pertenece una fecha según el día de corte.
+
+    Con corte D, el período "mes M" cubre desde el D+1 de M-1 hasta el D de M:
+    una fecha posterior al corte ya cuenta para el mes siguiente.
+    Sin corte (None): mes calendario.
+    """
+    if cutoff_day is not None and day.day > cutoff_day:
+        return (day.year + 1, 1) if day.month == 12 else (day.year, day.month + 1)
+    return (day.year, day.month)
+
+
+def _period_label(period: tuple[int, int]) -> str:
+    # Año completo: "Jul 25" se leía como día 25, no como 2025.
+    year, month = period
+    return f"{_MONTH_LABELS_ES[month - 1]} {year}"
+
+
+def _last_periods(current: tuple[int, int], count: int) -> list[tuple[int, int]]:
+    """(año, mes) en orden ascendente, terminando en el período actual."""
+    periods: list[tuple[int, int]] = []
+    year, month = current
+    for _ in range(count):
+        periods.append((year, month))
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    periods.reverse()
+    return periods
+
+
+def build_cashflow(
+    months: list[tuple[int, int]],
+    income_by_month: dict[tuple[int, int], Decimal],
+    cost_by_month: dict[tuple[int, int], Decimal],
+) -> tuple[Decimal, Decimal, list[CashflowMonthPoint]]:
+    """Saldo con arrastre: el excedente/déficit de cada mes es el pie del siguiente.
+
+    El saldo inicial acumula toda la historia anterior al primer mes mostrado.
+    Devuelve (saldo_inicial, saldo_final, serie_mensual).
+    """
+    first = months[0]
+    opening = Decimal("0")
+    for key in set(income_by_month) | set(cost_by_month):
+        if key < first:
+            opening += income_by_month.get(key, Decimal("0")) - cost_by_month.get(key, Decimal("0"))
+
+    balance = opening
+    series: list[CashflowMonthPoint] = []
+    for year, month in months:
+        income = income_by_month.get((year, month), Decimal("0"))
+        costs = cost_by_month.get((year, month), Decimal("0"))
+        net = income - costs
+        balance += net
+        series.append(
+            CashflowMonthPoint(
+                label=_period_label((year, month)),
+                income=float(income),
+                costs=float(costs),
+                net=float(net),
+                balance=float(balance),
+            )
+        )
+    return opening, balance, series
 
 
 @reports_router.get("/overview", response_model=ReportsOverviewResponse)
@@ -94,18 +166,6 @@ async def get_reports_overview(
     renewed_periods = sum(1 for membership in memberships if membership.previous_membership_id is not None)
     renewal_rate = round((renewed_periods / len(memberships)) * 100, 1) if memberships else 0.0
     churn_rate = round((sum(1 for membership in memberships if membership.status == MembershipStatus.CANCELLED) / len(memberships)) * 100, 1) if memberships else 0.0
-
-    month_keys = [(now - timedelta(days=30 * offset)).strftime("%b") for offset in reversed(range(12 if range_key == "12m" else 3 if range_key == "90d" else 1))]
-    revenue_buckets = {key: 0 for key in month_keys}
-    member_buckets = {key: 0 for key in month_keys}
-    for payment in payments:
-        key = payment.created_at.strftime("%b")
-        if key in revenue_buckets:
-            revenue_buckets[key] += float(payment.amount)
-    for membership in memberships:
-        key = membership.created_at.strftime("%b")
-        if key in member_buckets:
-            member_buckets[key] += 1
 
     plan_revenue: dict[str, float] = {}
     membership_by_id = {membership.id: membership for membership in memberships}
@@ -165,12 +225,6 @@ async def get_reports_overview(
     pos_gross_profit = pos_revenue - pos_cogs
     pos_gross_margin_pct = round(float(pos_gross_profit / pos_revenue) * 100, 1) if pos_revenue else 0.0
 
-    pos_revenue_buckets: dict[str, float] = {key: 0.0 for key in month_keys}
-    for tx in pos_txs:
-        key = tx.sold_at.strftime("%b")
-        if key in pos_revenue_buckets:
-            pos_revenue_buckets[key] += float(tx.total)
-
     product_revenue: dict[str, dict] = {}
     for item in pos_items:
         pid = str(item.product_id)
@@ -213,39 +267,125 @@ async def get_reports_overview(
         for cat, amount in sorted(exp_by_cat.items(), key=lambda x: x[1], reverse=True)
     ]
 
-    expense_buckets: dict[str, float] = {key: 0.0 for key in month_keys}
-    for exp in expenses:
-        key = exp.expense_date.strftime("%b")
-        if key in expense_buckets:
-            expense_buckets[key] += float(exp.amount)
-
     # P&L
     total_revenue = Decimal(str(revenue_total)) + pos_revenue
     net_profit = total_revenue - pos_cogs - total_expenses
     net_margin_pct = round(float(net_profit / total_revenue) * 100, 1) if total_revenue else 0.0
+
+    # Flujo de caja con arrastre: agregados diarios sobre TODA la historia del
+    # tenant (en hora local del gimnasio), agrupados por período según el día de
+    # corte configurado. El saldo previo a la ventana entra como pie del primer mes.
+    cutoff_raw = _feature_map(ctx.tenant).get("report_cutoff_day") if ctx.tenant else None
+    try:
+        cutoff_day = int(cutoff_raw) if cutoff_raw else None
+    except (TypeError, ValueError):
+        cutoff_day = None
+    if cutoff_day is not None and not 1 <= cutoff_day <= 28:
+        cutoff_day = None
+    zone = tenant_zone(ctx)
+
+    def _by_period(rows) -> dict[tuple[int, int], Decimal]:
+        totals: dict[tuple[int, int], Decimal] = {}
+        for row in rows:
+            if row[0] is None:
+                continue
+            day = row[0].date() if isinstance(row[0], datetime) else row[0]
+            key = _period_key(day, cutoff_day)
+            totals[key] = totals.get(key, Decimal("0")) + Decimal(str(row[1]))
+        return totals
+
+    # Reutilizar el mismo objeto expresión en SELECT y GROUP BY: asyncpg parametriza
+    # cada literal por separado y Postgres rechaza el GROUP BY si difieren.
+    payment_day = func.date_trunc("day", func.timezone(str(zone), Payment.created_at))
+    payment_periods = _by_period((await db.execute(
+        select(payment_day, func.sum(Payment.amount))
+        .where(Payment.tenant_id == ctx.tenant_id, Payment.status == PaymentStatus.COMPLETED)
+        .group_by(payment_day)
+    )).all())
+    pos_day = func.date_trunc("day", func.timezone(str(zone), POSTransaction.sold_at))
+    pos_periods = _by_period((await db.execute(
+        select(pos_day, func.sum(POSTransaction.total))
+        .where(POSTransaction.tenant_id == ctx.tenant_id, POSTransaction.status == POSTransactionStatus.COMPLETED)
+        .group_by(pos_day)
+    )).all())
+    cogs_periods = _by_period((await db.execute(
+        select(pos_day, func.sum(POSTransactionItem.unit_cost * POSTransactionItem.quantity))
+        .select_from(POSTransactionItem)
+        .join(POSTransaction, POSTransactionItem.transaction_id == POSTransaction.id)
+        .where(POSTransaction.tenant_id == ctx.tenant_id, POSTransaction.status == POSTransactionStatus.COMPLETED)
+        .group_by(pos_day)
+    )).all())
+    expense_periods = _by_period((await db.execute(
+        select(Expense.expense_date, func.sum(Expense.amount))
+        .where(Expense.tenant_id == ctx.tenant_id)
+        .group_by(Expense.expense_date)
+    )).all())
+
+    income_by_period: dict[tuple[int, int], Decimal] = dict(payment_periods)
+    for key, value in pos_periods.items():
+        income_by_period[key] = income_by_period.get(key, Decimal("0")) + value
+    cost_by_period: dict[tuple[int, int], Decimal] = dict(expense_periods)
+    for key, value in cogs_periods.items():
+        cost_by_period[key] = cost_by_period.get(key, Decimal("0")) + value
+
+    current_period = _period_key(now.astimezone(zone).date(), cutoff_day)
+    cashflow_periods = _last_periods(current_period, 12 if range_key == "12m" else 3 if range_key == "90d" else 1)
+    opening_balance, closing_balance, cashflow_series = build_cashflow(
+        cashflow_periods, income_by_period, cost_by_period
+    )
+
+    # Series mensuales de los gráficos: mismos períodos de corte que el saldo,
+    # para que todo el reporte se mueva junto al cambiar el día de corte.
+    member_period_counts: dict[tuple[int, int], int] = {}
+    for membership in memberships:
+        created = membership.created_at
+        local_day = created.astimezone(zone).date() if created.tzinfo else created.date()
+        key = _period_key(local_day, cutoff_day)
+        member_period_counts[key] = member_period_counts.get(key, 0) + 1
+
+    revenue_series = [
+        ReportSeriesPoint(label=_period_label(p), value=float(payment_periods.get(p, Decimal("0"))))
+        for p in cashflow_periods
+    ]
+    members_series = [
+        ReportSeriesPoint(label=_period_label(p), value=member_period_counts.get(p, 0))
+        for p in cashflow_periods
+    ]
+    pos_revenue_series = [
+        ReportSeriesPoint(label=_period_label(p), value=float(pos_periods.get(p, Decimal("0"))))
+        for p in cashflow_periods
+    ]
+    expense_series = [
+        ReportSeriesPoint(label=_period_label(p), value=float(expense_periods.get(p, Decimal("0"))))
+        for p in cashflow_periods
+    ]
 
     return ReportsOverviewResponse(
         revenue_total=revenue_total,
         active_members=active_members,
         renewal_rate=renewal_rate,
         churn_rate=churn_rate,
-        revenue_series=[ReportSeriesPoint(label=label, value=value) for label, value in revenue_buckets.items()],
-        members_series=[ReportSeriesPoint(label=label, value=value) for label, value in member_buckets.items()],
+        revenue_series=revenue_series,
+        members_series=members_series,
         revenue_by_plan=revenue_by_plan,
         attendance_by_day=[ReportSeriesPoint(label=label, value=value) for label, value in attendance.items()],
         occupancy_by_class=occupancy_points,
         pos_revenue=pos_revenue,
-        pos_revenue_series=[ReportSeriesPoint(label=l, value=v) for l, v in pos_revenue_buckets.items()],
+        pos_revenue_series=pos_revenue_series,
         pos_cogs=pos_cogs,
         pos_gross_profit=pos_gross_profit,
         pos_gross_margin_pct=pos_gross_margin_pct,
         top_products=top_products,
         total_expenses=total_expenses,
         expenses_by_category=expenses_by_category,
-        expense_series=[ReportSeriesPoint(label=l, value=v) for l, v in expense_buckets.items()],
+        expense_series=expense_series,
         total_revenue=total_revenue,
         net_profit=net_profit,
         net_margin_pct=net_margin_pct,
+        opening_balance=opening_balance,
+        closing_balance=closing_balance,
+        cashflow_series=cashflow_series,
+        report_cutoff_day=cutoff_day,
     )
 
 
