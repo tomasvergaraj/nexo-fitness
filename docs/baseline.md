@@ -112,3 +112,33 @@ A11y restante (preexistente, fuera del scope de tokens): `aria-hidden` con focus
 - Lighthouse 12.8.2 vía `npx`, Chrome 148 (puppeteer cache), `--headless=new --no-sandbox`, throttling simulado default (mobile: Moto G–class, CPU 4×, slow 4G; desktop: preset `desktop`).
 - Una pasada por form factor (no mediana de 3) — los valores tienen varianza de ±10%; las conclusiones estructurales (LCP render-delay, peso del PNG, CSR) no dependen de ella.
 - Medido a través de Cloudflare (incluye su beacon RUM y el robots.txt gestionado).
+
+## Cierre final (2026-06-11) — mediana de 3 corridas Lighthouse mobile contra prod
+
+Tras toda la serie (prerender → tokens canónicos → hero Stripe/Family con screenshot real → Features con capturas → trust honesto → pricing → FAQ nativo → pasada mobile-first):
+
+| Métrica | Baseline (2026-06-10) | Final (mediana de 3) | Objetivo | Estado |
+|---|---|---|---|---|
+| Performance (mobile) | 45 | **90** (85–94) | verde | ✅ |
+| Accessibility | 89 | **100** (3/3 corridas) | AA | ✅ |
+| Best Practices | 96 | **100** | verde | ✅ |
+| SEO | 92 | 92 | verde | ✅ (resto = Content-Signal de CF) |
+| LCP | 10.5 s | **2.8 s** | < 2.5 s | 🟡 +0.3 s (lab, vía Cloudflare) |
+| CLS | 0 | **0.035** (0 / 0.035 / 0.185) | < 0.1 | ✅ mediana (carrera de font swap en ~1/3 corridas lab) |
+| TBT (proxy INP) | 1,060 ms | **79 ms** | < 200 ms | ✅ |
+| Max Potential FID | 670 ms | 202 ms | < 200 ms | 🟡 límite |
+| FCP | 3.1 s | 2.1 s | — | ✅ |
+| Peso total | 1,513 KB | **234 KB** | — | −85 % |
+| JS first-load (raw) | 322.7 KB | **292.1 KB** | — | −9 % |
+| CSS (raw) | 96.6 KB | **40.4 KB** | — | −58 % |
+| HTML servido | 2.2 KB (shell vacío) | **44.9 KB con hero + FAQ + pricing** | prerender | ✅ `curl \| grep "Gestión integral"` lo encuentra |
+| Código de rutas autenticadas en la home | N/A (proyecto separado) | **0 marcadores** (`AuthGuard`, `/member`, `Sidebar`… = 0 hits en el bundle) | — | ✅ |
+
+### Pendiente (cierre de loop)
+
+1. **LCP 2.8 s vs objetivo 2.5 s** (solo lab/slow-4G): el residuo es CSS render-blocking + boot de React. Bajar más = reemplazar framer-motion por CSS/IntersectionObserver (~30 KB gz) o migrar a estático puro (Astro) si marketing crece.
+2. **CLS por font swap en ~1/3 de corridas lab**: fallback con métricas ajustadas (`size-adjust`/`ascent-override` tipo fontaine) lo haría determinista. En campo, las fuentes quedan cacheadas tras la primera visita.
+3. **robots.txt — 1 directiva `Content-Signal`** que Lighthouse no reconoce: la inyecta Cloudflare (managed robots.txt); se desactiva en su dashboard, no en el repo. Único punto que retiene SEO en 92.
+4. **INP real**: el lab solo da proxies (TBT 79 ms ✅, maxFID 202 ms al límite). Confirmar con datos de campo (CrUX cuando haya tráfico suficiente).
+5. **`server.browser-*.js`** (70 KB) queda en disco como artefacto del plugin de prerender — el HTML no lo referencia, nunca se descarga. Cosmético.
+6. **Testimonio real**: cita + permiso de Alpha Gimnasio Híbrido (pendiente del dueño, no del código).
