@@ -156,6 +156,7 @@ h1, h2, h3, h4 {
 /* ─── Foco visible (AA, no quitar outline sin reemplazo) ─── */
 a:focus-visible,
 button:focus-visible,
+summary:focus-visible,
 .btn:focus-visible {
   outline: 3px solid var(--brand-dark);
   outline-offset: 2px;
@@ -1027,11 +1028,7 @@ button:focus-visible,
   transition: border-color 0.22s;
 }
 
-.faq-item {
-  background: var(--surface);
-}
-
-.faq-item.open { border-color: var(--surface-border-strong); }
+.faq-item[open] { border-color: var(--surface-border-strong); }
 
 .faq-question {
   width: 100%;
@@ -1049,10 +1046,8 @@ button:focus-visible,
   transition: color 0.2s;
 }
 
-.faq-question:hover { color: var(--brand); }
-.faq-item.open .faq-question { color: var(--brand); }
-
-.faq-item.open .faq-question { color: var(--brand-dark); }
+.faq-question:hover { color: var(--brand-dark); }
+.faq-item[open] .faq-question { color: var(--brand-dark); }
 
 .faq-icon {
   flex-shrink: 0;
@@ -1065,9 +1060,14 @@ button:focus-visible,
   transition: transform 0.3s ease, background 0.2s;
 }
 
-.faq-item.open .faq-icon { transform: rotate(45deg); }
+.faq-item[open] .faq-icon { transform: rotate(45deg); }
 
-.faq-body { overflow: hidden; }
+/* summary nativo: sin marker, cursor de control */
+.faq-question {
+  list-style: none;
+  cursor: pointer;
+}
+.faq-question::-webkit-details-marker { display: none; }
 
 .faq-answer {
   padding: 0 1.3rem 1.3rem;
@@ -1471,11 +1471,12 @@ button:focus-visible,
   gap: 1.25rem;
   padding: 2.5rem 0;
   min-height: 60vh;
-  opacity: 0.42;
-  transition: opacity 0.5s ease;
+  transition: color 0.4s ease;
 }
 
-.hiw-step.is-active { opacity: 1; }
+/* Atenuado inactivo por color (no opacity): muted mantiene AA (4.8:1+) */
+.hiw-step:not(.is-active) .hiw-step-content h3 { color: var(--muted); }
+.hiw-step:not(.is-active) .hiw-step-num { color: var(--muted); }
 
 .hiw-step-rail {
   position: relative;
