@@ -47,7 +47,7 @@ export default function FAQ() {
           <h2>Preguntas frecuentes.</h2>
           <p>¿Tienes dudas sobre la migración o el flujo? Escríbenos y te ayudamos antes de activar tu cuenta.</p>
           <div style={{ marginTop: '2rem' }}>
-            <Button href="https://app.nexofitness.cl/register">Comenzar prueba gratis</Button>
+            <Button href="https://app.nexofitness.cl/register">Empezar prueba gratis</Button>
           </div>
         </ScrollReveal>
 

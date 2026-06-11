@@ -909,20 +909,15 @@ button:focus-visible,
 }
 
 .plan-card:hover {
-  transform: translateY(-4px);
-  
+  border-color: var(--surface-border-strong);
 }
 
 .plan-card-featured {
-  border-color: var(--surface-border-strong);
-  background: var(--brand-ghost);
-  transform: translateY(-6px);
-  
+  border: 2px solid var(--brand);
 }
 
-.plan-card-featured:hover {
-  transform: translateY(-10px);
-  
+.plan-card-featured .plan-price-num {
+  color: var(--brand-deep);
 }
 
 .plan-price {
@@ -1007,16 +1002,6 @@ button:focus-visible,
   flex-direction: column;
   gap: 0.65rem;
   margin-top: auto;
-}
-
-.plan-card-loading {
-  align-items: flex-start;
-  animation: pulse 1.8s ease infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
 }
 
 /* ─── FAQ ────────────────────────────────────────────────── */
@@ -2241,187 +2226,6 @@ button:focus-visible,
 }
 
 /* ─── Pricing anchor ─────────────────────────────────────── */
-.eyebrow-warn {
-  background: var(--accent-ghost) !important;
-  color: var(--accent) !important;
-  border-color: var(--brand-ghost) !important;
-}
-
-.eyebrow-warn .eyebrow-dot {
-  background: var(--accent) !important;
-}
-
-.pricing-anchor {
-  position: relative;
-  margin: 3rem 0 3.5rem;
-  padding: 2.5rem 2.75rem;
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  border: 1px solid var(--surface-border-strong);
-  overflow: hidden;
-  
-}
-
-.pricing-anchor {
-  background: var(--surface);
-  
-}
-
-.pricing-anchor-glow {
-  position: absolute;
-  top: -40%;
-  right: -10%;
-  width: 60%;
-  height: 100%;
-  background: var(--brand-ghost);
-  pointer-events: none;
-}
-
-.pricing-anchor-grid {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
-  gap: 2.5rem;
-  align-items: start;
-}
-
-.pricing-anchor-side h3 {
-  margin-top: 1rem;
-  font-size: var(--fs-h1);
-  letter-spacing: -0.025em;
-  line-height: 1.1;
-}
-
-.pricing-anchor-side p {
-  margin-top: 1rem;
-  color: var(--muted);
-  font-size: var(--fs-body);
-  line-height: 1.65;
-  max-width: 38ch;
-}
-
-.pricing-anchor-table {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.pricing-anchor-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.85rem 1rem;
-  border-radius: var(--radius);
-  background: var(--bg-soft);
-  border: 1px solid var(--surface-border);
-}
-
-.pricing-anchor-row {
-  background: var(--surface);
-}
-
-.pricing-anchor-row-info { display: grid; gap: 2px; line-height: 1.2; }
-
-.pricing-anchor-row-info strong {
-  font-size: var(--fs-small);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.pricing-anchor-row-info span {
-  font-size: var(--fs-xs);
-  color: var(--muted);
-}
-
-.pricing-anchor-row-cost {
-  font-family: 'Outfit', system-ui, sans-serif;
-  font-size: var(--fs-body);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--accent);
-  white-space: nowrap;
-}
-
-.pricing-anchor-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 0.5rem;
-  padding: 1rem 1.1rem;
-  border-radius: var(--radius);
-  background: var(--bg-soft);
-  border: 1px solid var(--brand-ghost);
-}
-
-.pricing-anchor-total span {
-  font-size: var(--fs-small);
-  color: var(--muted-strong);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.pricing-anchor-total strong {
-  font-family: 'Outfit', system-ui, sans-serif;
-  font-size: var(--fs-h2);
-  letter-spacing: -0.03em;
-  color: var(--accent);
-  line-height: 1;
-}
-
-.pricing-anchor-vs {
-  display: grid;
-  grid-template-columns: auto 1fr 1fr;
-  align-items: center;
-  gap: 1rem;
-  margin-top: 0.85rem;
-  padding: 1rem 1.1rem;
-  border-radius: var(--radius);
-  background: var(--brand-ghost);
-  border: 1px solid var(--surface-border-strong);
-}
-
-.pricing-anchor-vs > svg {
-  color: var(--brand);
-  background: var(--bg);
-  border-radius: var(--radius);
-  padding: 6px;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--surface-border-strong);
-  flex-shrink: 0;
-}
-
-.pricing-anchor-vs > svg { background: white; }
-
-.pricing-anchor-vs > div { display: grid; line-height: 1.15; }
-
-.pricing-anchor-vs > div span {
-  font-size: var(--fs-xs);
-  color: var(--muted);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.pricing-anchor-vs > div strong {
-  font-family: 'Outfit', system-ui, sans-serif;
-  font-size: var(--fs-h3);
-  letter-spacing: -0.025em;
-  color: var(--text);
-}
-
-.pricing-anchor-save {
-  text-align: right;
-  border-left: 1px dashed var(--surface-border-strong);
-  padding-left: 1rem;
-}
-
-.pricing-anchor-save strong {
-  color: var(--success) !important;
-}
 
 /* ─── Plan card extras ───────────────────────────────────── */
 .plan-ribbon {
@@ -2460,7 +2264,7 @@ button:focus-visible,
   padding: 0.3rem 0.7rem;
   border-radius: var(--radius);
   background: var(--success-ghost);
-  color: var(--success);
+  color: var(--success-dark);
   border: 1px solid var(--success-ghost);
 }
 
@@ -2475,15 +2279,10 @@ button:focus-visible,
 
 .plan-equiv strong {
   font-family: 'Outfit', system-ui, sans-serif;
-  color: var(--brand);
+  color: var(--brand-dark);
   font-size: var(--fs-body);
   letter-spacing: -0.015em;
   font-weight: 700;
-}
-
-.plan-equiv-base {
-  font-style: italic;
-  color: var(--muted);
 }
 
 .plan-meta-chip {
@@ -2517,31 +2316,9 @@ button:focus-visible,
 
 /* Pricing responsive */
 @media (max-width: 900px) {
-  .pricing-anchor { padding: 2rem 1.75rem; }
-  .pricing-anchor-grid { grid-template-columns: 1fr; gap: 1.75rem; }
-  .pricing-anchor-vs {
-    grid-template-columns: auto 1fr;
-    gap: 0.85rem 1rem;
-  }
-  .pricing-anchor-save {
-    grid-column: span 2;
-    border-left: none;
-    border-top: 1px dashed var(--surface-border-strong);
-    padding-left: 0;
-    padding-top: 0.85rem;
-    text-align: left;
-  }
 }
 
 @media (max-width: 640px) {
-  .pricing-anchor { padding: 1.5rem 1.25rem; margin: 2rem 0 2.5rem; }
-  .pricing-anchor-side h3 { font-size: var(--fs-h3); }
-  .pricing-anchor-row { padding: 0.7rem 0.85rem; gap: 0.75rem; flex-direction: column; align-items: flex-start; }
-  .pricing-anchor-row-cost { align-self: flex-end; }
-  .pricing-anchor-total { padding: 0.85rem; }
-  .pricing-anchor-total strong { font-size: var(--fs-h3); }
-  .pricing-anchor-vs { padding: 0.85rem; }
-  .pricing-anchor-vs > div strong { font-size: var(--fs-body); }
   .plan-ribbon { font-size: var(--fs-xs); padding: 0.3rem 0.85rem; }
   .pricing-foot-note span { font-size: var(--fs-xs); padding: 0.55rem 0.9rem; }
 }

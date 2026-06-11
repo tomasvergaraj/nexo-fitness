@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import ScrollReveal from '../animations/ScrollReveal';
 import Button from './Button';
 
@@ -25,6 +24,8 @@ const PLAN_SORT: Record<string, number> = { monthly: 1, quarterly: 2, semi_annua
 const PLAN_PERIOD: Record<string, string> = { monthly: 'mes', quarterly: 'trimestre', semi_annual: 'semestre', annual: 'año' };
 const PLAN_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, semi_annual: 6, annual: 12 };
 
+// Base prerenderizada: si el fetch falla o aún no responde, esto es lo que
+// queda en el HTML estático. Mantener alineado con SaaSPlanDefinition.
 const FALLBACK: Plan[] = [
   {
     key: 'monthly', name: 'Mensual', description: 'Ideal para empezar. Acceso completo con 14 días gratis.',
@@ -59,84 +60,10 @@ function formatPrice(price: string | number, currency: string) {
 }
 
 const CheckIcon = () => (
-  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <polyline points="20 6 9 17 4 12" />
   </svg>
 );
-
-const ArrowDownIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" />
-  </svg>
-);
-
-/* ─── Pricing anchor (cost of not having Nexo) ──────────── */
-
-const HIDDEN_COSTS = [
-  { label: 'Tiempo en planillas + WhatsApp', detail: '~2 hrs/día del staff', cost: 120000 },
-  { label: 'Ventas perdidas sin checkout 24/7', detail: '3 leads/mes que no esperan al lunes', cost: 150000 },
-  { label: 'Cobranza manual y recordatorios', detail: '~1 hr/día persiguiendo pagos', cost: 60000 },
-  { label: 'Renovaciones que no se concretan', detail: '~5% de la base sin recordar', cost: 80000 },
-];
-
-function PricingAnchor({ cheapestMonthly }: { cheapestMonthly: number }) {
-  const totalHidden = HIDDEN_COSTS.reduce((s, c) => s + c.cost, 0);
-  const savings = totalHidden - cheapestMonthly;
-
-  return (
-    <ScrollReveal className="pricing-anchor">
-      <div className="pricing-anchor-glow" aria-hidden />
-      <div className="pricing-anchor-grid">
-        <div className="pricing-anchor-side">
-          <span className="eyebrow eyebrow-warn">
-            <span className="eyebrow-dot" />
-            Costo del desorden
-          </span>
-          <h3>Lo que probablemente ya estás pagando hoy.</h3>
-          <p>Sin un sistema, el costo no aparece en una factura — pero está. Lo pagas en horas, ventas que no cierran y miembros que no renuevan.</p>
-        </div>
-
-        <div className="pricing-anchor-table">
-          {HIDDEN_COSTS.map((c, i) => (
-            <motion.div
-              key={c.label}
-              className="pricing-anchor-row"
-              initial={{ opacity: 0, x: 16 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.4, delay: i * 0.07, ease: 'easeOut' }}
-            >
-              <div className="pricing-anchor-row-info">
-                <strong>{c.label}</strong>
-                <span>{c.detail}</span>
-              </div>
-              <span className="pricing-anchor-row-cost">~${c.cost.toLocaleString('es-CL')}</span>
-            </motion.div>
-          ))}
-
-          <div className="pricing-anchor-total">
-            <span>Costo mensual estimado</span>
-            <strong>~${totalHidden.toLocaleString('es-CL')}</strong>
-          </div>
-
-          <div className="pricing-anchor-vs">
-            <ArrowDownIcon />
-            <div>
-              <span>Nexo desde</span>
-              <strong>${cheapestMonthly.toLocaleString('es-CL')} / mes</strong>
-            </div>
-            <div className="pricing-anchor-save">
-              <span>Ahorro estimado</span>
-              <strong>~${savings.toLocaleString('es-CL')}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-    </ScrollReveal>
-  );
-}
-
-/* ─── Plan card ──────────────────────────────────────────── */
 
 function calcSavings(plan: Plan, monthlyPlan?: Plan) {
   if (!monthlyPlan || plan.license_type === 'monthly') return null;
@@ -146,26 +73,18 @@ function calcSavings(plan: Plan, monthlyPlan?: Plan) {
   const equivalent = planPrice / months;
   const savePerMonth = monthlyPrice - equivalent;
   if (savePerMonth <= 0) return null;
-  const totalSave = savePerMonth * months;
   const pct = Math.round((savePerMonth / monthlyPrice) * 100);
-  return { equivalent, savePerMonth, totalSave, pct };
+  return { equivalent, pct };
 }
 
-function PlanCard({ plan, index, monthlyPlan }: { plan: Plan; index: number; monthlyPlan?: Plan }) {
+function PlanCard({ plan, monthlyPlan }: { plan: Plan; monthlyPlan?: Plan }) {
   const period = PLAN_PERIOD[plan.license_type] ?? plan.license_type;
   const price = formatPrice(plan.price, plan.currency);
   const savings = calcSavings(plan, monthlyPlan);
 
   return (
-    <motion.article
-      className={`card plan-card${plan.highlighted ? ' plan-card-featured' : ''}`}
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: plan.highlighted ? -6 : 0 }}
-      viewport={{ once: true, margin: '-30px' }}
-      transition={{ duration: 0.5, delay: index * 0.08, ease: 'easeOut' }}
-      whileHover={{ y: plan.highlighted ? -10 : -4 }}
-    >
-      {plan.highlighted && <div className="plan-ribbon">Más elegido</div>}
+    <article className={`card plan-card${plan.highlighted ? ' plan-card-featured' : ''}`}>
+      {plan.highlighted && <div className="plan-ribbon">Recomendado</div>}
 
       <div className="plan-head">
         <span className="chip chip-brand">{plan.name}</span>
@@ -187,17 +106,14 @@ function PlanCard({ plan, index, monthlyPlan }: { plan: Plan; index: number; mon
           <span>/ mes</span>
         </div>
       ) : (
-        <div className="plan-equiv plan-equiv-base">
-          <span>Sin compromisos · Cancela cuando quieras</span>
+        <div className="plan-equiv">
+          <span>Precio base de referencia</span>
         </div>
       )}
 
       <p className="plan-desc">{plan.description}</p>
 
       <div className="plan-meta">
-        {plan.trial_days > 0 && (
-          <span className="chip plan-meta-chip">{plan.trial_days} días gratis</span>
-        )}
         <span className="chip plan-meta-chip">
           Hasta {plan.max_members.toLocaleString('es-CL')} miembros
         </span>
@@ -221,10 +137,10 @@ function PlanCard({ plan, index, monthlyPlan }: { plan: Plan; index: number; mon
           variant={plan.highlighted ? 'primary' : 'secondary'}
           size="sm"
         >
-          Comenzar prueba gratis
+          Empezar prueba gratis
         </Button>
       </div>
-    </motion.article>
+    </article>
   );
 }
 
@@ -248,33 +164,29 @@ export default function Pricing() {
 
   const displayPlans = plans.length ? plans : FALLBACK;
   const monthlyPlan = useMemo(() => displayPlans.find(p => p.license_type === 'monthly'), [displayPlans]);
-  const cheapestMonthly = monthlyPlan ? parseFloat(monthlyPlan.price) : 34990;
 
   return (
     <section className="section" id="precios">
       <div className="container">
-        <ScrollReveal className="section-heading section-heading-centered">
+        <div className="section-heading section-heading-centered">
           <span className="eyebrow"><span className="eyebrow-dot" />Precios públicos</span>
           <h2>Planes claros, prueba gratis y sin letra pequeña.</h2>
-          <p>Precios directamente desde el sistema — siempre actualizados.</p>
-        </ScrollReveal>
+          <p>
+            Precios directamente desde el sistema.
+            <br />
+            14 días de prueba gratis, sin tarjeta · Cancela cuando quieras.
+          </p>
+        </div>
 
-        <PricingAnchor cheapestMonthly={cheapestMonthly} />
-
-        <AnimatePresence>
-          <div className="plan-grid">
-            {displayPlans.map((plan, i) => (
-              <PlanCard key={plan.key} plan={plan} index={i} monthlyPlan={monthlyPlan} />
-            ))}
-          </div>
-        </AnimatePresence>
+        <div className="plan-grid">
+          {displayPlans.map(plan => (
+            <PlanCard key={plan.key} plan={plan} monthlyPlan={monthlyPlan} />
+          ))}
+        </div>
 
         <ScrollReveal className="pricing-foot-note">
           <span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-            </svg>
-            Sin contrato de permanencia · IVA aplica solo en CLP · Cambia o cancela cuando quieras
+            Prueba de 14 días sin tarjeta · Sin contrato de permanencia · IVA aplica solo en CLP
           </span>
         </ScrollReveal>
       </div>

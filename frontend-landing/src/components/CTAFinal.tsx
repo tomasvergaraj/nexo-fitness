@@ -20,7 +20,7 @@ export default function CTAFinal() {
             <div className="cta-actions">
               <Button href="https://app.nexofitness.cl/register" size="lg">
                 <ChevronIcon />
-                Activar prueba gratis
+                Empezar prueba gratis
               </Button>
             </div>
             <p className="cta-note">
