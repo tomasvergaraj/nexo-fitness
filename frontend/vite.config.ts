@@ -10,6 +10,30 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Separar SOLO los vendors estables grandes que ya son eager, en chunks
+          // propios: bajan en paralelo con el resto y sobreviven a los deploys (el
+          // hash del código de app cambia, el de React/framer no), así un rebuild no
+          // obliga a re-descargar todo en frío. NO usar catch-all de node_modules:
+          // eso arrastraría a eager libs que hoy viven solo en chunks lazy. El resto
+          // (router, recharts/d3, lucide, etc.) lo deja Vite con su heurística por
+          // defecto (async-only se mantiene async).
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return;
+            // Solo core de React (sin deps externas) para evitar chunks circulares.
+            if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
+              return 'vendor-react';
+            }
+            if (id.includes('framer-motion') || id.includes('motion-dom') || id.includes('motion-utils')) {
+              return 'vendor-motion';
+            }
+            if (id.includes('@tanstack')) return 'vendor-query';
+          },
+        },
+      },
+    },
     optimizeDeps: {
       include: ['@sentry/react', 'react-qr-code'],
     },
