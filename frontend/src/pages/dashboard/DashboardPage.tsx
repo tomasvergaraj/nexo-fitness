@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -7,7 +7,6 @@ import {
   Cake, Clock, CreditCard, Rocket, User,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { AreaChart, Area, BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
 import { SkeletonStat } from '@/components/ui/Skeleton';
@@ -16,6 +15,20 @@ import { useAuthStore } from '@/stores/authStore';
 import { staggerContainer, fadeInUp } from '@/utils/animations';
 import { cn, formatCurrency, getApiError, parseApiNumber } from '@/utils';
 import type { DashboardMetrics, DayPanel, SaaSPlan, TenantBilling } from '@/types';
+
+// Charts diferidos: recharts vive en su propio chunk, fuera del crítico de la landing.
+const RevenueAreaChart = lazy(() => import('./DashboardCharts').then((m) => ({ default: m.RevenueAreaChart })));
+const OperationalBarChart = lazy(() => import('./DashboardCharts').then((m) => ({ default: m.OperationalBarChart })));
+
+// Placeholder con la misma altura del gráfico para no provocar CLS mientras carga.
+function ChartFallback({ height }: { height: number }) {
+  return (
+    <div
+      style={{ height }}
+      className="w-full animate-pulse rounded-xl bg-surface-100 dark:bg-surface-800/50"
+    />
+  );
+}
 
 function billingStatusLabel(status?: TenantBilling['status']) {
   if (status === 'trial') return 'En prueba';
@@ -401,35 +414,9 @@ export default function DashboardPage() {
               {formatCurrency(parseApiNumber(data?.revenue_month))}
             </span>
           </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={revenueData}>
-              <defs>
-                <linearGradient id="dashboardRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-surface-100 dark:text-surface-800" />
-              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-              <YAxis
-                axisLine={false}
-                tickLine={false}
-                tick={{ fill: '#94a3b8', fontSize: 12 }}
-                tickFormatter={(value) => `$${Math.round(value / 1000)}k`}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                  border: 'none',
-                  borderRadius: '12px',
-                  color: '#fff',
-                  fontSize: '13px',
-                }}
-                formatter={(value: number) => [formatCurrency(value), 'Ingresos']}
-              />
-              <Area type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2.5} fill="url(#dashboardRevenue)" />
-            </AreaChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChartFallback height={240} />}>
+            <RevenueAreaChart data={revenueData} />
+          </Suspense>
         </motion.div>
 
         <motion.div
@@ -437,23 +424,9 @@ export default function DashboardPage() {
           className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900"
         >
           <h3 className="mb-4 text-base font-semibold text-surface-900 dark:text-white">Operación del día</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={operationalData} barSize={42}>
-              <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-surface-100 dark:text-surface-800" />
-              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                  border: 'none',
-                  borderRadius: '12px',
-                  color: '#fff',
-                  fontSize: '13px',
-                }}
-              />
-              <Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChartFallback height={220} />}>
+            <OperationalBarChart data={operationalData} />
+          </Suspense>
         </motion.div>
       </div>
 
