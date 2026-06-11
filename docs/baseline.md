@@ -142,3 +142,21 @@ Tras toda la serie (prerender → tokens canónicos → hero Stripe/Family con s
 4. **INP real**: el lab solo da proxies (TBT 79 ms ✅, maxFID 202 ms al límite). Confirmar con datos de campo (CrUX cuando haya tráfico suficiente).
 5. **`server.browser-*.js`** (70 KB) queda en disco como artefacto del plugin de prerender — el HTML no lo referencia, nunca se descarga. Cosmético.
 6. **Testimonio real**: cita + permiso de Alpha Gimnasio Híbrido (pendiente del dueño, no del código).
+
+## Post-cierre (2026-06-11, commit cf8e359) — los dos pendientes accionables, resueltos
+
+Sin framer-motion (ScrollReveal → IntersectionObserver con gate `html.js`; toast/pulso/escenas → keyframes CSS) y fallbacks de fuente con métricas ajustadas (`size-adjust` calculado de los woff2 reales):
+
+| Métrica | Baseline | Cierre | **Post-cierre (3 corridas)** | Objetivo |
+|---|---|---|---|---|
+| Performance | 45 | 90 | **96–97** | ✅ |
+| LCP | 10.5 s | 2.8 s | **2.4–2.5 s** | ✅ < 2.5 s |
+| CLS | 0 | 0.035 (race 1/3) | **0.000–0.035, sin race** | ✅ < 0.1 |
+| TBT | 1,060 ms | 79 ms | **24–62 ms** | ✅ |
+| Max Potential FID | 670 ms | 202 ms | **88–120 ms** | ✅ < 200 ms |
+| JS first-load | 322.7 KB | 292.1 KB | **177.4 KB** (gzip 55.9) | −45 % vs baseline |
+| A11y | 89 | 100 | **100** | ✅ |
+
+Bonus: sin JS ahora se ve TODO el contenido (el ocultamiento del reveal está gateado por `html.js`); el HTML prerenderizado quedó sin `opacity:0` inline.
+
+Quedan (no accionables desde el repo): directiva `Content-Signal` de Cloudflare en robots.txt (dashboard CF), INP de campo vía CrUX cuando haya tráfico, y la cita/permiso de Alpha Gimnasio Híbrido.
