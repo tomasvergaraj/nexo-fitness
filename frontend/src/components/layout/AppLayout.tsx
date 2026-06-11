@@ -12,6 +12,7 @@ import { useOwnerDesktopInstallPrompt } from '@/hooks/useOwnerDesktopInstallProm
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { billingApi } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
+import { prefetchIdleRoutes } from '@/lib/routePrefetch';
 
 interface BillingStatus {
   status: string;
@@ -79,6 +80,12 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const desktopInstall = useOwnerDesktopInstallPrompt(user);
+
+  useEffect(() => {
+    // Apenas el shell pinta, calentar en idle las rutas pesadas/comunes para que
+    // abrir Reportes/Clientes/POS no espere la descarga del chunk.
+    prefetchIdleRoutes();
+  }, []);
 
   useEffect(() => {
     if (isDesktop !== prevDesktopRef.current) {

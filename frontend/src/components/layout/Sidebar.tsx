@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import NexoBrand, { NEXO_BRAND_SLOGAN } from '@/components/branding/NexoBrand';
 import { canAccessDashboard, cn, getDefaultRouteForRole } from '@/utils';
+import { prefetchRoute } from '@/lib/routePrefetch';
 import { useAuthStore } from '@/stores/authStore';
 import { dashboardApi } from '@/services/api';
 import type { UserRole } from '@/types';
@@ -129,6 +130,8 @@ function PinnedNavItem({
       to={resolvedPath}
       className={() => cn('sidebar-item group', isActive && 'active')}
       onClick={onClick}
+      onMouseEnter={() => prefetchRoute(item.path)}
+      onTouchStart={() => prefetchRoute(item.path)}
     >
       <span className="flex-shrink-0 transition-transform duration-200 group-hover:scale-110">
         {item.icon}
@@ -222,6 +225,8 @@ function NavGroup({
                         : 'text-surface-600 hover:bg-surface-50 hover:text-surface-900 dark:text-surface-400 dark:hover:bg-surface-800/50 dark:hover:text-surface-200',
                     )}
                     onClick={onNavigate}
+                    onMouseEnter={() => prefetchRoute(item.path)}
+                    onTouchStart={() => prefetchRoute(item.path)}
                   >
                     <span className={cn(
                       'flex-shrink-0',
