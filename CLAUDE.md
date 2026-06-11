@@ -175,3 +175,177 @@ Backend tests use `pytest` with `asyncio_mode = "auto"`. Factory functions (e.g.
 - **Async everywhere**: backend uses `async def` and `await` throughout; SQLAlchemy sessions are `AsyncSession`.
 - **Config**: `backend/app/core/config.py` uses Pydantic Settings with `.env`. All secrets via env vars; production mode rejects insecure defaults.
 - Sidebar navigation roles: `owner` and `admin` see management pages; `reception` sees check-in and classes; `trainer` sees assigned classes; members use the `/member/` routes (separate public-facing layout).
+
+## Landing: contexto y objetivo
+ 
+- Página de marketing servida desde la misma app React 18 + Vite + TS + Tailwind.
+- Único trabajo: que el dueño de gimnasio entienda el valor en 5 segundos y
+  active la **prueba gratis de 14 días sin tarjeta**. Un solo CTA primario.
+- Público: dueños/administradores de gimnasios y estudios. Entran desde el
+  celular. Hablan de "socios", "planes", "clases", "caja"; no de endpoints.
+## Rendering (prioridad #1)
+ 
+Hoy la landing es **client-side rendered**: Nginx hace fallback a `index.html` y
+React pinta el contenido en el navegador. El HTML que llega al servidor (y a los
+crawlers) está casi vacío → SEO y LCP pobres para una página de marketing. Se
+verifica con `curl https://nexofitness.cl/`: devuelve el shell, no el hero.
+ 
+Hay que emitir HTML estático de las rutas públicas. Opciones de menor a mayor
+cambio:
+ 
+1. **Plugin de prerender para Vite** (ej. `vite-plugin-seo-prerender`):
+   prerenderiza solo las rutas públicas en build; el resto sigue siendo SPA.
+   Menor cambio. **Verificar que el plugin esté mantenido** antes de adoptarlo.
+2. **React Router v7 (framework mode)**: trae prerendering de primera parte. Más
+   future-proof, pero implica subir de Router v6 a v7.
+3. **Sitio de marketing aparte (Astro estático)**: lo más limpio si marketing
+   crece, pero es el cambio mayor.
+En cualquier caso, los meta tags (`title`, `description`, Open Graph) deben quedar
+en el HTML servido, no inyectados por JS.
+ 
+## Bundle
+ 
+La landing pública **no** debe arrastrar el bundle del dashboard. Lazy-load de las
+rutas autenticadas (`React.lazy` + `Suspense`) para que el first load de marketing
+sea liviano. Verificar que el chunk inicial de la home no incluya el código de
+`/member` ni de las páginas de gestión.
+ 
+## Reglas duras (esto evita el "look IA")
+ 
+No son sugerencias. Si una propuesta las rompe, no la apliques.
+ 
+- **Sin gradientes** de fondo ni en botones. Color plano.
+- **Sin glow**, sin `box-shadow` decorativas, sin glassmorphism / blur.
+- **Un solo acento de acción** (teal). El verde con moderación (éxito, detalles),
+  no como segundo protagonista.
+- **Sin emoji en títulos** ni en copy de producto.
+- **Sin `rounded-2xl` en todo.** Define un radio y respétalo.
+- **Una sola tipografía** (Plus Jakarta Sans) con **pesos contrastados** para
+  jerarquía. La personalidad sale del contraste de pesos y del espaciado, no de
+  agregar fuentes ni efectos.
+- **No inventes features.** Solo los claims verificados (más abajo).
+- **Marcadores numerados (01 / 02 / 03) solo si el contenido es una secuencia
+  real** (un proceso, pasos de onboarding). No de adorno.
+- **Bento grids solo si la información lo justifica.**
+- **No uses componentes shadcn/ui tal cual.** Si se usan, customiza tokens; el
+  "shadcn por defecto" se reconoce a un kilómetro.
+## Tokens — reutilizar, no duplicar
+ 
+La app YA tiene sistema de color (themeStore light/dark + config de Tailwind). **No
+crear un sistema paralelo:** ubicar los tokens de marca existentes y reutilizarlos
+en la landing. Si faltan, derivarlos de los mismos valores.
+ 
+Paleta de marca (canónica):
+ 
+| Token            | Hex       | Uso                                            |
+|------------------|-----------|------------------------------------------------|
+| `ink`            | `#0A1A33` | Texto principal y base oscura                  |
+| `teal` (acento)  | `#1F86A6` | Acción primaria (CTA, links, foco)             |
+| `green`          | `#22B07D` | Éxito y detalles. Usar con moderación          |
+| `bg`             | `#F4FAFD` | Fondo de página                                |
+| `surface`        | `#FFFFFF` | Tarjetas y superficies elevadas                |
+ 
+Neutrales **propuestos** (confirmar/ajustar):
+ 
+| Token         | Hex (sugerido) | Uso                              |
+|---------------|----------------|----------------------------------|
+| `muted`       | `#5A6B82`      | Texto secundario                 |
+| `border`      | `#E2EAF0`      | Líneas finas, bordes de tarjeta  |
+ 
+> El `theme-color` desplegado hoy es `#071923` (más oscuro que `ink`). Reconciliar
+> en un único valor canónico.
+ 
+Paleta fría/clínica a propósito (confianza, orden, software de gestión). **No**
+migrar a cremas cálidas ni a fondos casi-negros: son defaults de IA que no
+representan al producto.
+ 
+**Definición según versión de Tailwind:**
+ 
+```js
+// Tailwind v3 → tailwind.config.js
+export default {
+  theme: {
+    extend: {
+      colors: {
+        ink: "#0A1A33", teal: "#1F86A6", green: "#22B07D",
+        bg: "#F4FAFD", surface: "#FFFFFF",
+        muted: "#5A6B82", border: "#E2EAF0",
+      },
+      fontFamily: { sans: ['"Plus Jakarta Sans"', "ui-sans-serif", "system-ui", "sans-serif"] },
+      borderRadius: { base: "0.5rem" },
+    },
+  },
+};
+```
+ 
+```css
+/* Tailwind v4 → CSS global */
+@import "tailwindcss";
+@theme {
+  --color-ink: #0A1A33; --color-teal: #1F86A6; --color-green: #22B07D;
+  --color-bg: #F4FAFD;  --color-surface: #FFFFFF;
+  --color-muted: #5A6B82; --color-border: #E2EAF0;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --radius-base: 0.5rem;
+}
+```
+ 
+### Tipografía
+ 
+- Plus Jakarta Sans (self-host, variable). Pesos: 400 / 500 / 600 / 700.
+- Escala (tokens, no inline): `display` clamp(2.5rem, 5vw, 4rem)/700 ·
+  `h1` ~2rem/700 · `h2` ~1.5rem/600 · `h3` ~1.25rem/600 · `body` 1rem/400 ·
+  `small` 0.875rem/500. Contraste de pesos; no usar 400 para todo.
+### Espaciado y radio
+ 
+- Escala 4 / 8 px (4, 8, 12, 16, 24, 32, 48, 64, 96). Ritmo vertical consistente
+  entre secciones. Cuidado con colisiones de especificidad CSS (paddings/margins
+  que se cancelan); preferir utilidades de Tailwind sobre CSS suelto.
+- Un radio base (8px) y respetarlo.
+## Técnico (React + Vite)
+ 
+- **Imágenes:** AVIF/WebP, `srcset`/`sizes`, `loading="lazy"` salvo el visual del
+  hero (eager, con `width`/`height` para evitar CLS). Considerar `vite-imagetools`
+  o generar los tamaños en build.
+- **Fuentes:** self-host de Plus Jakarta Sans variable, `font-display: swap`,
+  `preload` del archivo crítico, **subset**. No usar el CDN de Google Fonts en
+  prod.
+- **Siempre `node_modules/.bin/vite build` tras cambios de frontend** (Nginx sirve
+  `dist/`; npm no está en PATH en el server).
+## Accesibilidad (piso, no opcional)
+ 
+- HTML semántico (`header`, `main`, `section`, `nav`, encabezados en orden).
+- Contraste **WCAG AA** en todo el texto.
+- **Estados de foco visibles** en links y botones (no quitar outline sin
+  reemplazo).
+- Navegable por teclado. `prefers-reduced-motion` respetado.
+## Performance (objetivos)
+ 
+- LCP < 2.5 s · CLS < 0.1 · INP < 200 ms. Lighthouse (Perf/A11y/Best Practices/
+  SEO) en verde.
+## Motion
+ 
+- Sutil y con propósito (secuencia de carga del hero, un reveal al scroll, un
+  micro-hover). **Menos es más**: el exceso de animación es lo que hace sentir
+  "generado por IA".
+## Copy (material de diseño, no relleno)
+ 
+- Escribir desde el lado del usuario: "gestiona tus socios", no "administra
+  registros". Nombrar lo que la persona controla.
+- **Voz activa** y específica: el botón dice "Empezar prueba gratis", no "Enviar".
+- Consistencia de vocabulario entre botón y paso siguiente/toast.
+- Sentence case, verbos simples, sin frases de relleno tipo "potencia tu negocio
+  al siguiente nivel".
+## Claims verificados (lo ÚNICO que se puede afirmar)
+ 
+No prometer nada fuera de esta lista. Si falta info, preguntar — no inventar.
+ 
+- Pagos con **Webpay / Transbank** (y los demás proveedores reales si aplican:
+  Stripe, Fintoc, transferencia manual).
+- Hasta **3 sucursales**.
+- **Exportación a CSV**.
+- **Prueba gratis de 14 días, sin tarjeta**.
+- **Cancela cuando quieras**.
+- Soporte por **WhatsApp, email e in-app**.
+- Contacto: **contacto@nexofitness.cl**.
+ 
