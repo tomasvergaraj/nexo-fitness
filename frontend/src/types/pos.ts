@@ -187,6 +187,9 @@ export interface PosSalesSummary {
   refund_total: number;
   expenses_total: number;
   net_profit: number;
+  credit_charged: number;
+  credit_collected: number;
+  credit_outstanding: number;
   by_method: PaymentMethodBreakdownRow[];
 }
 

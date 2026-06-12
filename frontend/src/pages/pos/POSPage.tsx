@@ -140,7 +140,7 @@ function ClientPicker({ value, onChange }: { value: ClientLite | null; onChange:
         className="input w-full pl-9 text-sm"
       />
       {q.trim().length >= 2 && (
-        <div className="absolute z-20 mt-1 max-h-44 w-full overflow-y-auto rounded-xl border border-surface-200 bg-white shadow-lg dark:border-surface-700 dark:bg-surface-800">
+        <div className="absolute bottom-full z-20 mb-1 max-h-44 w-full overflow-y-auto rounded-xl border border-surface-200 bg-white shadow-lg dark:border-surface-700 dark:bg-surface-800">
           {isFetching ? (
             <div className="flex items-center justify-center py-3"><Loader2 size={16} className="animate-spin text-brand-500" /></div>
           ) : results.length === 0 ? (

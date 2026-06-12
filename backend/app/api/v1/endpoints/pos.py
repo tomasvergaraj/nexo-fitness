@@ -1931,6 +1931,36 @@ async def sales_report_summary(
         db, tenant_id, from_dt=from_date, to_dt=to_date, branch_id=branch_id
     )
 
+    # Fiados (cuentas por cobrar). Cargos/abonos del período + deuda viva actual.
+    credit_period_conditions = [
+        ClientAccountEntry.tenant_id == tenant_id,
+        ClientAccountEntry.created_at >= from_date,
+        ClientAccountEntry.created_at <= to_date,
+    ]
+    if branch_id is not None:
+        credit_period_conditions.append(ClientAccountEntry.branch_id == branch_id)
+    credit_charged, credit_collected = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(
+                    case((ClientAccountEntry.kind == "charge", ClientAccountEntry.amount), else_=0)
+                ), 0),
+                func.coalesce(func.sum(
+                    case((ClientAccountEntry.kind == "payment", ClientAccountEntry.amount), else_=0)
+                ), 0),
+            ).where(*credit_period_conditions)
+        )
+    ).one()
+    # Saldo por cobrar = snapshot actual de toda la deuda del tenant (no acotado al período).
+    credit_outstanding = (
+        await db.execute(
+            select(func.coalesce(func.sum(
+                case((ClientAccountEntry.kind == "charge", ClientAccountEntry.amount),
+                     else_=-ClientAccountEntry.amount)
+            ), 0)).where(ClientAccountEntry.tenant_id == tenant_id)
+        )
+    ).scalar_one()
+
     return SalesSummaryResponse(
         from_date=from_date,
         to_date=to_date,
@@ -1948,6 +1978,9 @@ async def sales_report_summary(
         refund_total=Decimal(refund_total),
         expenses_total=expenses_d,
         net_profit=margin - expenses_d,
+        credit_charged=Decimal(credit_charged),
+        credit_collected=Decimal(credit_collected),
+        credit_outstanding=Decimal(credit_outstanding),
         by_method=by_method,
     )
 

@@ -360,6 +360,11 @@ class SalesSummaryResponse(BaseModel):
     refund_total: Decimal = Decimal("0")       # total de transacciones reembolsadas
     expenses_total: Decimal = Decimal("0")     # gastos del período
     net_profit: Decimal = Decimal("0")         # gross_margin - expenses_total
+    # Fiados (cuentas por cobrar). Informativo: las ventas fiadas YA cuentan en
+    # net_sales/margen al venderse; aquí se ven los cobros y la deuda viva.
+    credit_charged: Decimal = Decimal("0")     # fiado otorgado en el período (cargos)
+    credit_collected: Decimal = Decimal("0")   # abonos cobrados en el período
+    credit_outstanding: Decimal = Decimal("0") # saldo total por cobrar (snapshot actual)
     by_method: List[PaymentMethodBreakdownRow] = []
 
 

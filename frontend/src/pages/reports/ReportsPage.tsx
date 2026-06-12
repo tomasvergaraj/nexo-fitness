@@ -1064,6 +1064,35 @@ export default function ReportsPage() {
                 })}
           </div>
 
+          {/* Fiados / cuentas por cobrar */}
+          {!posSummaryLoading && (
+            parseApiNumber(posSummary?.credit_outstanding) > 0 ||
+            parseApiNumber(posSummary?.credit_charged) > 0 ||
+            parseApiNumber(posSummary?.credit_collected) > 0
+          ) && (
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Fiados</h2>
+                <span className="text-xs text-surface-400">Cuentas por cobrar</span>
+              </div>
+              <p className="mt-1 text-sm text-surface-500">Las ventas fiadas ya cuentan en ventas; aquí ves los cobros y la deuda viva.</p>
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-sm text-surface-500">Fiado del período</p>
+                  <p className="mt-1 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{formatCurrency(parseApiNumber(posSummary?.credit_charged))}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-surface-500">Cobrado (abonos)</p>
+                  <p className="mt-1 text-2xl font-bold font-display tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(parseApiNumber(posSummary?.credit_collected))}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-surface-500">Saldo por cobrar</p>
+                  <p className="mt-1 text-2xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">{formatCurrency(parseApiNumber(posSummary?.credit_outstanding))}</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {/* Sales + margin over time */}
           <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
             <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Ventas y margen en el tiempo</h2>
