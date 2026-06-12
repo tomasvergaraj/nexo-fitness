@@ -104,6 +104,7 @@ export interface POSTransaction {
   client_name?: string | null;
   subtotal: number;
   discount_amount: number;
+  gift_card_amount?: number;
   total: number;
   refunded_amount?: number;
   payment_method: string;

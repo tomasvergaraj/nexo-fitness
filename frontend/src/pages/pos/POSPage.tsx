@@ -1,20 +1,21 @@
-import { useState, useMemo, type KeyboardEvent } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   ShoppingCart, Search, Plus, Minus, CreditCard,
   Banknote, Package, ChevronRight, X, Loader2, Receipt,
-  Lock, Unlock, Wallet, Users, User, ArrowLeft, Coins,
+  Lock, Unlock, Wallet, Users, User, ArrowLeft, Coins, Printer, Check,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Drawer from '@/components/ui/Drawer';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { posApi, giftCardsApi, clientsApi } from '@/services/api';
+import { posApi, giftCardsApi, clientsApi, settingsApi } from '@/services/api';
 import { cn, getApiError } from '@/utils';
 import type {
-  Product, ProductCategory, POSTransaction, CashSession,
+  Product, ProductCategory, POSTransaction, CashSession, TenantSettings,
   ClientDebtor, ClientAccountStatement, DebtorsResponse,
 } from '@/types';
+import { buildReceiptHtml, printReceipt, type ReceiptExtra } from './receiptPrint';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ function formatCLP(n: number) {
 
 // ─── Recent sale row ──────────────────────────────────────────────────────────
 
-function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (tx: POSTransaction) => void }) {
+function RecentSaleRow({ tx, onRefund, onReceipt }: { tx: POSTransaction; onRefund: (tx: POSTransaction) => void; onReceipt: (tx: POSTransaction) => void }) {
   const refunded = Number(tx.refunded_amount ?? 0);
   const isPartial = tx.status === 'completed' && refunded > 0;
   return (
@@ -98,6 +99,13 @@ function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (tx: PO
         )}>
           {formatCLP(tx.total)}
         </span>
+        <button
+          onClick={() => onReceipt(tx)}
+          title="Ver comprobante"
+          className="text-surface-400 transition-colors hover:text-brand-600 dark:hover:text-brand-400"
+        >
+          <Receipt size={14} />
+        </button>
         {tx.status === 'completed' ? (
           <button
             onClick={() => onRefund(tx)}
@@ -365,19 +373,25 @@ export default function POSPage() {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [discount, setDiscount] = useState(0);
+  const [discountInput, setDiscountInput] = useState(0);
+  const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>('amount');
   const [notes, setNotes] = useState('');
   const [giftCode, setGiftCode] = useState('');
   const [giftApplied, setGiftApplied] = useState(0);
   const [giftChecking, setGiftChecking] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [cashReceived, setCashReceived] = useState(0);
   const isCompact = useMediaQuery('(max-width: 1279px)');
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [view, setView] = useState<'sell' | 'fiados'>('sell');
-  const [creditClient, setCreditClient] = useState<ClientLite | null>(null);
+  const [client, setClient] = useState<ClientLite | null>(null);
   const [refundTx, setRefundTx] = useState<POSTransaction | null>(null);
   const [refundQty, setRefundQty] = useState<Record<string, number>>({});
   const [mixedRows, setMixedRows] = useState<{ method: string; amount: number }[]>([]);
+  const [receiptTx, setReceiptTx] = useState<POSTransaction | null>(null);
+  const [receiptExtra, setReceiptExtra] = useState<ReceiptExtra>({});
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useCallback(() => { setTimeout(() => searchRef.current?.focus(), 30); }, []);
 
   // ── Cash session (turno de caja) ─────────────────────────────────────────────
   const [openCajaModal, setOpenCajaModal] = useState(false);
@@ -416,19 +430,33 @@ export default function POSPage() {
     queryFn: () => posApi.listTransactions({ from_date: todayStart, size: 200 }).then(r => r.data),
   });
 
+  // Datos del gimnasio para el encabezado del comprobante.
+  const { data: gymSettings = null } = useQuery<TenantSettings | null>({
+    queryKey: ['tenant-settings'],
+    queryFn: () => settingsApi.get().then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
   // ── Mutations ─────────────────────────────────────────────────────────────
   const saleMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => posApi.createTransaction(data),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      const tx = res.data as POSTransaction;
       toast.success('Venta registrada');
+      // Comprobante: si fue efectivo y se ingresó lo recibido, guarda el vuelto.
+      const received = paymentMethod === 'cash' && cashReceived > 0 ? cashReceived : null;
+      setReceiptExtra({ cashReceived: received, change: received != null ? Math.max(0, received - Number(tx.total)) : null });
+      setReceiptTx(tx);
       setCart([]);
-      setDiscount(0);
+      setDiscountInput(0);
+      setDiscountMode('amount');
       setNotes('');
       setGiftCode('');
       setGiftApplied(0);
-      setCreditClient(null);
+      setClient(null);
       setMixedRows([]);
       setPaymentMethod('cash');
+      setCashReceived(0);
       setCheckoutOpen(false);
       queryClient.invalidateQueries({ queryKey: ['pos-transactions-today'] });
       queryClient.invalidateQueries({ queryKey: ['pos-products'] });
@@ -535,6 +563,12 @@ export default function POSPage() {
 
   // ── Totals ─────────────────────────────────────────────────────────────────
   const subtotal = useMemo(() => cart.reduce((s, i) => s + i.product.price * i.quantity, 0), [cart]);
+  // Descuento total en monto o porcentaje (se envía siempre como monto al backend).
+  const discount = useMemo(() => {
+    if (subtotal <= 0) return 0;
+    const raw = discountMode === 'percent' ? Math.round(subtotal * (discountInput / 100)) : discountInput;
+    return Math.min(subtotal, Math.max(0, raw));
+  }, [discountInput, discountMode, subtotal]);
   const total = Math.max(0, subtotal - discount);
   const todayRevenue = todaySales
     .filter(t => t.status === 'completed')
@@ -571,7 +605,10 @@ export default function POSPage() {
     mixedRows.every(r => r.method && Number(r.amount) > 0) &&
     mixedAssigned === total
   );
-  const canCheckout = cart.length > 0 && hasOpenCaja && (!isCredit || !!creditClient) && mixedValid;
+  const canCheckout = cart.length > 0 && hasOpenCaja && (!isCredit || !!client) && mixedValid;
+  // Vuelto (solo venta en efectivo): efectivo recibido − total.
+  const change = paymentMethod === 'cash' && cashReceived > 0 ? Math.max(0, cashReceived - finalTotal) : 0;
+  const cashShort = paymentMethod === 'cash' && cashReceived > 0 && cashReceived < finalTotal;
 
   function addMixedRow() { setMixedRows(p => [...p, { method: 'cash', amount: 0 }]); }
   function removeMixedRow(idx: number) { setMixedRows(p => p.filter((_, i) => i !== idx)); }
@@ -587,7 +624,7 @@ export default function POSPage() {
   }
 
   function handleCheckout() {
-    if (isCredit && !creditClient) {
+    if (isCredit && !client) {
       toast.error('Selecciona el socio para fiar');
       return;
     }
@@ -601,7 +638,7 @@ export default function POSPage() {
       discount_amount: discount,
       gift_card_code: !isCredit && !isMixed && giftApplied > 0 && giftCode.trim() ? giftCode.trim() : undefined,
       notes: notes || undefined,
-      client_id: isCredit ? creditClient!.id : undefined,
+      client_id: client?.id,
       payments: isMixed ? mixedRows.map(r => ({ method: r.method, amount: Number(r.amount) })) : undefined,
     });
   }
@@ -632,6 +669,54 @@ export default function POSPage() {
     : 0;
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
+
+  // ── Comprobante ─────────────────────────────────────────────────────────────
+  function openReceipt(tx: POSTransaction) {
+    setReceiptExtra({});   // reimpresión: el vuelto no se persiste, solo aplica a la venta recién hecha
+    setReceiptTx(tx);
+  }
+  function doPrintReceipt() {
+    if (!receiptTx) return;
+    printReceipt(buildReceiptHtml(receiptTx, gymSettings, receiptExtra));
+  }
+  function closeReceipt() {
+    setReceiptTx(null);
+    setReceiptExtra({});
+    focusSearch();
+  }
+
+  // ── Teclado: foco automático en el buscador + atajos para uso sin mouse ───────
+  useEffect(() => {
+    if (view === 'sell' && hasOpenCaja) focusSearch();
+  }, [view, hasOpenCaja, focusSearch]);
+
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      // F2 = cobrar (abrir confirmación). Funciona aunque el foco esté en el buscador.
+      if (e.key === 'F2' && view === 'sell' && !checkoutOpen && !receiptTx && canCheckout) {
+        e.preventDefault();
+        setCartSheetOpen(false);
+        setCheckoutOpen(true);
+        return;
+      }
+      // En la confirmación: Enter cobra (si no se está escribiendo en un campo).
+      if (e.key === 'Enter' && checkoutOpen && !typing && !saleMutation.isPending && canCheckout) {
+        e.preventDefault();
+        handleCheckout();
+        return;
+      }
+      // En el comprobante: P imprime, Enter inicia nueva venta.
+      if (receiptTx && !typing) {
+        if (e.key === 'p' || e.key === 'P') { e.preventDefault(); doPrintReceipt(); }
+        else if (e.key === 'Enter') { e.preventDefault(); closeReceipt(); }
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, checkoutOpen, receiptTx, canCheckout, saleMutation.isPending]);
 
   const cartPanelContent = (
     <>
@@ -688,17 +773,38 @@ export default function POSPage() {
 
       {/* Totals + checkout */}
       <div className="shrink-0 border-t border-surface-200 dark:border-surface-800 p-4 space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <label className="text-xs text-surface-500 sm:flex-shrink-0">Descuento ($)</label>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-surface-500 shrink-0">Descuento</label>
           <input
             type="number"
             min={0}
-            value={discount || ''}
-            onChange={e => setDiscount(Number(e.target.value) || 0)}
+            max={discountMode === 'percent' ? 100 : undefined}
+            value={discountInput || ''}
+            onChange={e => setDiscountInput(Math.max(0, Number(e.target.value) || 0))}
             placeholder="0"
             className="input min-w-0 flex-1 text-sm"
           />
+          <div className="flex shrink-0 overflow-hidden rounded-lg border border-surface-200 dark:border-surface-700">
+            {(['amount', 'percent'] as const).map(m => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setDiscountMode(m)}
+                className={cn(
+                  'px-2.5 py-1.5 text-xs font-semibold transition-colors',
+                  discountMode === m
+                    ? 'bg-brand-500 text-white'
+                    : 'bg-white text-surface-500 hover:bg-surface-50 dark:bg-surface-800 dark:hover:bg-surface-700',
+                )}
+              >
+                {m === 'amount' ? '$' : '%'}
+              </button>
+            ))}
+          </div>
         </div>
+        {discountMode === 'percent' && discount > 0 && (
+          <p className="-mt-1 text-right text-xs text-surface-400">{discountInput}% = {formatCLP(discount)}</p>
+        )}
 
         <div className="space-y-1 text-sm">
           {discount > 0 && (
@@ -747,12 +853,13 @@ export default function POSPage() {
           ))}
         </div>
 
-        {isCredit && (
-          <div className="space-y-1">
-            <label className="text-xs text-surface-500">Socio a fiar</label>
-            <ClientPicker value={creditClient} onChange={setCreditClient} />
-          </div>
-        )}
+        <div className="space-y-1">
+          <label className="text-xs text-surface-500">
+            {isCredit ? 'Socio a fiar' : 'Socio (opcional)'}
+            {isCredit && <span className="ml-1 text-rose-500">· obligatorio</span>}
+          </label>
+          <ClientPicker value={client} onChange={setClient} />
+        </div>
 
         {isMixed && (
           <div className="space-y-2">
@@ -816,7 +923,7 @@ export default function POSPage() {
             <p className="text-xs font-semibold text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
             <div className="max-h-40 overflow-y-auto">
               {todaySales.slice(0, 10).map(tx => (
-                <RecentSaleRow key={tx.id} tx={tx} onRefund={openRefund} />
+                <RecentSaleRow key={tx.id} tx={tx} onRefund={openRefund} onReceipt={openReceipt} />
               ))}
             </div>
           </div>
@@ -908,8 +1015,10 @@ export default function POSPage() {
             <div className="relative">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
               <input
+                ref={searchRef}
                 type="text"
-                placeholder="Buscar o escanear código..."
+                autoFocus
+                placeholder="Buscar o escanear código…  (Enter agrega · F2 cobra)"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 onKeyDown={handleSearchEnter}
@@ -1120,13 +1229,65 @@ export default function POSPage() {
             <span className="font-medium text-surface-800 dark:text-white">{paymentLabel(paymentMethod)}</span>
           </div>
 
+          {/* Vuelto (solo efectivo) */}
+          {paymentMethod === 'cash' && (
+            <div className="rounded-xl border border-surface-200 p-3 dark:border-surface-700">
+              <label className="mb-1 block text-xs text-surface-500">Efectivo recibido (para calcular vuelto)</label>
+              <input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={cashReceived || ''}
+                onChange={e => setCashReceived(Math.max(0, Number(e.target.value) || 0))}
+                placeholder={formatCLP(finalTotal)}
+                className="input w-full text-sm"
+              />
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {[finalTotal, 1000, 2000, 5000, 10000, 20000].map((v, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setCashReceived(i === 0 ? finalTotal : Math.max(cashReceived, 0) + v)}
+                    className="rounded-lg bg-surface-100 px-2.5 py-1 text-xs font-medium text-surface-600 hover:bg-surface-200 dark:bg-surface-700 dark:text-surface-300 dark:hover:bg-surface-600"
+                  >
+                    {i === 0 ? 'Exacto' : `+${formatCLP(v)}`}
+                  </button>
+                ))}
+                {cashReceived > 0 && (
+                  <button type="button" onClick={() => setCashReceived(0)} className="rounded-lg px-2 py-1 text-xs text-surface-400 hover:text-surface-600">
+                    limpiar
+                  </button>
+                )}
+              </div>
+              {cashReceived > 0 && (
+                <div className={cn(
+                  'mt-2 flex items-center justify-between rounded-lg px-3 py-2 text-sm font-bold',
+                  cashShort
+                    ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'
+                    : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400',
+                )}>
+                  <span>{cashShort ? 'Falta' : 'Vuelto'}</span>
+                  <span>{formatCLP(cashShort ? finalTotal - cashReceived : change)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {isCredit && (
             <div className="flex items-center gap-2 rounded-xl border border-brand-300 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/30">
               <User size={15} className="shrink-0 text-brand-600 dark:text-brand-400" />
               <span className="text-sm text-surface-500">Fiar a:</span>
               <span className="truncate font-medium text-surface-800 dark:text-white">
-                {creditClient ? `${creditClient.first_name} ${creditClient.last_name}` : '—'}
+                {client ? `${client.first_name} ${client.last_name}` : '—'}
               </span>
+            </div>
+          )}
+
+          {!isCredit && client && (
+            <div className="flex items-center gap-2 rounded-xl border border-surface-200 p-3 dark:border-surface-700">
+              <User size={15} className="shrink-0 text-surface-400" />
+              <span className="text-sm text-surface-500">Socio:</span>
+              <span className="truncate font-medium text-surface-800 dark:text-white">{client.first_name} {client.last_name}</span>
             </div>
           )}
 
@@ -1168,7 +1329,7 @@ export default function POSPage() {
             </button>
             <button
               onClick={handleCheckout}
-              disabled={saleMutation.isPending || (isCredit && !creditClient) || !mixedValid}
+              disabled={saleMutation.isPending || (isCredit && !client) || !mixedValid}
               className="flex-1 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-sm
                          flex items-center justify-center gap-2 disabled:opacity-60"
             >
@@ -1377,6 +1538,79 @@ export default function POSPage() {
                 Confirmar devolución
               </button>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Comprobante de venta (pantalla + PDF) ────────────────────────────── */}
+      <Modal open={!!receiptTx} title="Comprobante de venta" onClose={closeReceipt}>
+        {receiptTx && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-700 dark:bg-surface-900">
+              <div className="text-center">
+                <p className="text-base font-bold text-surface-900 dark:text-white">{gymSettings?.gym_name ?? 'Punto de venta'}</p>
+                {(gymSettings?.address || gymSettings?.city) && (
+                  <p className="text-xs text-surface-400">{[gymSettings?.address, gymSettings?.city].filter(Boolean).join(', ')}</p>
+                )}
+                {gymSettings?.phone && <p className="text-xs text-surface-400">{gymSettings.phone}</p>}
+              </div>
+              <div className="my-3 border-t border-dashed border-surface-300 dark:border-surface-600" />
+              <div className="space-y-0.5 text-xs text-surface-500 dark:text-surface-400">
+                <div className="flex justify-between"><span>Comprobante</span><span className="font-mono">#{receiptTx.id.slice(0, 8).toUpperCase()}</span></div>
+                <div className="flex justify-between"><span>Fecha</span><span>{new Date(receiptTx.sold_at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
+                {receiptTx.cashier_name && <div className="flex justify-between"><span>Cajero</span><span>{receiptTx.cashier_name}</span></div>}
+                {receiptTx.client_name && <div className="flex justify-between"><span>Socio</span><span>{receiptTx.client_name}</span></div>}
+              </div>
+              <div className="my-3 border-t border-dashed border-surface-300 dark:border-surface-600" />
+              <div className="space-y-1.5">
+                {receiptTx.items.map(i => (
+                  <div key={i.id} className="flex justify-between gap-3 text-sm">
+                    <span className="min-w-0 text-surface-700 dark:text-surface-300">
+                      {i.product_name}
+                      <span className="block text-xs text-surface-400">{i.quantity} × {formatCLP(i.unit_price)}</span>
+                    </span>
+                    <span className="shrink-0 font-medium text-surface-800 dark:text-surface-200">{formatCLP(i.subtotal)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="my-3 border-t border-dashed border-surface-300 dark:border-surface-600" />
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between text-surface-500"><span>Subtotal</span><span>{formatCLP(receiptTx.subtotal)}</span></div>
+                {Number(receiptTx.discount_amount) > 0 && <div className="flex justify-between text-rose-600 dark:text-rose-400"><span>Descuento</span><span>- {formatCLP(receiptTx.discount_amount)}</span></div>}
+                {Number(receiptTx.gift_card_amount ?? 0) > 0 && <div className="flex justify-between text-emerald-600"><span>Gift card</span><span>- {formatCLP(receiptTx.gift_card_amount!)}</span></div>}
+                <div className="flex justify-between border-t border-surface-200 pt-1 text-lg font-bold text-surface-900 dark:border-surface-700 dark:text-white"><span>Total</span><span>{formatCLP(receiptTx.total)}</span></div>
+              </div>
+              <div className="my-3 border-t border-dashed border-surface-300 dark:border-surface-600" />
+              <div className="space-y-1 text-sm">
+                {receiptTx.payment_method === 'mixed' && receiptTx.payments?.length
+                  ? receiptTx.payments.map((p, i) => (
+                      <div key={i} className="flex justify-between text-surface-600 dark:text-surface-400"><span>{paymentLabel(p.method)}</span><span>{formatCLP(p.amount)}</span></div>
+                    ))
+                  : <div className="flex justify-between text-surface-600 dark:text-surface-400"><span>Medio de pago</span><span>{paymentLabel(receiptTx.payment_method)}</span></div>}
+                {receiptExtra.cashReceived != null && receiptExtra.cashReceived > 0 && (
+                  <>
+                    <div className="flex justify-between text-surface-600 dark:text-surface-400"><span>Efectivo recibido</span><span>{formatCLP(receiptExtra.cashReceived)}</span></div>
+                    <div className="flex justify-between font-semibold text-surface-800 dark:text-surface-200"><span>Vuelto</span><span>{formatCLP(receiptExtra.change ?? 0)}</span></div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 sm:flex-row">
+              <button
+                onClick={doPrintReceipt}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-surface-200 py-2.5 text-sm font-medium text-surface-700 hover:bg-surface-50 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800"
+              >
+                <Printer size={16} /> Imprimir / PDF
+              </button>
+              <button
+                onClick={closeReceipt}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-500 py-2.5 text-sm font-bold text-white hover:bg-brand-600"
+              >
+                <Check size={16} /> Nueva venta
+              </button>
+            </div>
+            <p className="text-center text-xs text-surface-400">Enter = nueva venta · P = imprimir</p>
           </div>
         )}
       </Modal>

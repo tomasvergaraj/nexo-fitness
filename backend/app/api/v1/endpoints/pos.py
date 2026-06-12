@@ -1089,22 +1089,23 @@ async def create_transaction(
             if p.method not in PAYMENT_METHOD_LABELS or p.method in ("credit", "mixed", "refund"):
                 raise HTTPException(status_code=400, detail=f"Método de pago inválido: {p.method}")
 
-    # ── fiado (venta a crédito): exige un socio válido ────────────────────────
+    # ── socio asociado: opcional en cualquier venta, obligatorio si es fiado ───
     is_credit = body.payment_method == "credit" and not is_mixed
-    if is_credit:
-        if not body.client_id:
-            raise HTTPException(status_code=400, detail="Selecciona el socio para una venta a crédito (fiado).")
-        credit_client = (await db.execute(
+    if is_credit and not body.client_id:
+        raise HTTPException(status_code=400, detail="Selecciona el socio para una venta a crédito (fiado).")
+    selected_client = None
+    if body.client_id:
+        selected_client = (await db.execute(
             select(User).where(
                 User.id == body.client_id,
                 User.tenant_id == ctx.tenant_id,
                 User.role == UserRole.CLIENT,
             )
         )).scalar_one_or_none()
-        if not credit_client:
+        if not selected_client:
             raise HTTPException(status_code=404, detail="Socio no encontrado")
-        if body.gift_card_code and body.gift_card_code.strip():
-            raise HTTPException(status_code=400, detail="No se puede usar gift card en una venta a crédito.")
+    if is_credit and body.gift_card_code and body.gift_card_code.strip():
+        raise HTTPException(status_code=400, detail="No se puede usar gift card en una venta a crédito.")
 
     # ── validate and lock inventory rows ──────────────────────────────────────
     product_ids = [item.product_id for item in body.items]
@@ -1168,7 +1169,7 @@ async def create_transaction(
         tenant_id=ctx.tenant_id,
         branch_id=body.branch_id,
         cashier_id=user.id,
-        client_id=body.client_id if is_credit else None,
+        client_id=selected_client.id if selected_client else None,
         session_id=session.id,
         subtotal=subtotal,
         discount_amount=discount,
