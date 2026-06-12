@@ -526,7 +526,7 @@ export const posApi = {
   listTransactions: (params?: Record<string, unknown>) => api.get('/pos/transactions', { params }),
   getTransaction: (id: string) => api.get(`/pos/transactions/${id}`),
   createTransaction: (data: Record<string, unknown>) => api.post('/pos/transactions', data),
-  refundTransaction: (id: string) => api.post(`/pos/transactions/${id}/refund`, {}),
+  refundTransaction: (id: string, data?: Record<string, unknown>) => api.post(`/pos/transactions/${id}/refund`, data ?? {}),
 
   // Cash register sessions (turnos de caja)
   currentCashSession: (params?: Record<string, unknown>) => api.get('/pos/cash-sessions/current', { params }),

@@ -224,7 +224,19 @@ class POSTransactionItemResponse(BaseModel):
     unit_price: Decimal
     unit_cost: Decimal
     subtotal: Decimal
+    refunded_quantity: int = 0
     model_config = {"from_attributes": True}
+
+
+class POSRefundItemIn(BaseModel):
+    item_id: UUID
+    quantity: int = Field(ge=1)
+
+
+class POSRefundRequest(BaseModel):
+    """Devolución. Sin items = devolución total (lo no devuelto aún)."""
+    items: Optional[List[POSRefundItemIn]] = None
+    notes: Optional[str] = Field(default=None, max_length=1000)
 
 
 class POSTransactionResponse(BaseModel):
@@ -238,6 +250,7 @@ class POSTransactionResponse(BaseModel):
     discount_amount: Decimal
     gift_card_amount: Decimal = Decimal("0")
     total: Decimal
+    refunded_amount: Decimal = Decimal("0")
     payment_method: str
     status: str
     notes: Optional[str] = None

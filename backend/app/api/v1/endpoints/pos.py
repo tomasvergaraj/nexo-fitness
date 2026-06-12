@@ -57,6 +57,7 @@ from app.schemas.pos import (
     ExpenseResponse,
     ExpenseUpdate,
     PaymentMethodBreakdownRow,
+    POSRefundRequest,
     SalesBreakdownResponse,
     SalesReportResponse,
     SalesReportRow,
@@ -92,6 +93,7 @@ PAYMENT_METHOD_LABELS = {
     "credit_card": "Crédito",
     "transfer": "Transferencia",
     "credit": "Fiado",
+    "refund": "Devolución",
     "other": "Otro",
     "stripe": "Stripe",
     "webpay": "WebPay",
@@ -960,6 +962,7 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
         discount_amount=tx.discount_amount,
         gift_card_amount=tx.gift_card_amount,
         total=tx.total,
+        refunded_amount=tx.refunded_amount or Decimal("0"),
         payment_method=tx.payment_method,
         status=tx.status.value if hasattr(tx.status, "value") else tx.status,
         notes=tx.notes,
@@ -1199,10 +1202,15 @@ async def get_transaction(
 @pos_router.post("/transactions/{tx_id}/refund", response_model=POSTransactionResponse)
 async def refund_transaction(
     tx_id: UUID,
+    body: Optional[POSRefundRequest] = None,
     db: AsyncSession = Depends(get_db),
     ctx: TenantContext = Depends(get_tenant_context),
     user=Depends(require_roles("owner", "admin")),
 ):
+    """Devuelve una venta. Sin `items` → devolución total de lo no devuelto aún.
+    Con `items` → devolución parcial (ítems/cantidades sueltas). El descuento y
+    la gift card se prorratean; el inventario se restaura por ítem; en ventas
+    fiadas se reduce la deuda del socio."""
     tx = (
         await db.execute(
             select(POSTransaction).where(
@@ -1214,16 +1222,41 @@ async def refund_transaction(
     if not tx:
         raise HTTPException(status_code=404, detail="Transacción no encontrada")
     if tx.status != POSTransactionStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="Solo se pueden reembolsar transacciones completadas")
+        raise HTTPException(status_code=400, detail="Solo se pueden devolver ventas completadas")
 
     items_rows = (
         await db.execute(
             select(POSTransactionItem).where(POSTransactionItem.transaction_id == tx_id)
         )
     ).scalars().all()
+    items_by_id = {i.id: i for i in items_rows}
+
+    # ── determinar qué cantidad se devuelve por ítem ──────────────────────────
+    to_refund: dict[UUID, int] = {}
+    if body and body.items:
+        for ref in body.items:
+            item = items_by_id.get(ref.item_id)
+            if item is None:
+                raise HTTPException(status_code=404, detail="Ítem no pertenece a la venta")
+            remaining = item.quantity - (item.refunded_quantity or 0)
+            if ref.quantity > remaining:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{item.product_name}': solo quedan {remaining} por devolver",
+                )
+            to_refund[item.id] = to_refund.get(item.id, 0) + ref.quantity
+    else:
+        # devolución total: todo lo que no se ha devuelto
+        for item in items_rows:
+            remaining = item.quantity - (item.refunded_quantity or 0)
+            if remaining > 0:
+                to_refund[item.id] = remaining
+
+    if not to_refund or sum(to_refund.values()) == 0:
+        raise HTTPException(status_code=400, detail="No hay unidades por devolver")
 
     now = _now()
-    product_ids = [i.product_id for i in items_rows]
+    product_ids = [items_by_id[i].product_id for i in to_refund]
     inventories = {
         inv.product_id: inv
         for inv in (
@@ -1236,11 +1269,17 @@ async def refund_transaction(
         ).scalars().all()
     }
 
-    for item in items_rows:
+    # factor de prorrateo: total cobrado / subtotal bruto (reparte descuento + gift card)
+    factor = (tx.total / tx.subtotal) if tx.subtotal and tx.subtotal > 0 else Decimal("1")
+    refund_value = Decimal("0")
+    for item_id, qty in to_refund.items():
+        item = items_by_id[item_id]
         inv = inventories.get(item.product_id)
         if inv:
-            inv.quantity += item.quantity
+            inv.quantity += qty
             inv.updated_at = now
+        item.refunded_quantity = (item.refunded_quantity or 0) + qty
+        refund_value += (item.unit_price * qty) * factor
 
         db.add(
             InventoryMovement(
@@ -1249,7 +1288,7 @@ async def refund_transaction(
                 product_id=item.product_id,
                 branch_id=tx.branch_id,
                 movement_type=InventoryMovementType.RETURN,
-                quantity=item.quantity,
+                quantity=qty,
                 unit_cost=item.unit_cost,
                 reference_id=tx.id,
                 reference_type="pos_transaction",
@@ -1258,7 +1297,35 @@ async def refund_transaction(
             )
         )
 
-    tx.status = POSTransactionStatus.REFUNDED
+    refund_value = refund_value.quantize(Decimal("1"))  # CLP sin decimales
+    # no exceder el total cobrado
+    prev_refunded = tx.refunded_amount or Decimal("0")
+    refund_value = min(refund_value, tx.total - prev_refunded)
+    tx.refunded_amount = prev_refunded + refund_value
+
+    # ¿quedó todo devuelto? → status REFUNDED
+    fully = all((i.refunded_quantity or 0) >= i.quantity for i in items_rows)
+    if fully or tx.refunded_amount >= tx.total:
+        tx.status = POSTransactionStatus.REFUNDED
+
+    # ── fiado: la devolución reduce la deuda del socio ────────────────────────
+    if tx.payment_method == "credit" and tx.client_id and refund_value > 0:
+        db.add(
+            ClientAccountEntry(
+                id=uuid4(),
+                tenant_id=ctx.tenant_id,
+                branch_id=tx.branch_id,
+                client_id=tx.client_id,
+                kind="payment",
+                amount=refund_value,
+                payment_method="refund",          # excluido del arqueo y de "cobrado"
+                pos_transaction_id=tx.id,
+                notes=(body.notes if body and body.notes else "Devolución de venta"),
+                created_by=user.id,
+                created_at=now,
+            )
+        )
+
     await db.commit()
     await db.refresh(tx)
     return await _build_tx_response(db, tx)
@@ -1346,10 +1413,10 @@ async def _session_cash_live(db: AsyncSession, tenant_id: UUID, session_id: UUID
     )
     cash_refunds = Decimal(
         (await db.execute(
-            select(func.coalesce(func.sum(POSTransaction.total), 0)).where(
+            select(func.coalesce(func.sum(POSTransaction.refunded_amount), 0)).where(
                 POSTransaction.tenant_id == tenant_id,
                 POSTransaction.session_id == session_id,
-                POSTransaction.status == POSTransactionStatus.REFUNDED,
+                POSTransaction.refunded_amount > 0,
                 POSTransaction.payment_method == "cash",
             )
         )).scalar_one()
@@ -1892,9 +1959,10 @@ async def sales_report_summary(
         )
     ).one()
 
+    # Devoluciones (totales + parciales) imputadas al período de la venta original.
     refund_conditions = [
         POSTransaction.tenant_id == tenant_id,
-        POSTransaction.status == POSTransactionStatus.REFUNDED,
+        POSTransaction.refunded_amount > 0,
         POSTransaction.sold_at >= from_date,
         POSTransaction.sold_at <= to_date,
     ]
@@ -1904,7 +1972,7 @@ async def sales_report_summary(
         await db.execute(
             select(
                 func.count(POSTransaction.id),
-                func.coalesce(func.sum(POSTransaction.total), 0),
+                func.coalesce(func.sum(POSTransaction.refunded_amount), 0),
             ).where(*refund_conditions)
         )
     ).one()
@@ -1946,7 +2014,11 @@ async def sales_report_summary(
                     case((ClientAccountEntry.kind == "charge", ClientAccountEntry.amount), else_=0)
                 ), 0),
                 func.coalesce(func.sum(
-                    case((ClientAccountEntry.kind == "payment", ClientAccountEntry.amount), else_=0)
+                    case(
+                        ((ClientAccountEntry.kind == "payment") & (ClientAccountEntry.payment_method != "refund"),
+                         ClientAccountEntry.amount),
+                        else_=0,
+                    )
                 ), 0),
             ).where(*credit_period_conditions)
         )

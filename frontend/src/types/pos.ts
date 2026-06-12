@@ -92,6 +92,7 @@ export interface POSTransactionItem {
   unit_price: number;
   unit_cost: number;
   subtotal: number;
+  refunded_quantity?: number;
 }
 
 export interface POSTransaction {
@@ -104,6 +105,7 @@ export interface POSTransaction {
   subtotal: number;
   discount_amount: number;
   total: number;
+  refunded_amount?: number;
   payment_method: string;
   status: 'completed' | 'cancelled' | 'refunded';
   notes?: string | null;

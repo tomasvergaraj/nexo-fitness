@@ -54,6 +54,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   credit_card: 'Crédito',
   transfer: 'Transferencia',
   credit: 'Fiado',
+  refund: 'Devolución',
   other: 'Otro',
   stripe: 'Stripe',
   webpay: 'WebPay',
@@ -74,7 +75,9 @@ function formatCLP(n: number) {
 
 // ─── Recent sale row ──────────────────────────────────────────────────────────
 
-function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (id: string) => void }) {
+function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (tx: POSTransaction) => void }) {
+  const refunded = Number(tx.refunded_amount ?? 0);
+  const isPartial = tx.status === 'completed' && refunded > 0;
   return (
     <div className="flex flex-col gap-2 border-b border-surface-100 py-2 last:border-0 dark:border-surface-800 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
@@ -83,6 +86,7 @@ function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (id: st
         </p>
         <p className="text-xs text-surface-400">
           {new Date(tx.sold_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })} · {paymentLabel(tx.payment_method)}
+          {isPartial && <span className="ml-1 text-amber-600 dark:text-amber-400">· devuelto {formatCLP(refunded)}</span>}
         </p>
       </div>
       <div className="flex items-center gap-2 sm:flex-shrink-0">
@@ -92,14 +96,16 @@ function RecentSaleRow({ tx, onRefund }: { tx: POSTransaction; onRefund: (id: st
         )}>
           {formatCLP(tx.total)}
         </span>
-        {tx.status === 'completed' && (
+        {tx.status === 'completed' ? (
           <button
-            onClick={() => onRefund(tx.id)}
+            onClick={() => onRefund(tx)}
             className="text-xs text-red-500 hover:text-red-700 underline"
           >
             Devolver
           </button>
-        )}
+        ) : tx.status === 'refunded' ? (
+          <span className="text-xs text-surface-400">Devuelto</span>
+        ) : null}
       </div>
     </div>
   );
@@ -367,6 +373,8 @@ export default function POSPage() {
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [view, setView] = useState<'sell' | 'fiados'>('sell');
   const [creditClient, setCreditClient] = useState<ClientLite | null>(null);
+  const [refundTx, setRefundTx] = useState<POSTransaction | null>(null);
+  const [refundQty, setRefundQty] = useState<Record<string, number>>({});
 
   // ── Cash session (turno de caja) ─────────────────────────────────────────────
   const [openCajaModal, setOpenCajaModal] = useState(false);
@@ -427,12 +435,14 @@ export default function POSPage() {
   });
 
   const refundMutation = useMutation({
-    mutationFn: (id: string) => posApi.refundTransaction(id),
+    mutationFn: ({ id, data }: { id: string; data?: Record<string, unknown> }) => posApi.refundTransaction(id, data),
     onSuccess: () => {
       toast.success('Devolución registrada');
+      setRefundTx(null);
       queryClient.invalidateQueries({ queryKey: ['pos-transactions-today'] });
       queryClient.invalidateQueries({ queryKey: ['pos-products'] });
       queryClient.invalidateQueries({ queryKey: ['pos-cash-session'] });
+      queryClient.invalidateQueries({ queryKey: ['pos-debtors'] });
     },
     onError: (err) => toast.error(getApiError(err)),
   });
@@ -545,6 +555,31 @@ export default function POSPage() {
       client_id: isCredit ? creditClient!.id : undefined,
     });
   }
+
+  function openRefund(tx: POSTransaction) {
+    const init: Record<string, number> = {};
+    tx.items.forEach(i => { init[i.id] = Math.max(0, i.quantity - (i.refunded_quantity ?? 0)); });
+    setRefundQty(init);
+    setRefundTx(tx);
+  }
+
+  function submitRefund() {
+    if (!refundTx) return;
+    const items = refundTx.items
+      .filter(i => (refundQty[i.id] ?? 0) > 0)
+      .map(i => ({ item_id: i.id, quantity: refundQty[i.id] }));
+    if (items.length === 0) { toast.error('Elige al menos una unidad a devolver'); return; }
+    const allFull = refundTx.items.every(i => (refundQty[i.id] ?? 0) === Math.max(0, i.quantity - (i.refunded_quantity ?? 0)));
+    // devolución total → body vacío; parcial → items
+    refundMutation.mutate({ id: refundTx.id, data: allFull ? {} : { items } });
+  }
+
+  const refundTotalEstimate = refundTx
+    ? refundTx.items.reduce((s, i) => {
+        const factor = refundTx.subtotal > 0 ? refundTx.total / refundTx.subtotal : 1;
+        return s + Math.round(i.unit_price * (refundQty[i.id] ?? 0) * factor);
+      }, 0)
+    : 0;
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
@@ -692,7 +727,7 @@ export default function POSPage() {
             <p className="text-xs font-semibold text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
             <div className="max-h-40 overflow-y-auto">
               {todaySales.slice(0, 10).map(tx => (
-                <RecentSaleRow key={tx.id} tx={tx} onRefund={id => refundMutation.mutate(id)} />
+                <RecentSaleRow key={tx.id} tx={tx} onRefund={openRefund} />
               ))}
             </div>
           </div>
@@ -1169,6 +1204,74 @@ export default function POSPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* ── Devolución (parcial o total) ─────────────────────────────────────── */}
+      <Modal open={!!refundTx} title="Devolver venta" onClose={() => setRefundTx(null)}>
+        {refundTx && (
+          <div className="space-y-4">
+            <p className="text-sm text-surface-500 dark:text-surface-400">
+              Elige las unidades a devolver. El stock se repone y, si fue fiado, baja la deuda del socio.
+            </p>
+            <div className="rounded-2xl border border-surface-200 dark:border-surface-800">
+              {refundTx.items.map(item => {
+                const remaining = Math.max(0, item.quantity - (item.refunded_quantity ?? 0));
+                const qty = refundQty[item.id] ?? 0;
+                return (
+                  <div key={item.id} className="flex items-center justify-between gap-3 border-b border-surface-100 px-3 py-2.5 last:border-0 dark:border-surface-800">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-surface-800 dark:text-surface-200">{item.product_name}</p>
+                      <p className="text-xs text-surface-400">
+                        {formatCLP(item.unit_price)} c/u · {remaining} de {item.quantity} por devolver
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setRefundQty(p => ({ ...p, [item.id]: Math.max(0, (p[item.id] ?? 0) - 1) }))}
+                        disabled={qty <= 0}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-100 disabled:opacity-40 dark:bg-surface-700"
+                      >
+                        <Minus size={13} />
+                      </button>
+                      <span className="w-7 text-center text-sm font-bold text-surface-800 dark:text-white">{qty}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRefundQty(p => ({ ...p, [item.id]: Math.min(remaining, (p[item.id] ?? 0) + 1) }))}
+                        disabled={qty >= remaining}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-100 disabled:opacity-40 dark:bg-surface-700"
+                      >
+                        <Plus size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl bg-surface-50 px-3 py-2.5 dark:bg-surface-800/50">
+              <span className="text-sm text-surface-500">A devolver (aprox.)</span>
+              <span className="text-lg font-bold text-rose-600 dark:text-rose-400">{formatCLP(refundTotalEstimate)}</span>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row">
+              <button
+                onClick={() => setRefundTx(null)}
+                className="flex-1 rounded-xl border border-surface-200 py-2.5 text-sm font-medium text-surface-600 hover:bg-surface-50 dark:border-surface-700 dark:text-surface-400 dark:hover:bg-surface-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={submitRefund}
+                disabled={refundMutation.isPending || refundTotalEstimate <= 0}
+                className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {refundMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Receipt size={16} />}
+                Confirmar devolución
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

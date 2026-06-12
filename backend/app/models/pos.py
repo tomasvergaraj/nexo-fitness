@@ -305,6 +305,9 @@ class POSTransaction(Base):
     # Monto cubierto por gift card (Fase 6.6). total = subtotal - discount - gift_card_amount.
     gift_card_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), server_default="0")
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    # Monto devuelto acumulado (devolución parcial Etapa 3). status pasa a
+    # REFUNDED solo cuando se devuelve todo; parcial queda COMPLETED.
+    refunded_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), server_default="0")
     # reutiliza PaymentMethod del módulo de membresías
     payment_method: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[POSTransactionStatus] = mapped_column(
@@ -340,6 +343,8 @@ class POSTransactionItem(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    # Cantidad ya devuelta de este ítem (devolución parcial Etapa 3).
+    refunded_quantity: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     transaction = relationship("POSTransaction", back_populates="items")
     product = relationship("Product", back_populates="pos_transaction_items")
