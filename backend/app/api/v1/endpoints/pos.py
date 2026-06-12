@@ -113,6 +113,46 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ─── Pure helpers (testeables sin DB) ───────────────────────────────────────────
+
+def is_stock_sufficient(available: int, requested: int) -> bool:
+    """True si hay stock para vender `requested` unidades. Bloquea la venta si no."""
+    return available >= requested
+
+
+def sale_movement_quantity(quantity: int) -> int:
+    """Cantidad del InventoryMovement de una venta: negativa = salida del stock."""
+    return -quantity
+
+
+def compute_expected_cash(
+    opening: Decimal,
+    cash_sales: Decimal,
+    membership_cash: Decimal,
+    cash_credit_payments: Decimal,
+    cash_refunds: Decimal,
+    cash_expenses: Decimal,
+) -> Decimal:
+    """Efectivo esperado en el cajón al cierre del turno.
+
+    fondo de apertura + ventas POS en efectivo + membresías en efectivo
+    + abonos de fiado en efectivo − devoluciones en efectivo − gastos pagados de caja.
+    """
+    return (
+        opening
+        + cash_sales
+        + membership_cash
+        + cash_credit_payments
+        - cash_refunds
+        - cash_expenses
+    )
+
+
+def cash_difference(counted: Decimal, expected: Decimal) -> Decimal:
+    """Descuadre: positivo = sobra efectivo, negativo = falta."""
+    return counted - expected
+
+
 async def _get_product_or_404(db: AsyncSession, product_id: UUID, tenant_id: UUID) -> Product:
     result = await db.execute(
         select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
@@ -1101,7 +1141,7 @@ async def create_transaction(
     for item_in in body.items:
         inv = inventories.get(item_in.product_id)
         available = inv.quantity if inv else 0
-        if available < item_in.quantity:
+        if not is_stock_sufficient(available, item_in.quantity):
             prod = products[item_in.product_id]
             raise HTTPException(
                 status_code=400,
@@ -1172,7 +1212,7 @@ async def create_transaction(
                 product_id=prod.id,
                 branch_id=body.branch_id,
                 movement_type=InventoryMovementType.SALE,
-                quantity=-item_in.quantity,
+                quantity=sale_movement_quantity(item_in.quantity),
                 unit_cost=prod.cost,
                 reference_id=tx.id,
                 reference_type="pos_transaction",
@@ -1763,13 +1803,13 @@ async def close_cash_session(
     cash_refunds = c["cash_refunds"]
     cash_expenses = c["cash_expenses"]
     cash_credit_payments = c["cash_credit_payments"]
-    expected = (
-        (s.opening_amount or Decimal("0"))
-        + cash_sales
-        + membership_cash
-        + cash_credit_payments
-        - cash_refunds
-        - cash_expenses
+    expected = compute_expected_cash(
+        s.opening_amount or Decimal("0"),
+        cash_sales,
+        membership_cash,
+        cash_credit_payments,
+        cash_refunds,
+        cash_expenses,
     )
 
     now = _now()
@@ -1778,7 +1818,7 @@ async def close_cash_session(
     s.closed_at = now
     s.closing_amount = body.closing_amount
     s.expected_cash = expected
-    s.difference = body.closing_amount - expected
+    s.difference = cash_difference(body.closing_amount, expected)
     # Snapshot del arqueo (Etapa 1): congela los componentes al momento del cierre.
     s.cash_sales = cash_sales
     s.membership_cash = membership_cash
