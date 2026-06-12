@@ -34,6 +34,7 @@ from app.models.pos import (
     InventoryMovementType,
     POSTransaction,
     POSTransactionItem,
+    POSTransactionPayment,
     POSTransactionStatus,
     Product,
     ProductCategory,
@@ -94,6 +95,7 @@ PAYMENT_METHOD_LABELS = {
     "transfer": "Transferencia",
     "credit": "Fiado",
     "refund": "Devolución",
+    "mixed": "Mixto",
     "other": "Otro",
     "stripe": "Stripe",
     "webpay": "WebPay",
@@ -950,7 +952,15 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
     if tx.client_id:
         client = (await db.execute(select(User).where(User.id == tx.client_id))).scalar_one_or_none()
 
-    from app.schemas.pos import POSTransactionItemResponse
+    payment_rows = []
+    if tx.payment_method == "mixed":
+        payment_rows = (
+            await db.execute(
+                select(POSTransactionPayment).where(POSTransactionPayment.transaction_id == tx.id)
+            )
+        ).scalars().all()
+
+    from app.schemas.pos import POSPaymentSplitResponse, POSTransactionItemResponse
     return POSTransactionResponse(
         id=tx.id,
         branch_id=tx.branch_id,
@@ -967,6 +977,10 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
         status=tx.status.value if hasattr(tx.status, "value") else tx.status,
         notes=tx.notes,
         items=[POSTransactionItemResponse.model_validate(i) for i in items_rows],
+        payments=[
+            POSPaymentSplitResponse(method=p.method, label=_payment_label(p.method), amount=p.amount)
+            for p in payment_rows
+        ],
         sold_at=tx.sold_at,
     )
 
@@ -988,8 +1002,19 @@ async def create_transaction(
             detail="No hay un turno de caja abierto. Abre la caja antes de registrar ventas.",
         )
 
+    # ── pago mixto: validar exclusividad y métodos ────────────────────────────
+    is_mixed = bool(body.payments)
+    if is_mixed:
+        if body.payment_method == "credit" or any(p.method == "credit" for p in body.payments):
+            raise HTTPException(status_code=400, detail="El pago mixto no admite fiado.")
+        if body.gift_card_code and body.gift_card_code.strip():
+            raise HTTPException(status_code=400, detail="El pago mixto no admite gift card.")
+        for p in body.payments:
+            if p.method not in PAYMENT_METHOD_LABELS or p.method in ("credit", "mixed", "refund"):
+                raise HTTPException(status_code=400, detail=f"Método de pago inválido: {p.method}")
+
     # ── fiado (venta a crédito): exige un socio válido ────────────────────────
-    is_credit = body.payment_method == "credit"
+    is_credit = body.payment_method == "credit" and not is_mixed
     if is_credit:
         if not body.client_id:
             raise HTTPException(status_code=400, detail="Selecciona el socio para una venta a crédito (fiado).")
@@ -1054,6 +1079,14 @@ async def create_transaction(
     discount = body.discount_amount
     total = subtotal - discount
 
+    if is_mixed:
+        paid = sum((p.amount for p in body.payments), Decimal("0"))
+        if paid != total:
+            raise HTTPException(
+                status_code=400,
+                detail=f"La suma de los pagos ({paid}) no coincide con el total ({total}).",
+            )
+
     tx = POSTransaction(
         id=uuid4(),
         tenant_id=ctx.tenant_id,
@@ -1064,7 +1097,7 @@ async def create_transaction(
         subtotal=subtotal,
         discount_amount=discount,
         total=total,
-        payment_method=body.payment_method,
+        payment_method="mixed" if is_mixed else body.payment_method,
         status=POSTransactionStatus.COMPLETED,
         notes=body.notes,
         sold_at=now,
@@ -1111,6 +1144,18 @@ async def create_transaction(
                 created_at=now,
             )
         )
+
+    # ── pago mixto: guarda el desglose por método ─────────────────────────────
+    if is_mixed:
+        for p in body.payments:
+            db.add(
+                POSTransactionPayment(
+                    id=uuid4(),
+                    transaction_id=tx.id,
+                    method=p.method,
+                    amount=p.amount,
+                )
+            )
 
     # ── gift card: descuenta saldo del total (Fase 6.6) ───────────────────────
     if body.gift_card_code and body.gift_card_code.strip() and tx.total > 0:
@@ -1342,7 +1387,12 @@ async def _breakdown_rows(
     session_id: Optional[UUID] = None,
     branch_id: Optional[UUID] = None,
 ) -> tuple[list[PaymentMethodBreakdownRow], Decimal, int]:
-    """Aggregate COMPLETED POS sales grouped by payment_method."""
+    """Desglose de ventas COMPLETED por método de pago.
+
+    Ventas de un solo método se agregan por POSTransaction.payment_method; las
+    mixtas (payment_method='mixed') se descomponen por sus líneas de pago en
+    pos_transaction_payments. Así el efectivo/tarjeta de una venta mixta cae en
+    su método real (clave para el arqueo)."""
     conditions = [
         POSTransaction.tenant_id == tenant_id,
         POSTransaction.status == POSTransactionStatus.COMPLETED,
@@ -1356,7 +1406,18 @@ async def _breakdown_rows(
     if branch_id is not None:
         conditions.append(POSTransaction.branch_id == branch_id)
 
-    q = (
+    # acumulador por método: [count, subtotal, discount, total]
+    acc: dict[str, list[Decimal]] = {}
+
+    def _add(method: str, count: int, subtotal: Decimal, discount: Decimal, total: Decimal) -> None:
+        row = acc.setdefault(method, [0, Decimal("0"), Decimal("0"), Decimal("0")])
+        row[0] += count
+        row[1] += Decimal(subtotal)
+        row[2] += Decimal(discount)
+        row[3] += Decimal(total)
+
+    # A) ventas de un solo método (excluye mixtas)
+    rows_a = (await db.execute(
         select(
             POSTransaction.payment_method,
             func.count(POSTransaction.id),
@@ -1364,28 +1425,47 @@ async def _breakdown_rows(
             func.coalesce(func.sum(POSTransaction.discount_amount), 0),
             func.coalesce(func.sum(POSTransaction.total), 0),
         )
-        .where(*conditions)
+        .where(*conditions, POSTransaction.payment_method != "mixed")
         .group_by(POSTransaction.payment_method)
-        .order_by(func.coalesce(func.sum(POSTransaction.total), 0).desc())
-    )
-    rows = (await db.execute(q)).all()
+    )).all()
+    for method, count, subtotal, discount, total in rows_a:
+        _add(method, count, subtotal, discount, total)
+
+    # B) líneas de pago de ventas mixtas
+    rows_b = (await db.execute(
+        select(
+            POSTransactionPayment.method,
+            func.count(func.distinct(POSTransactionPayment.transaction_id)),
+            func.coalesce(func.sum(POSTransactionPayment.amount), 0),
+        )
+        .select_from(POSTransactionPayment)
+        .join(POSTransaction, POSTransactionPayment.transaction_id == POSTransaction.id)
+        .where(*conditions, POSTransaction.payment_method == "mixed")
+        .group_by(POSTransactionPayment.method)
+    )).all()
+    for method, count, total in rows_b:
+        # en mixtas el subtotal/descuento por método no aplica: subtotal=monto, descuento=0
+        _add(method, count, Decimal(total), Decimal("0"), Decimal(total))
 
     out: list[PaymentMethodBreakdownRow] = []
     grand_total = Decimal("0")
-    grand_count = 0
-    for method, count, subtotal, discount, total in rows:
+    for method, (count, subtotal, discount, total) in sorted(acc.items(), key=lambda kv: kv[1][3], reverse=True):
         out.append(
             PaymentMethodBreakdownRow(
                 payment_method=method,
                 label=_payment_label(method),
-                count=count,
-                subtotal=Decimal(subtotal),
-                discount=Decimal(discount),
-                total=Decimal(total),
+                count=int(count),
+                subtotal=subtotal,
+                discount=discount,
+                total=total,
             )
         )
-        grand_total += Decimal(total)
-        grand_count += count
+        grand_total += total
+
+    # # de transacciones distintas (no líneas de pago)
+    grand_count = int((await db.execute(
+        select(func.count(POSTransaction.id)).where(*conditions)
+    )).scalar_one())
     return out, grand_total, grand_count
 
 
@@ -1421,6 +1501,32 @@ async def _session_cash_live(db: AsyncSession, tenant_id: UUID, session_id: UUID
             )
         )).scalar_one()
     )
+    # parte efectivo (prorrateada) de devoluciones de ventas mixtas
+    cash_pay_subq = (
+        select(
+            POSTransactionPayment.transaction_id.label("tid"),
+            func.sum(POSTransactionPayment.amount).label("cash_amt"),
+        )
+        .where(POSTransactionPayment.method == "cash")
+        .group_by(POSTransactionPayment.transaction_id)
+        .subquery()
+    )
+    mixed_cash_refund = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(
+                POSTransaction.refunded_amount * cash_pay_subq.c.cash_amt / POSTransaction.total
+            ), 0))
+            .select_from(POSTransaction)
+            .join(cash_pay_subq, cash_pay_subq.c.tid == POSTransaction.id)
+            .where(
+                POSTransaction.tenant_id == tenant_id,
+                POSTransaction.session_id == session_id,
+                POSTransaction.payment_method == "mixed",
+                POSTransaction.refunded_amount > 0,
+            )
+        )).scalar_one()
+    )
+    cash_refunds = cash_refunds + mixed_cash_refund
     cash_expenses = Decimal(
         (await db.execute(
             select(func.coalesce(func.sum(Expense.amount), 0)).where(

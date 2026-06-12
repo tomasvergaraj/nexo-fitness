@@ -110,6 +110,7 @@ export interface POSTransaction {
   status: 'completed' | 'cancelled' | 'refunded';
   notes?: string | null;
   items: POSTransactionItem[];
+  payments?: { method: string; label: string; amount: number }[];
   sold_at: string;
 }
 

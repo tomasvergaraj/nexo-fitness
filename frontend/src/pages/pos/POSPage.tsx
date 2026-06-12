@@ -36,6 +36,7 @@ const PAYMENT_METHODS = [
   { value: 'credit_card', label: 'Crédito', icon: <CreditCard size={16} /> },
   { value: 'transfer', label: 'Transferencia', icon: <Wallet size={16} /> },
   { value: 'credit', label: 'Fiado', icon: <User size={16} /> },
+  { value: 'mixed', label: 'Mixto', icon: <Coins size={16} /> },
   { value: 'other', label: 'Otro', icon: <Receipt size={16} /> },
 ];
 
@@ -55,6 +56,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   transfer: 'Transferencia',
   credit: 'Fiado',
   refund: 'Devolución',
+  mixed: 'Mixto',
   other: 'Otro',
   stripe: 'Stripe',
   webpay: 'WebPay',
@@ -375,6 +377,7 @@ export default function POSPage() {
   const [creditClient, setCreditClient] = useState<ClientLite | null>(null);
   const [refundTx, setRefundTx] = useState<POSTransaction | null>(null);
   const [refundQty, setRefundQty] = useState<Record<string, number>>({});
+  const [mixedRows, setMixedRows] = useState<{ method: string; amount: number }[]>([]);
 
   // ── Cash session (turno de caja) ─────────────────────────────────────────────
   const [openCajaModal, setOpenCajaModal] = useState(false);
@@ -424,6 +427,7 @@ export default function POSPage() {
       setGiftCode('');
       setGiftApplied(0);
       setCreditClient(null);
+      setMixedRows([]);
       setPaymentMethod('cash');
       setCheckoutOpen(false);
       queryClient.invalidateQueries({ queryKey: ['pos-transactions-today'] });
@@ -539,20 +543,46 @@ export default function POSPage() {
 
   // ── Checkout ──────────────────────────────────────────────────────────────
   const isCredit = paymentMethod === 'credit';
-  const canCheckout = cart.length > 0 && hasOpenCaja && (!isCredit || !!creditClient);
+  const isMixed = paymentMethod === 'mixed';
+  const mixedAssigned = isMixed ? mixedRows.reduce((s, r) => s + (Number(r.amount) || 0), 0) : 0;
+  const mixedRemaining = total - mixedAssigned;
+  const mixedValid = !isMixed || (
+    total > 0 && mixedRows.length > 0 &&
+    mixedRows.every(r => r.method && Number(r.amount) > 0) &&
+    mixedAssigned === total
+  );
+  const canCheckout = cart.length > 0 && hasOpenCaja && (!isCredit || !!creditClient) && mixedValid;
+
+  function addMixedRow() { setMixedRows(p => [...p, { method: 'cash', amount: 0 }]); }
+  function removeMixedRow(idx: number) { setMixedRows(p => p.filter((_, i) => i !== idx)); }
+  function setMixedRow(idx: number, patch: Partial<{ method: string; amount: number }>) {
+    setMixedRows(p => p.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  }
+
+  function selectPaymentMethod(value: string) {
+    setPaymentMethod(value);
+    if (value === 'mixed' && mixedRows.length === 0) {
+      setMixedRows([{ method: 'cash', amount: 0 }]);
+    }
+  }
 
   function handleCheckout() {
     if (isCredit && !creditClient) {
       toast.error('Selecciona el socio para fiar');
       return;
     }
+    if (isMixed && !mixedValid) {
+      toast.error('La suma de los métodos debe igualar el total');
+      return;
+    }
     saleMutation.mutate({
       items: cart.map(i => ({ product_id: i.product.id, quantity: i.quantity })),
       payment_method: paymentMethod,
       discount_amount: discount,
-      gift_card_code: !isCredit && giftApplied > 0 && giftCode.trim() ? giftCode.trim() : undefined,
+      gift_card_code: !isCredit && !isMixed && giftApplied > 0 && giftCode.trim() ? giftCode.trim() : undefined,
       notes: notes || undefined,
       client_id: isCredit ? creditClient!.id : undefined,
+      payments: isMixed ? mixedRows.map(r => ({ method: r.method, amount: Number(r.amount) })) : undefined,
     });
   }
 
@@ -683,7 +713,7 @@ export default function POSPage() {
           {PAYMENT_METHODS.map(pm => (
             <button
               key={pm.value}
-              onClick={() => setPaymentMethod(pm.value)}
+              onClick={() => selectPaymentMethod(pm.value)}
               className={cn(
                 'flex-1 flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-xs font-medium transition-all',
                 paymentMethod === pm.value
@@ -701,6 +731,45 @@ export default function POSPage() {
           <div className="space-y-1">
             <label className="text-xs text-surface-500">Socio a fiar</label>
             <ClientPicker value={creditClient} onChange={setCreditClient} />
+          </div>
+        )}
+
+        {isMixed && (
+          <div className="space-y-2">
+            <label className="text-xs text-surface-500">Pago mixto</label>
+            {mixedRows.map((r, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <select
+                  value={r.method}
+                  onChange={e => setMixedRow(idx, { method: e.target.value })}
+                  className="input min-w-0 flex-1 text-sm"
+                >
+                  {ABONO_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  value={r.amount || ''}
+                  onChange={e => setMixedRow(idx, { amount: Number(e.target.value) || 0 })}
+                  placeholder="0"
+                  className="input w-24 text-sm"
+                />
+                {mixedRows.length > 1 && (
+                  <button type="button" onClick={() => removeMixedRow(idx)} className="text-surface-300 hover:text-red-500">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <div className="flex items-center justify-between">
+              <button type="button" onClick={addMixedRow} className="text-xs font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400">
+                + Agregar método
+              </button>
+              <span className={cn('text-xs font-medium', mixedRemaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-surface-500')}>
+                {formatCLP(mixedAssigned)} / {formatCLP(total)}
+                {mixedRemaining !== 0 && <span className="text-amber-600 dark:text-amber-400"> · falta {formatCLP(mixedRemaining)}</span>}
+              </span>
+            </div>
           </div>
         )}
 
@@ -998,8 +1067,8 @@ export default function POSPage() {
             </div>
           </div>
 
-          {/* Gift card (no aplica a ventas fiadas) */}
-          {!isCredit && (
+          {/* Gift card (no aplica a fiado ni pago mixto) */}
+          {!isCredit && !isMixed && (
           <div>
             <label className="text-xs text-surface-500 block mb-1">Gift card (opcional)</label>
             <div className="flex gap-2">
@@ -1040,6 +1109,23 @@ export default function POSPage() {
             </div>
           )}
 
+          {isMixed && (
+            <div className="rounded-xl border border-surface-200 p-3 dark:border-surface-700">
+              <p className="mb-2 text-xs font-medium text-surface-500">Desglose del pago</p>
+              <div className="space-y-1">
+                {mixedRows.map((r, idx) => (
+                  <div key={idx} className="flex justify-between text-sm">
+                    <span className="text-surface-600 dark:text-surface-400">{paymentLabel(r.method)}</span>
+                    <span className="font-medium text-surface-800 dark:text-surface-200">{formatCLP(Number(r.amount) || 0)}</span>
+                  </div>
+                ))}
+              </div>
+              {mixedRemaining !== 0 && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Falta asignar {formatCLP(mixedRemaining)}.</p>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="text-xs text-surface-500 block mb-1">Notas (opcional)</label>
             <input
@@ -1061,7 +1147,7 @@ export default function POSPage() {
             </button>
             <button
               onClick={handleCheckout}
-              disabled={saleMutation.isPending || (isCredit && !creditClient)}
+              disabled={saleMutation.isPending || (isCredit && !creditClient) || !mixedValid}
               className="flex-1 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-sm
                          flex items-center justify-center gap-2 disabled:opacity-60"
             >

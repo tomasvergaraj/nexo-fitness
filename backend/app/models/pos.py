@@ -323,6 +323,28 @@ class POSTransaction(Base):
     )
 
     items = relationship("POSTransactionItem", back_populates="transaction", cascade="all, delete-orphan")
+    payments = relationship("POSTransactionPayment", back_populates="transaction", cascade="all, delete-orphan")
+
+
+# ─── POSTransactionPayment (pago mixto) ─────────────────────────────────────────
+
+class POSTransactionPayment(Base):
+    """Línea de pago de una venta mixta (Etapa 3b).
+
+    Solo se crean filas para ventas con payment_method='mixed'. Una venta de un
+    solo método se representa por POSTransaction.payment_method + total.
+    La suma de amount == POSTransaction.total.
+    """
+    __tablename__ = "pos_transaction_payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pos_transactions.id", ondelete="CASCADE"), index=True
+    )
+    method: Mapped[str] = mapped_column(String(20), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+
+    transaction = relationship("POSTransaction", back_populates="payments")
 
 
 # ─── POSTransactionItem ───────────────────────────────────────────────────────

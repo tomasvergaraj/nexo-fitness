@@ -205,6 +205,11 @@ class POSTransactionItemIn(BaseModel):
     quantity: int = Field(ge=1)
 
 
+class POSPaymentSplitIn(BaseModel):
+    method: str
+    amount: Decimal = Field(gt=0)
+
+
 class POSTransactionCreate(BaseModel):
     items: List[POSTransactionItemIn] = Field(min_length=1)
     payment_method: str = "cash"
@@ -214,6 +219,9 @@ class POSTransactionCreate(BaseModel):
     notes: Optional[str] = None
     # Socio al que se fía la venta. Obligatorio si payment_method='credit'.
     client_id: Optional[UUID] = None
+    # Pago mixto: desglose por método. Si se envía (≥1 línea), la venta es mixta;
+    # la suma debe igualar el total. No combinable con fiado ni gift card.
+    payments: Optional[List[POSPaymentSplitIn]] = None
 
 
 class POSTransactionItemResponse(BaseModel):
@@ -239,6 +247,12 @@ class POSRefundRequest(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=1000)
 
 
+class POSPaymentSplitResponse(BaseModel):
+    method: str
+    label: str
+    amount: Decimal
+
+
 class POSTransactionResponse(BaseModel):
     id: UUID
     branch_id: Optional[UUID] = None
@@ -255,6 +269,7 @@ class POSTransactionResponse(BaseModel):
     status: str
     notes: Optional[str] = None
     items: List[POSTransactionItemResponse] = []
+    payments: List[POSPaymentSplitResponse] = []   # solo ventas mixtas
     sold_at: datetime
     model_config = {"from_attributes": True}
 
