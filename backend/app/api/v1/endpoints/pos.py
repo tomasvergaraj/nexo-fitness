@@ -1479,7 +1479,37 @@ async def _user_name(db: AsyncSession, user_id: Optional[UUID]) -> Optional[str]
 async def _session_cash_live(db: AsyncSession, tenant_id: UUID, session_id: UUID) -> dict:
     """Componentes de efectivo de una sesión, calculados en vivo sobre las tablas."""
     by_method, sales_total, sales_count = await _breakdown_rows(db, tenant_id, session_id=session_id)
-    cash_sales = next((r.total for r in by_method if r.payment_method == "cash"), Decimal("0"))
+
+    # Efectivo recibido por ventas del turno, INDEPENDIENTE de devoluciones
+    # posteriores: el efectivo entró al cajón al vender. Las devoluciones se
+    # restan aparte en cash_refunds; así una venta devuelta en el mismo turno
+    # neta a cero (y no se resta dos veces como cuando cash_sales era solo
+    # 'completed'). Incluye la parte efectivo de ventas mixtas.
+    cash_sales_nonmixed = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(POSTransaction.total), 0)).where(
+                POSTransaction.tenant_id == tenant_id,
+                POSTransaction.session_id == session_id,
+                POSTransaction.payment_method == "cash",
+                POSTransaction.status != POSTransactionStatus.CANCELLED,
+            )
+        )).scalar_one()
+    )
+    cash_sales_mixed = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(POSTransactionPayment.amount), 0))
+            .select_from(POSTransactionPayment)
+            .join(POSTransaction, POSTransactionPayment.transaction_id == POSTransaction.id)
+            .where(
+                POSTransaction.tenant_id == tenant_id,
+                POSTransaction.session_id == session_id,
+                POSTransaction.payment_method == "mixed",
+                POSTransaction.status != POSTransactionStatus.CANCELLED,
+                POSTransactionPayment.method == "cash",
+            )
+        )).scalar_one()
+    )
+    cash_sales = cash_sales_nonmixed + cash_sales_mixed
 
     membership_cash = Decimal(
         (await db.execute(
@@ -1525,7 +1555,7 @@ async def _session_cash_live(db: AsyncSession, tenant_id: UUID, session_id: UUID
                 POSTransaction.refunded_amount > 0,
             )
         )).scalar_one()
-    )
+    ).quantize(Decimal("0.01"))
     cash_refunds = cash_refunds + mixed_cash_refund
     cash_expenses = Decimal(
         (await db.execute(
