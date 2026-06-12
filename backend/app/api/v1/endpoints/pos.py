@@ -260,6 +260,42 @@ async def list_products(
     return result
 
 
+@pos_router.get("/products/by-barcode/{barcode}", response_model=ProductResponse)
+async def get_product_by_barcode(
+    barcode: str,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    """Lookup exacto por código de barras (para escáner en el POS)."""
+    p = (
+        await db.execute(
+            select(Product).where(
+                Product.tenant_id == ctx.tenant_id,
+                Product.barcode == barcode,
+                Product.is_active == True,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    inv = (
+        await db.execute(
+            select(Inventory).where(
+                Inventory.product_id == p.id,
+                Inventory.branch_id.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    data = ProductResponse.model_validate(p)
+    data.stock = inv.quantity if inv else None
+    if p.category_id:
+        cat = (await db.execute(select(ProductCategory).where(ProductCategory.id == p.category_id))).scalar_one_or_none()
+        data.category_name = cat.name if cat else None
+    return data
+
+
 @pos_router.post("/products", response_model=ProductResponse, status_code=201)
 async def create_product(
     body: ProductCreate,

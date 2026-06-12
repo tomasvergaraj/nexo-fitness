@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type KeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -486,6 +486,26 @@ export default function POSPage() {
     : 0;
 
   // ── Cart helpers ──────────────────────────────────────────────────────────
+  async function handleSearchEnter(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter') return;
+    const code = search.trim();
+    if (!code) return;
+    e.preventDefault();
+    try {
+      const res = await posApi.productByBarcode(code);
+      addToCart(res.data);
+      setSearch('');
+    } catch {
+      // sin barcode exacto: si el filtro dejó un único producto, agrégalo
+      if (products.length === 1) {
+        addToCart(products[0]);
+        setSearch('');
+      } else if (products.length === 0) {
+        toast.error('Sin producto con ese código');
+      }
+    }
+  }
+
   function addToCart(product: Product) {
     setCart(prev => {
       const existing = prev.find(i => i.product.id === product.id);
@@ -889,9 +909,10 @@ export default function POSPage() {
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
               <input
                 type="text"
-                placeholder="Buscar producto, SKU..."
+                placeholder="Buscar o escanear código..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
+                onKeyDown={handleSearchEnter}
                 className="input w-full pl-9 pr-4 text-sm"
               />
             </div>

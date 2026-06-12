@@ -492,6 +492,7 @@ export const posApi = {
   // Products
   listProducts: (params?: Record<string, unknown>) => api.get('/pos/products', { params }),
   getProduct: (id: string) => api.get(`/pos/products/${id}`),
+  productByBarcode: (barcode: string) => api.get(`/pos/products/by-barcode/${encodeURIComponent(barcode)}`),
   createProduct: (data: Record<string, unknown>) => api.post('/pos/products', data),
   updateProduct: (id: string, data: Record<string, unknown>) => api.put(`/pos/products/${id}`, data),
   deleteProduct: (id: string) => api.delete(`/pos/products/${id}`),
