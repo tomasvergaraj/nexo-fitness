@@ -47,6 +47,7 @@ export default function ExpensesPage() {
     description: '',
     expense_date: new Date().toISOString().slice(0, 10),
     receipt_url: '',
+    paid_from_cash: false,
   });
 
   const { data: expenses = [], isLoading } = useQuery<Expense[]>({
@@ -150,6 +151,7 @@ export default function ExpensesPage() {
     setForm({
       category: 'other', amount: '', description: '',
       expense_date: new Date().toISOString().slice(0, 10), receipt_url: '',
+      paid_from_cash: false,
     });
     setModalOpen(true);
   }
@@ -159,6 +161,7 @@ export default function ExpensesPage() {
     setForm({
       category: e.category, amount: String(e.amount), description: e.description,
       expense_date: e.expense_date, receipt_url: e.receipt_url || '',
+      paid_from_cash: e.paid_from_cash ?? false,
     });
     setModalOpen(true);
   }
@@ -169,6 +172,7 @@ export default function ExpensesPage() {
       amount: Number(form.amount),
       description: form.description,
       expense_date: form.expense_date,
+      paid_from_cash: form.paid_from_cash,
     };
     if (form.receipt_url) data.receipt_url = form.receipt_url;
 
@@ -348,6 +352,18 @@ export default function ExpensesPage() {
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               className="input w-full" placeholder="Arriendo mes de abril" />
           </div>
+          <label className="flex items-center gap-2.5 cursor-pointer rounded-xl border border-surface-200 dark:border-surface-700 p-3">
+            <input
+              type="checkbox"
+              checked={form.paid_from_cash}
+              onChange={e => setForm(f => ({ ...f, paid_from_cash: e.target.checked }))}
+              className="h-4 w-4 rounded border-surface-300 text-brand-500 focus:ring-brand-500"
+            />
+            <span className="text-sm text-surface-700 dark:text-surface-300">
+              Pagado de caja
+              <span className="block text-[11px] text-surface-400">Se descuenta del efectivo esperado en el cierre de caja</span>
+            </span>
+          </label>
           {editing ? (
             <div className="rounded-xl border border-surface-200 dark:border-surface-700 p-3 space-y-3">
               <div className="flex items-center gap-3">

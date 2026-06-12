@@ -536,6 +536,17 @@ export const posApi = {
   getCashSession: (id: string) => api.get(`/pos/cash-sessions/${id}`),
   salesBreakdown: (params: Record<string, unknown>) => api.get('/pos/sales-breakdown', { params }),
 
+  // Fiados / cuenta corriente de socios (Etapa 2)
+  accountDebtors: () => api.get('/pos/account/debtors'),
+  accountStatement: (clientId: string) => api.get(`/pos/account/${clientId}/statement`),
+  accountPayment: (clientId: string, data: Record<string, unknown>) =>
+    api.post(`/pos/account/${clientId}/payment`, data),
+
+  // Reportería del dueño (Etapa 0)
+  reportSummary: (params: Record<string, unknown>) => api.get('/pos/reports/summary', { params }),
+  reportByDimension: (params: Record<string, unknown>) => api.get('/pos/reports/by-dimension', { params }),
+  reportTimeseries: (params: Record<string, unknown>) => api.get('/pos/reports/timeseries', { params }),
+
   // Expenses
   listExpenses: (params?: Record<string, unknown>) => api.get('/pos/expenses', { params }),
   createExpense: (data: Record<string, unknown>) => api.post('/pos/expenses', data),

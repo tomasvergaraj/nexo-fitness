@@ -212,6 +212,8 @@ class POSTransactionCreate(BaseModel):
     gift_card_code: Optional[str] = None
     branch_id: Optional[UUID] = None
     notes: Optional[str] = None
+    # Socio al que se fía la venta. Obligatorio si payment_method='credit'.
+    client_id: Optional[UUID] = None
 
 
 class POSTransactionItemResponse(BaseModel):
@@ -230,6 +232,8 @@ class POSTransactionResponse(BaseModel):
     branch_id: Optional[UUID] = None
     cashier_id: Optional[UUID] = None
     cashier_name: Optional[str] = None
+    client_id: Optional[UUID] = None
+    client_name: Optional[str] = None
     subtotal: Decimal
     discount_amount: Decimal
     gift_card_amount: Decimal = Decimal("0")
@@ -251,6 +255,7 @@ class ExpenseCreate(BaseModel):
     expense_date: date
     branch_id: Optional[UUID] = None
     receipt_url: Optional[str] = None
+    paid_from_cash: bool = False   # pagado con efectivo de la caja → entra al arqueo
 
 
 class ExpenseUpdate(BaseModel):
@@ -260,6 +265,7 @@ class ExpenseUpdate(BaseModel):
     expense_date: Optional[date] = None
     branch_id: Optional[UUID] = None
     receipt_url: Optional[str] = None
+    paid_from_cash: Optional[bool] = None
 
 
 class ExpenseResponse(BaseModel):
@@ -270,6 +276,8 @@ class ExpenseResponse(BaseModel):
     description: str
     receipt_url: Optional[str] = None
     expense_date: date
+    paid_from_cash: bool = False
+    session_id: Optional[UUID] = None
     created_by: Optional[UUID] = None
     created_at: datetime
     model_config = {"from_attributes": True}
@@ -316,6 +324,11 @@ class CashSessionResponse(BaseModel):
     sales_total: Decimal = Decimal("0")
     sales_count: int = 0
     cash_sales: Decimal = Decimal("0")
+    # Arqueo detallado (Etapa 1)
+    membership_cash: Decimal = Decimal("0")    # efectivo de membresías imputado a la caja
+    cash_refunds: Decimal = Decimal("0")       # devoluciones POS en efectivo
+    cash_expenses: Decimal = Decimal("0")      # gastos pagados de caja
+    cash_credit_payments: Decimal = Decimal("0")  # abonos de fiados en efectivo
     by_method: List[PaymentMethodBreakdownRow] = []
 
 
@@ -325,3 +338,111 @@ class SalesBreakdownResponse(BaseModel):
     total: Decimal
     transaction_count: int
     by_method: List[PaymentMethodBreakdownRow] = []
+
+
+# ─── Reportería del dueño (Etapa 0, solo lectura) ───────────────────────────────
+
+class SalesSummaryResponse(BaseModel):
+    """KPIs del período: ventas, COGS, margen y resultado tras gastos."""
+    from_date: datetime
+    to_date: datetime
+    gross_sales: Decimal = Decimal("0")        # suma de subtotales (antes de descuento)
+    discounts: Decimal = Decimal("0")          # descuentos otorgados
+    gift_card: Decimal = Decimal("0")          # cubierto por gift cards
+    net_sales: Decimal = Decimal("0")          # total cobrado (subtotal - descuento - gift card)
+    cogs: Decimal = Decimal("0")               # costo de lo vendido (unit_cost * cantidad)
+    gross_margin: Decimal = Decimal("0")       # gross_sales - cogs
+    margin_pct: float = 0.0                     # gross_margin / gross_sales * 100
+    transaction_count: int = 0
+    units_sold: int = 0
+    avg_ticket: Decimal = Decimal("0")         # net_sales / transaction_count
+    refund_count: int = 0
+    refund_total: Decimal = Decimal("0")       # total de transacciones reembolsadas
+    expenses_total: Decimal = Decimal("0")     # gastos del período
+    net_profit: Decimal = Decimal("0")         # gross_margin - expenses_total
+    by_method: List[PaymentMethodBreakdownRow] = []
+
+
+class SalesReportRow(BaseModel):
+    """Fila de un desglose por dimensión (categoría / producto / cajero)."""
+    key: Optional[str] = None                  # id de la dimensión (None = sin categoría)
+    label: str
+    sku: Optional[str] = None                  # solo productos
+    units: int = 0                             # unidades vendidas
+    transaction_count: int = 0                 # transacciones distintas
+    revenue: Decimal = Decimal("0")            # ingreso bruto (subtotal de ítems)
+    cost: Decimal = Decimal("0")               # COGS
+    margin: Decimal = Decimal("0")             # revenue - cost
+    margin_pct: float = 0.0
+
+
+class SalesReportResponse(BaseModel):
+    from_date: datetime
+    to_date: datetime
+    dimension: str                             # 'category' | 'product' | 'cashier'
+    rows: List[SalesReportRow] = []
+    total_revenue: Decimal = Decimal("0")
+    total_cost: Decimal = Decimal("0")
+    total_margin: Decimal = Decimal("0")
+
+
+class SalesTimeseriesPoint(BaseModel):
+    period: date                               # día/semana/mes (zona horaria del tenant)
+    revenue: Decimal = Decimal("0")
+    cost: Decimal = Decimal("0")
+    margin: Decimal = Decimal("0")
+    transaction_count: int = 0
+
+
+class SalesTimeseriesResponse(BaseModel):
+    from_date: datetime
+    to_date: datetime
+    granularity: str                           # 'day' | 'week' | 'month'
+    points: List[SalesTimeseriesPoint] = []
+
+
+# ─── Fiados / cuenta corriente de socios (Etapa 2) ──────────────────────────────
+
+class AccountPaymentCreate(BaseModel):
+    """Registrar un abono (pago de deuda) de un socio."""
+    amount: Decimal = Field(gt=0)
+    payment_method: str = "cash"
+    branch_id: Optional[UUID] = None
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ClientDebtorRow(BaseModel):
+    client_id: UUID
+    client_name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    charges_total: Decimal = Decimal("0")
+    payments_total: Decimal = Decimal("0")
+    balance: Decimal = Decimal("0")            # charges − payments (deuda vigente)
+    last_entry_at: Optional[datetime] = None
+
+
+class DebtorsResponse(BaseModel):
+    rows: List[ClientDebtorRow] = []
+    total_outstanding: Decimal = Decimal("0")  # suma de saldos positivos
+
+
+class ClientAccountEntryResponse(BaseModel):
+    id: UUID
+    kind: str                                  # 'charge' | 'payment'
+    amount: Decimal
+    payment_method: Optional[str] = None
+    pos_transaction_id: Optional[UUID] = None
+    notes: Optional[str] = None
+    created_by: Optional[UUID] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    balance_after: Decimal = Decimal("0")      # saldo acumulado tras este movimiento
+    model_config = {"from_attributes": True}
+
+
+class ClientAccountStatementResponse(BaseModel):
+    client_id: UUID
+    client_name: str
+    balance: Decimal = Decimal("0")
+    entries: List[ClientAccountEntryResponse] = []

@@ -293,6 +293,10 @@ class POSTransaction(Base):
     cashier_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    # Socio al que se fió la venta (payment_method='credit'). Null en ventas normales.
+    client_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cash_register_sessions.id", ondelete="SET NULL"), index=True
     )
@@ -361,6 +365,11 @@ class Expense(Base):
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     receipt_url: Mapped[Optional[str]] = mapped_column(String(500))
     expense_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # Arqueo (Etapa 1): gasto pagado con efectivo de la caja → resta del efectivo esperado.
+    paid_from_cash: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cash_register_sessions.id", ondelete="SET NULL"), index=True
+    )
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
@@ -410,7 +419,55 @@ class CashRegisterSession(Base):
     closing_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))   # efectivo contado al cierre
     expected_cash: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))    # fondo + ventas efectivo - devoluciones
     difference: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))       # closing_amount - expected_cash
+    # Snapshot del arqueo al cierre (Etapa 1). expected_cash = opening + cash_sales
+    # + membership_cash - cash_refunds - cash_expenses.
+    cash_sales: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))         # efectivo de ventas POS
+    membership_cash: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))    # efectivo de membresías
+    cash_refunds: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))       # devoluciones POS en efectivo
+    cash_expenses: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))      # gastos pagados de caja
+    cash_credit_payments: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))  # abonos de fiados en efectivo
+    by_method_json: Mapped[Optional[str]] = mapped_column(Text)                   # desglose por método de pago (JSON)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+# ─── ClientAccountEntry (cuenta corriente / fiados) ─────────────────────────────
+
+class ClientAccountEntry(Base):
+    """Movimiento del libro de cuenta corriente de un socio (Etapa 2).
+
+    kind='charge'  → cargo (venta a crédito), suma a la deuda.
+    kind='payment' → abono (pago de deuda), resta de la deuda.
+    El saldo del socio = sum(charge.amount) − sum(payment.amount); no se persiste.
+    Un abono en efectivo enlaza session_id para entrar al arqueo del turno.
+    """
+    __tablename__ = "client_account_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    branch_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("branches.id", ondelete="SET NULL")
+    )
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)          # 'charge' | 'payment'
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)  # siempre positivo
+    payment_method: Mapped[Optional[str]] = mapped_column(String(20))      # solo abonos
+    pos_transaction_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pos_transactions.id", ondelete="SET NULL")
+    )
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cash_register_sessions.id", ondelete="SET NULL"), index=True
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

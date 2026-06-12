@@ -1,5 +1,6 @@
 """POS (Point of Sale) API endpoints."""
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
@@ -8,7 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +27,7 @@ from app.services.image_service import (
 from app.models.pos import (
     CashRegisterSession,
     CashSessionStatus,
+    ClientAccountEntry,
     Expense,
     Inventory,
     InventoryMovement,
@@ -40,16 +42,27 @@ from app.models.pos import (
     PurchaseOrderStatus,
     Supplier,
 )
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.models.business import Payment, PaymentMethod, PaymentStatus
 from app.schemas.pos import (
+    AccountPaymentCreate,
     CashSessionCloseIn,
     CashSessionOpenIn,
     CashSessionResponse,
+    ClientAccountEntryResponse,
+    ClientAccountStatementResponse,
+    ClientDebtorRow,
+    DebtorsResponse,
     ExpenseCreate,
     ExpenseResponse,
     ExpenseUpdate,
     PaymentMethodBreakdownRow,
     SalesBreakdownResponse,
+    SalesReportResponse,
+    SalesReportRow,
+    SalesSummaryResponse,
+    SalesTimeseriesPoint,
+    SalesTimeseriesResponse,
     InventoryMovementResponse,
     InventoryResponse,
     POSTransactionCreate,
@@ -78,6 +91,7 @@ PAYMENT_METHOD_LABELS = {
     "debit_card": "Débito",
     "credit_card": "Crédito",
     "transfer": "Transferencia",
+    "credit": "Fiado",
     "other": "Otro",
     "stripe": "Stripe",
     "webpay": "WebPay",
@@ -930,6 +944,9 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
     cashier = None
     if tx.cashier_id:
         cashier = (await db.execute(select(User).where(User.id == tx.cashier_id))).scalar_one_or_none()
+    client = None
+    if tx.client_id:
+        client = (await db.execute(select(User).where(User.id == tx.client_id))).scalar_one_or_none()
 
     from app.schemas.pos import POSTransactionItemResponse
     return POSTransactionResponse(
@@ -937,6 +954,8 @@ async def _build_tx_response(db: AsyncSession, tx: POSTransaction) -> POSTransac
         branch_id=tx.branch_id,
         cashier_id=tx.cashier_id,
         cashier_name=f"{cashier.first_name} {cashier.last_name}" if cashier else None,
+        client_id=tx.client_id,
+        client_name=f"{client.first_name} {client.last_name}" if client else None,
         subtotal=tx.subtotal,
         discount_amount=tx.discount_amount,
         gift_card_amount=tx.gift_card_amount,
@@ -965,6 +984,23 @@ async def create_transaction(
             status_code=409,
             detail="No hay un turno de caja abierto. Abre la caja antes de registrar ventas.",
         )
+
+    # ── fiado (venta a crédito): exige un socio válido ────────────────────────
+    is_credit = body.payment_method == "credit"
+    if is_credit:
+        if not body.client_id:
+            raise HTTPException(status_code=400, detail="Selecciona el socio para una venta a crédito (fiado).")
+        credit_client = (await db.execute(
+            select(User).where(
+                User.id == body.client_id,
+                User.tenant_id == ctx.tenant_id,
+                User.role == UserRole.CLIENT,
+            )
+        )).scalar_one_or_none()
+        if not credit_client:
+            raise HTTPException(status_code=404, detail="Socio no encontrado")
+        if body.gift_card_code and body.gift_card_code.strip():
+            raise HTTPException(status_code=400, detail="No se puede usar gift card en una venta a crédito.")
 
     # ── validate and lock inventory rows ──────────────────────────────────────
     product_ids = [item.product_id for item in body.items]
@@ -1020,6 +1056,7 @@ async def create_transaction(
         tenant_id=ctx.tenant_id,
         branch_id=body.branch_id,
         cashier_id=user.id,
+        client_id=body.client_id if is_credit else None,
         session_id=session.id,
         subtotal=subtotal,
         discount_amount=discount,
@@ -1090,6 +1127,23 @@ async def create_transaction(
             raise HTTPException(status_code=400, detail=str(exc))
         tx.gift_card_amount = redemption.amount
         tx.total = tx.total - redemption.amount
+
+    # ── fiado: registra el cargo en la cuenta corriente del socio ─────────────
+    if is_credit:
+        db.add(
+            ClientAccountEntry(
+                id=uuid4(),
+                tenant_id=ctx.tenant_id,
+                branch_id=body.branch_id,
+                client_id=body.client_id,
+                kind="charge",
+                amount=tx.total,
+                pos_transaction_id=tx.id,
+                notes=body.notes,
+                created_by=user.id,
+                created_at=now,
+            )
+        )
 
     await db.commit()
     await db.refresh(tx)
@@ -1219,6 +1273,7 @@ async def _breakdown_rows(
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
     session_id: Optional[UUID] = None,
+    branch_id: Optional[UUID] = None,
 ) -> tuple[list[PaymentMethodBreakdownRow], Decimal, int]:
     """Aggregate COMPLETED POS sales grouped by payment_method."""
     conditions = [
@@ -1231,6 +1286,8 @@ async def _breakdown_rows(
         conditions.append(POSTransaction.sold_at >= from_dt)
     if to_dt is not None:
         conditions.append(POSTransaction.sold_at <= to_dt)
+    if branch_id is not None:
+        conditions.append(POSTransaction.branch_id == branch_id)
 
     q = (
         select(
@@ -1272,9 +1329,90 @@ async def _user_name(db: AsyncSession, user_id: Optional[UUID]) -> Optional[str]
     return f"{u.first_name} {u.last_name}" if u else None
 
 
-async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> CashSessionResponse:
-    by_method, sales_total, sales_count = await _breakdown_rows(db, s.tenant_id, session_id=s.id)
+async def _session_cash_live(db: AsyncSession, tenant_id: UUID, session_id: UUID) -> dict:
+    """Componentes de efectivo de una sesión, calculados en vivo sobre las tablas."""
+    by_method, sales_total, sales_count = await _breakdown_rows(db, tenant_id, session_id=session_id)
     cash_sales = next((r.total for r in by_method if r.payment_method == "cash"), Decimal("0"))
+
+    membership_cash = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                Payment.tenant_id == tenant_id,
+                Payment.session_id == session_id,
+                Payment.method == PaymentMethod.CASH,
+                Payment.status == PaymentStatus.COMPLETED,
+            )
+        )).scalar_one()
+    )
+    cash_refunds = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(POSTransaction.total), 0)).where(
+                POSTransaction.tenant_id == tenant_id,
+                POSTransaction.session_id == session_id,
+                POSTransaction.status == POSTransactionStatus.REFUNDED,
+                POSTransaction.payment_method == "cash",
+            )
+        )).scalar_one()
+    )
+    cash_expenses = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(Expense.amount), 0)).where(
+                Expense.tenant_id == tenant_id,
+                Expense.session_id == session_id,
+                Expense.paid_from_cash.is_(True),
+            )
+        )).scalar_one()
+    )
+    cash_credit_payments = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(ClientAccountEntry.amount), 0)).where(
+                ClientAccountEntry.tenant_id == tenant_id,
+                ClientAccountEntry.session_id == session_id,
+                ClientAccountEntry.kind == "payment",
+                ClientAccountEntry.payment_method == "cash",
+            )
+        )).scalar_one()
+    )
+    return {
+        "by_method": by_method,
+        "sales_total": sales_total,
+        "sales_count": sales_count,
+        "cash_sales": cash_sales,
+        "membership_cash": membership_cash,
+        "cash_refunds": cash_refunds,
+        "cash_expenses": cash_expenses,
+        "cash_credit_payments": cash_credit_payments,
+    }
+
+
+async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> CashSessionResponse:
+    if s.status == CashSessionStatus.OPEN:
+        c = await _session_cash_live(db, s.tenant_id, s.id)
+        by_method = c["by_method"]
+        sales_total, sales_count = c["sales_total"], c["sales_count"]
+        cash_sales = c["cash_sales"]
+        membership_cash, cash_refunds, cash_expenses = c["membership_cash"], c["cash_refunds"], c["cash_expenses"]
+        cash_credit_payments = c["cash_credit_payments"]
+    else:
+        # Sesión cerrada: usar el snapshot guardado al cierre (sin recalcular).
+        by_method = []
+        if s.by_method_json:
+            try:
+                by_method = [PaymentMethodBreakdownRow(**r) for r in json.loads(s.by_method_json)]
+            except (ValueError, TypeError):
+                by_method = []
+        if not by_method:
+            by_method, _, _ = await _breakdown_rows(db, s.tenant_id, session_id=s.id)
+        sales_total = sum((r.total for r in by_method), Decimal("0"))
+        sales_count = sum((r.count for r in by_method), 0)
+        cash_sales = s.cash_sales if s.cash_sales is not None else next(
+            (r.total for r in by_method if r.payment_method == "cash"), Decimal("0")
+        )
+        membership_cash = s.membership_cash or Decimal("0")
+        cash_refunds = s.cash_refunds or Decimal("0")
+        cash_expenses = s.cash_expenses or Decimal("0")
+        cash_credit_payments = s.cash_credit_payments or Decimal("0")
+
     return CashSessionResponse(
         id=s.id,
         branch_id=s.branch_id,
@@ -1293,6 +1431,10 @@ async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> C
         sales_total=sales_total,
         sales_count=sales_count,
         cash_sales=cash_sales,
+        membership_cash=membership_cash,
+        cash_refunds=cash_refunds,
+        cash_expenses=cash_expenses,
+        cash_credit_payments=cash_credit_payments,
         by_method=by_method,
     )
 
@@ -1376,9 +1518,20 @@ async def close_cash_session(
     if s.status != CashSessionStatus.OPEN:
         raise HTTPException(status_code=400, detail="El turno de caja ya está cerrado")
 
-    by_method, _, _ = await _breakdown_rows(db, ctx.tenant_id, session_id=s.id)
-    cash_sales = next((r.total for r in by_method if r.payment_method == "cash"), Decimal("0"))
-    expected = (s.opening_amount or Decimal("0")) + cash_sales
+    c = await _session_cash_live(db, ctx.tenant_id, s.id)
+    cash_sales = c["cash_sales"]
+    membership_cash = c["membership_cash"]
+    cash_refunds = c["cash_refunds"]
+    cash_expenses = c["cash_expenses"]
+    cash_credit_payments = c["cash_credit_payments"]
+    expected = (
+        (s.opening_amount or Decimal("0"))
+        + cash_sales
+        + membership_cash
+        + cash_credit_payments
+        - cash_refunds
+        - cash_expenses
+    )
 
     now = _now()
     s.status = CashSessionStatus.CLOSED
@@ -1387,6 +1540,23 @@ async def close_cash_session(
     s.closing_amount = body.closing_amount
     s.expected_cash = expected
     s.difference = body.closing_amount - expected
+    # Snapshot del arqueo (Etapa 1): congela los componentes al momento del cierre.
+    s.cash_sales = cash_sales
+    s.membership_cash = membership_cash
+    s.cash_refunds = cash_refunds
+    s.cash_expenses = cash_expenses
+    s.cash_credit_payments = cash_credit_payments
+    s.by_method_json = json.dumps([
+        {
+            "payment_method": r.payment_method,
+            "label": r.label,
+            "count": r.count,
+            "subtotal": str(r.subtotal),
+            "discount": str(r.discount),
+            "total": str(r.total),
+        }
+        for r in c["by_method"]
+    ])
     if body.notes:
         s.notes = f"{s.notes}\n{body.notes}" if s.notes else body.notes
     await db.commit()
@@ -1458,6 +1628,483 @@ async def sales_breakdown(
     )
 
 
+# ─── Fiados / cuenta corriente de socios (Etapa 2) ──────────────────────────────
+
+async def _client_or_404(db: AsyncSession, tenant_id: UUID, client_id: UUID) -> User:
+    u = (await db.execute(
+        select(User).where(
+            User.id == client_id,
+            User.tenant_id == tenant_id,
+            User.role == UserRole.CLIENT,
+        )
+    )).scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="Socio no encontrado")
+    return u
+
+
+def _signed(kind: str, amount: Decimal) -> Decimal:
+    """Cargo suma a la deuda, abono la resta."""
+    return amount if kind == "charge" else -amount
+
+
+@pos_router.get("/account/debtors", response_model=DebtorsResponse)
+async def list_debtors(
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    """Socios con saldo deudor (cargos − abonos > 0)."""
+    charges = func.coalesce(
+        func.sum(
+            case((ClientAccountEntry.kind == "charge", ClientAccountEntry.amount), else_=0)
+        ), 0,
+    )
+    payments = func.coalesce(
+        func.sum(
+            case((ClientAccountEntry.kind == "payment", ClientAccountEntry.amount), else_=0)
+        ), 0,
+    )
+    balance = charges - payments
+    q = (
+        select(
+            ClientAccountEntry.client_id,
+            User.first_name,
+            User.last_name,
+            User.email,
+            User.phone,
+            charges.label("charges_total"),
+            payments.label("payments_total"),
+            balance.label("balance"),
+            func.max(ClientAccountEntry.created_at).label("last_entry_at"),
+        )
+        .join(User, User.id == ClientAccountEntry.client_id)
+        .where(ClientAccountEntry.tenant_id == ctx.tenant_id)
+        .group_by(
+            ClientAccountEntry.client_id,
+            User.first_name, User.last_name, User.email, User.phone,
+        )
+        .having(balance > 0)
+        .order_by(balance.desc())
+    )
+    rows = (await db.execute(q)).all()
+    out: list[ClientDebtorRow] = []
+    total_outstanding = Decimal("0")
+    for r in rows:
+        bal = Decimal(r.balance)
+        total_outstanding += bal
+        out.append(ClientDebtorRow(
+            client_id=r.client_id,
+            client_name=f"{r.first_name} {r.last_name}",
+            email=r.email,
+            phone=r.phone,
+            charges_total=Decimal(r.charges_total),
+            payments_total=Decimal(r.payments_total),
+            balance=bal,
+            last_entry_at=r.last_entry_at,
+        ))
+    return DebtorsResponse(rows=out, total_outstanding=total_outstanding)
+
+
+@pos_router.get("/account/{client_id}/statement", response_model=ClientAccountStatementResponse)
+async def client_account_statement(
+    client_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin", "reception")),
+):
+    """Estado de cuenta del socio: movimientos en orden cronológico + saldo corriente."""
+    client = await _client_or_404(db, ctx.tenant_id, client_id)
+    entries = (await db.execute(
+        select(ClientAccountEntry)
+        .where(
+            ClientAccountEntry.tenant_id == ctx.tenant_id,
+            ClientAccountEntry.client_id == client_id,
+        )
+        .order_by(ClientAccountEntry.created_at.asc())
+    )).scalars().all()
+
+    creators = {e.created_by for e in entries if e.created_by}
+    names: dict[UUID, str] = {}
+    if creators:
+        for u in (await db.execute(select(User).where(User.id.in_(creators)))).scalars().all():
+            names[u.id] = f"{u.first_name} {u.last_name}"
+
+    running = Decimal("0")
+    rows: list[ClientAccountEntryResponse] = []
+    for e in entries:
+        running += _signed(e.kind, e.amount)
+        rows.append(ClientAccountEntryResponse(
+            id=e.id,
+            kind=e.kind,
+            amount=e.amount,
+            payment_method=e.payment_method,
+            pos_transaction_id=e.pos_transaction_id,
+            notes=e.notes,
+            created_by=e.created_by,
+            created_by_name=names.get(e.created_by) if e.created_by else None,
+            created_at=e.created_at,
+            balance_after=running,
+        ))
+    rows.reverse()  # más reciente primero para la UI
+    return ClientAccountStatementResponse(
+        client_id=client.id,
+        client_name=f"{client.first_name} {client.last_name}",
+        balance=running,
+        entries=rows,
+    )
+
+
+@pos_router.post("/account/{client_id}/payment", response_model=ClientAccountEntryResponse, status_code=201)
+async def register_account_payment(
+    client_id: UUID,
+    body: AccountPaymentCreate,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    user=Depends(require_roles("owner", "admin", "reception")),
+):
+    """Registrar un abono (pago de deuda) de un socio. Si es en efectivo y hay
+    una caja abierta en la sucursal, se imputa a su arqueo."""
+    client = await _client_or_404(db, ctx.tenant_id, client_id)
+
+    # un abono en efectivo entra al arqueo del turno abierto de la sucursal (si existe)
+    session_id = None
+    if body.payment_method == "cash":
+        open_session = await _open_session_for_branch(db, ctx.tenant_id, body.branch_id)
+        session_id = open_session.id if open_session else None
+
+    now = _now()
+    entry = ClientAccountEntry(
+        id=uuid4(),
+        tenant_id=ctx.tenant_id,
+        branch_id=body.branch_id,
+        client_id=client_id,
+        kind="payment",
+        amount=body.amount,
+        payment_method=body.payment_method,
+        session_id=session_id,
+        notes=body.notes,
+        created_by=user.id,
+        created_at=now,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+
+    # saldo vigente tras el abono
+    balance = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(
+                case((ClientAccountEntry.kind == "charge", ClientAccountEntry.amount),
+                          else_=-ClientAccountEntry.amount)
+            ), 0)).where(
+                ClientAccountEntry.tenant_id == ctx.tenant_id,
+                ClientAccountEntry.client_id == client_id,
+            )
+        )).scalar_one()
+    )
+    return ClientAccountEntryResponse(
+        id=entry.id,
+        kind=entry.kind,
+        amount=entry.amount,
+        payment_method=entry.payment_method,
+        pos_transaction_id=entry.pos_transaction_id,
+        notes=entry.notes,
+        created_by=entry.created_by,
+        created_by_name=f"{user.first_name} {user.last_name}",
+        created_at=entry.created_at,
+        balance_after=balance,
+    )
+
+
+# ─── Reportería del dueño (Etapa 0, solo lectura) ───────────────────────────────
+
+_REPORT_DIMENSIONS = ("category", "product", "cashier")
+_REPORT_GRANULARITIES = ("day", "week", "month")
+
+
+def _margin_pct(revenue: Decimal, margin: Decimal) -> float:
+    return float(round(margin / revenue * 100, 2)) if revenue else 0.0
+
+
+def _tenant_tz_name(ctx: TenantContext) -> str:
+    return ctx.tenant.timezone if ctx.tenant and ctx.tenant.timezone else "UTC"
+
+
+def _report_row(key, label, sku, units, txc, revenue, cost) -> SalesReportRow:
+    rev = Decimal(revenue)
+    cst = Decimal(cost)
+    margin = rev - cst
+    return SalesReportRow(
+        key=key,
+        label=label,
+        sku=sku,
+        units=int(units),
+        transaction_count=int(txc),
+        revenue=rev,
+        cost=cst,
+        margin=margin,
+        margin_pct=_margin_pct(rev, margin),
+    )
+
+
+@pos_router.get("/reports/summary", response_model=SalesSummaryResponse)
+async def sales_report_summary(
+    from_date: datetime,
+    to_date: datetime,
+    branch_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """KPIs del período: ventas, COGS, margen, devoluciones, gastos y utilidad."""
+    tenant_id = ctx.tenant_id
+    completed = [
+        POSTransaction.tenant_id == tenant_id,
+        POSTransaction.status == POSTransactionStatus.COMPLETED,
+        POSTransaction.sold_at >= from_date,
+        POSTransaction.sold_at <= to_date,
+    ]
+    if branch_id is not None:
+        completed.append(POSTransaction.branch_id == branch_id)
+
+    gross, discounts, gift_card, net, tx_count = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(POSTransaction.subtotal), 0),
+                func.coalesce(func.sum(POSTransaction.discount_amount), 0),
+                func.coalesce(func.sum(POSTransaction.gift_card_amount), 0),
+                func.coalesce(func.sum(POSTransaction.total), 0),
+                func.count(POSTransaction.id),
+            ).where(*completed)
+        )
+    ).one()
+
+    cogs, units = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(POSTransactionItem.unit_cost * POSTransactionItem.quantity), 0),
+                func.coalesce(func.sum(POSTransactionItem.quantity), 0),
+            )
+            .select_from(POSTransactionItem)
+            .join(POSTransaction, POSTransactionItem.transaction_id == POSTransaction.id)
+            .where(*completed)
+        )
+    ).one()
+
+    refund_conditions = [
+        POSTransaction.tenant_id == tenant_id,
+        POSTransaction.status == POSTransactionStatus.REFUNDED,
+        POSTransaction.sold_at >= from_date,
+        POSTransaction.sold_at <= to_date,
+    ]
+    if branch_id is not None:
+        refund_conditions.append(POSTransaction.branch_id == branch_id)
+    refund_count, refund_total = (
+        await db.execute(
+            select(
+                func.count(POSTransaction.id),
+                func.coalesce(func.sum(POSTransaction.total), 0),
+            ).where(*refund_conditions)
+        )
+    ).one()
+
+    exp_conditions = [
+        Expense.tenant_id == tenant_id,
+        Expense.expense_date >= from_date.date(),
+        Expense.expense_date <= to_date.date(),
+    ]
+    if branch_id is not None:
+        exp_conditions.append(Expense.branch_id == branch_id)
+    expenses_total = (
+        await db.execute(
+            select(func.coalesce(func.sum(Expense.amount), 0)).where(*exp_conditions)
+        )
+    ).scalar_one()
+
+    gross_d = Decimal(gross)
+    cogs_d = Decimal(cogs)
+    net_d = Decimal(net)
+    margin = gross_d - cogs_d
+    expenses_d = Decimal(expenses_total)
+    by_method, _, _ = await _breakdown_rows(
+        db, tenant_id, from_dt=from_date, to_dt=to_date, branch_id=branch_id
+    )
+
+    return SalesSummaryResponse(
+        from_date=from_date,
+        to_date=to_date,
+        gross_sales=gross_d,
+        discounts=Decimal(discounts),
+        gift_card=Decimal(gift_card),
+        net_sales=net_d,
+        cogs=cogs_d,
+        gross_margin=margin,
+        margin_pct=_margin_pct(gross_d, margin),
+        transaction_count=int(tx_count),
+        units_sold=int(units),
+        avg_ticket=(net_d / tx_count) if tx_count else Decimal("0"),
+        refund_count=int(refund_count),
+        refund_total=Decimal(refund_total),
+        expenses_total=expenses_d,
+        net_profit=margin - expenses_d,
+        by_method=by_method,
+    )
+
+
+@pos_router.get("/reports/by-dimension", response_model=SalesReportResponse)
+async def sales_report_by_dimension(
+    dimension: str,
+    from_date: datetime,
+    to_date: datetime,
+    branch_id: Optional[UUID] = None,
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Desglose de ventas por categoría, producto (más vendidos) o cajero, con margen."""
+    if dimension not in _REPORT_DIMENSIONS:
+        raise HTTPException(
+            status_code=422, detail=f"dimension debe ser uno de {_REPORT_DIMENSIONS}"
+        )
+    tenant_id = ctx.tenant_id
+
+    units_e = func.coalesce(func.sum(POSTransactionItem.quantity), 0)
+    txc_e = func.count(func.distinct(POSTransaction.id))
+    revenue_e = func.coalesce(func.sum(POSTransactionItem.subtotal), 0)
+    cost_e = func.coalesce(func.sum(POSTransactionItem.unit_cost * POSTransactionItem.quantity), 0)
+
+    conditions = [
+        POSTransaction.tenant_id == tenant_id,
+        POSTransaction.status == POSTransactionStatus.COMPLETED,
+        POSTransaction.sold_at >= from_date,
+        POSTransaction.sold_at <= to_date,
+    ]
+    if branch_id is not None:
+        conditions.append(POSTransaction.branch_id == branch_id)
+
+    base = (
+        select()
+        .select_from(POSTransactionItem)
+        .join(POSTransaction, POSTransactionItem.transaction_id == POSTransaction.id)
+        .where(*conditions)
+        .order_by(revenue_e.desc())
+        .limit(limit)
+    )
+
+    rows: list[SalesReportRow] = []
+    if dimension == "category":
+        q = base.add_columns(
+            ProductCategory.id, ProductCategory.name, units_e, txc_e, revenue_e, cost_e
+        ).join(
+            Product, POSTransactionItem.product_id == Product.id
+        ).join(
+            ProductCategory, Product.category_id == ProductCategory.id, isouter=True
+        ).group_by(ProductCategory.id, ProductCategory.name)
+        for cid, cname, u, t, r, c in (await db.execute(q)).all():
+            rows.append(_report_row(str(cid) if cid else None, cname or "Sin categoría", None, u, t, r, c))
+
+    elif dimension == "product":
+        q = base.add_columns(
+            Product.id, Product.name, Product.sku, units_e, txc_e, revenue_e, cost_e
+        ).join(
+            Product, POSTransactionItem.product_id == Product.id
+        ).group_by(Product.id, Product.name, Product.sku)
+        for pid, pname, sku, u, t, r, c in (await db.execute(q)).all():
+            rows.append(_report_row(str(pid), pname, sku, u, t, r, c))
+
+    else:  # cashier
+        q = base.add_columns(
+            POSTransaction.cashier_id, units_e, txc_e, revenue_e, cost_e
+        ).group_by(POSTransaction.cashier_id)
+        raw = (await db.execute(q)).all()
+        ids = [cid for cid, *_ in raw if cid]
+        names: dict = {}
+        if ids:
+            for u in (await db.execute(select(User).where(User.id.in_(ids)))).scalars().all():
+                names[u.id] = f"{u.first_name} {u.last_name}"
+        for cid, un, t, r, c in raw:
+            label = names.get(cid, "Sin cajero") if cid else "Sin cajero"
+            rows.append(_report_row(str(cid) if cid else None, label, None, un, t, r, c))
+
+    total_rev = sum((r.revenue for r in rows), Decimal("0"))
+    total_cost = sum((r.cost for r in rows), Decimal("0"))
+    return SalesReportResponse(
+        from_date=from_date,
+        to_date=to_date,
+        dimension=dimension,
+        rows=rows,
+        total_revenue=total_rev,
+        total_cost=total_cost,
+        total_margin=total_rev - total_cost,
+    )
+
+
+@pos_router.get("/reports/timeseries", response_model=SalesTimeseriesResponse)
+async def sales_report_timeseries(
+    from_date: datetime,
+    to_date: datetime,
+    granularity: str = "day",
+    branch_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Serie temporal de ventas y margen, agrupada en la zona horaria del tenant."""
+    if granularity not in _REPORT_GRANULARITIES:
+        raise HTTPException(
+            status_code=422, detail=f"granularity debe ser uno de {_REPORT_GRANULARITIES}"
+        )
+    tenant_id = ctx.tenant_id
+    tz_name = _tenant_tz_name(ctx)
+
+    # date_trunc sobre la hora local del tenant (timestamptz → wall time local)
+    bucket = func.date_trunc(granularity, func.timezone(tz_name, POSTransaction.sold_at))
+
+    conditions = [
+        POSTransaction.tenant_id == tenant_id,
+        POSTransaction.status == POSTransactionStatus.COMPLETED,
+        POSTransaction.sold_at >= from_date,
+        POSTransaction.sold_at <= to_date,
+    ]
+    if branch_id is not None:
+        conditions.append(POSTransaction.branch_id == branch_id)
+
+    q = (
+        select(
+            bucket,
+            func.coalesce(func.sum(POSTransactionItem.subtotal), 0),
+            func.coalesce(func.sum(POSTransactionItem.unit_cost * POSTransactionItem.quantity), 0),
+            func.count(func.distinct(POSTransaction.id)),
+        )
+        .select_from(POSTransactionItem)
+        .join(POSTransaction, POSTransactionItem.transaction_id == POSTransaction.id)
+        .where(*conditions)
+        .group_by(bucket)
+        .order_by(bucket)
+    )
+    points: list[SalesTimeseriesPoint] = []
+    for period, revenue, cost, txc in (await db.execute(q)).all():
+        rev = Decimal(revenue)
+        cst = Decimal(cost)
+        points.append(
+            SalesTimeseriesPoint(
+                period=period.date() if hasattr(period, "date") else period,
+                revenue=rev,
+                cost=cst,
+                margin=rev - cst,
+                transaction_count=int(txc),
+            )
+        )
+    return SalesTimeseriesResponse(
+        from_date=from_date,
+        to_date=to_date,
+        granularity=granularity,
+        points=points,
+    )
+
+
 # ─── Expenses ─────────────────────────────────────────────────────────────────
 
 @pos_router.get("/expenses", response_model=List[ExpenseResponse])
@@ -1494,6 +2141,11 @@ async def create_expense(
     user=Depends(require_roles("owner", "admin")),
 ):
     now = _now()
+    # Si se paga de caja, imputarlo a la sesión abierta de esa sucursal (si la hay).
+    session_id = None
+    if body.paid_from_cash:
+        open_session = await _open_session_for_branch(db, ctx.tenant_id, body.branch_id)
+        session_id = open_session.id if open_session else None
     expense = Expense(
         id=uuid4(),
         tenant_id=ctx.tenant_id,
@@ -1503,6 +2155,8 @@ async def create_expense(
         description=body.description,
         receipt_url=body.receipt_url,
         expense_date=body.expense_date,
+        paid_from_cash=body.paid_from_cash,
+        session_id=session_id,
         created_by=user.id,
         created_at=now,
         updated_at=now,
@@ -1527,8 +2181,16 @@ async def update_expense(
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    for field, value in data.items():
         setattr(expense, field, value)
+    # Reconciliar el enlace a la caja si cambió paid_from_cash.
+    if "paid_from_cash" in data:
+        if expense.paid_from_cash and expense.session_id is None:
+            open_session = await _open_session_for_branch(db, ctx.tenant_id, expense.branch_id)
+            expense.session_id = open_session.id if open_session else None
+        elif not expense.paid_from_cash:
+            expense.session_id = None
     expense.updated_at = _now()
     await db.commit()
     await db.refresh(expense)

@@ -14,7 +14,8 @@ from app.core.dependencies import (
     get_tenant_context,
     require_roles,
 )
-from app.models.business import Membership, Plan
+from app.models.business import Membership, PaymentMethod, PaymentStatus, Plan
+from app.models.pos import CashRegisterSession, CashSessionStatus
 from app.models.user import User, UserRole
 from app.schemas.business import PaginatedResponse
 from app.schemas.platform import (
@@ -190,6 +191,27 @@ async def create_manual_membership_sale_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Arqueo (Etapa 1): si el plan se cobró en efectivo y hay exactamente UNA caja
+    # abierta, imputar ese efectivo a la sesión para que entre al cierre de caja.
+    if (
+        result.payment is not None
+        and result.payment.method == PaymentMethod.CASH
+        and result.payment.status == PaymentStatus.COMPLETED
+    ):
+        open_session_ids = (
+            await db.execute(
+                select(CashRegisterSession.id)
+                .where(
+                    CashRegisterSession.tenant_id == ctx.tenant_id,
+                    CashRegisterSession.status == CashSessionStatus.OPEN,
+                )
+                .limit(2)
+            )
+        ).scalars().all()
+        if len(open_session_ids) == 1:
+            result.payment.session_id = open_session_ids[0]
+            await db.flush()
 
     # Vincular la redención al pago recién creado.
     if gift_redemption is not None:

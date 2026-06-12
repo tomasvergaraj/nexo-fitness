@@ -402,6 +402,10 @@ class Payment(Base):
     membership_status_snapshot: Mapped[Optional[str]] = mapped_column(String(20))
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     refunded_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Arqueo (Etapa 1): caja a la que se imputó el efectivo de un cobro de plan en mostrador.
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cash_register_sessions.id", ondelete="SET NULL"), index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

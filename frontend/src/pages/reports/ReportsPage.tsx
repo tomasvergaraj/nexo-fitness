@@ -35,10 +35,18 @@ import {
 import { reportsApi, posApi, settingsApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatCurrency, parseApiNumber } from '@/utils';
-import type { ReportsOverview, SalesBreakdown, CashSession } from '@/types';
+import type {
+  ReportsOverview,
+  SalesBreakdown,
+  CashSession,
+  PosSalesSummary,
+  PosSalesReport,
+  PosSalesTimeseries,
+} from '@/types';
 
 type RangeKey = '30d' | '90d' | '12m';
-type TabKey = 'members' | 'pl' | 'caja';
+type TabKey = 'members' | 'pl' | 'caja' | 'pos';
+type PosDimension = 'product' | 'category' | 'cashier';
 type CajaPeriod = 'day' | 'week' | 'month' | 'year';
 
 const CAJA_PERIODS: { value: CajaPeriod; label: string }[] = [
@@ -77,6 +85,28 @@ function exportCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(link.href);
 }
 
+const POS_DIMENSIONS: { value: PosDimension; label: string }[] = [
+  { value: 'product', label: 'Producto' },
+  { value: 'category', label: 'Categor\u00eda' },
+  { value: 'cashier', label: 'Cajero' },
+];
+
+const POS_DIM_LABEL: Record<PosDimension, string> = {
+  product: 'producto',
+  category: 'categor\u00eda',
+  cashier: 'cajero',
+};
+
+// El backend agrupa la serie por d\u00eda/mes en la zona del tenant; el per\u00edodo llega
+// como 'YYYY-MM-DD'. Forzar hora local evita el corrimiento de un d\u00eda.
+function fmtPeriod(iso: string, gran: 'day' | 'month'): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return gran === 'month'
+    ? d.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' })
+    : d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' });
+}
+
 type AttendanceReport = {
   classes: Array<{
     name: string;
@@ -112,6 +142,8 @@ export default function ReportsPage() {
   const [range, setRange] = useState<RangeKey>('12m');
   const [tab, setTab] = useState<TabKey>('members');
   const [cajaPeriod, setCajaPeriod] = useState<CajaPeriod>('month');
+  const [posPeriod, setPosPeriod] = useState<CajaPeriod>('month');
+  const [posDim, setPosDim] = useState<PosDimension>('product');
 
   const { from: cajaFrom, to: cajaTo } = useMemo(() => cajaRange(cajaPeriod), [cajaPeriod]);
 
@@ -138,6 +170,51 @@ export default function ReportsPage() {
     [breakdown],
   );
   const methodTotal = useMemo(() => methodData.reduce((s, m) => s + m.total, 0), [methodData]);
+
+  // ── Ventas POS (Etapa 0) ──
+  const { from: posFrom, to: posTo } = useMemo(() => cajaRange(posPeriod), [posPeriod]);
+  const posGran: 'day' | 'month' = posPeriod === 'year' ? 'month' : 'day';
+
+  const { data: posSummary, isLoading: posSummaryLoading } = useQuery<PosSalesSummary>({
+    queryKey: ['pos-report-summary', posFrom, posTo],
+    queryFn: () => posApi.reportSummary({ from_date: posFrom, to_date: posTo }).then((r) => r.data),
+    enabled: tab === 'pos',
+  });
+
+  const { data: posTs } = useQuery<PosSalesTimeseries>({
+    queryKey: ['pos-report-ts', posFrom, posTo, posGran],
+    queryFn: () => posApi.reportTimeseries({ from_date: posFrom, to_date: posTo, granularity: posGran }).then((r) => r.data),
+    enabled: tab === 'pos',
+  });
+
+  const { data: posReport, isLoading: posReportLoading } = useQuery<PosSalesReport>({
+    queryKey: ['pos-report-dim', posDim, posFrom, posTo],
+    queryFn: () => posApi.reportByDimension({ dimension: posDim, from_date: posFrom, to_date: posTo, limit: 100 }).then((r) => r.data),
+    enabled: tab === 'pos',
+  });
+
+  const posSeries = useMemo(
+    () => (posTs?.points ?? []).map((p) => ({
+      period: p.period,
+      revenue: parseApiNumber(p.revenue),
+      margin: parseApiNumber(p.margin),
+    })),
+    [posTs],
+  );
+
+  const posRows = useMemo(
+    () => (posReport?.rows ?? []).map((r) => ({
+      key: r.key,
+      label: r.label,
+      sku: r.sku ?? null,
+      units: Number(r.units),
+      revenue: parseApiNumber(r.revenue),
+      cost: parseApiNumber(r.cost),
+      margin: parseApiNumber(r.margin),
+      margin_pct: parseApiNumber(r.margin_pct),
+    })),
+    [posReport],
+  );
 
   const { data, isLoading, isError } = useQuery<ReportsOverview>({
     queryKey: ['reports-overview', range],
@@ -277,6 +354,19 @@ export default function ReportsPage() {
         >
           <Banknote size={15} />
           Caja / Métodos de pago
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('pos')}
+          className={cn(
+            'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+            tab === 'pos'
+              ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
+              : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+          )}
+        >
+          <ShoppingBag size={15} />
+          Ventas POS
         </button>
       </div>
 
@@ -913,6 +1003,174 @@ export default function ReportsPage() {
                       </tr>
                     ))}
                   </tbody>
+                </table>
+              )}
+            </div>
+          </motion.div>
+        </>
+      )}
+
+      {/* ── TAB: VENTAS POS ── */}
+      {tab === 'pos' && (
+        <>
+          {/* Period selector */}
+          <motion.div variants={fadeInUp} className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex gap-1 rounded-xl border border-surface-200/50 bg-surface-50 p-1 dark:border-surface-800/50 dark:bg-surface-900/50 w-fit">
+              {CAJA_PERIODS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setPosPeriod(p.value)}
+                  className={cn(
+                    'rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                    posPeriod === p.value
+                      ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
+                      : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* KPI cards */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {posSummaryLoading
+              ? Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-28 rounded-3xl" />)
+              : [
+                  { label: 'Ventas netas', value: formatCurrency(parseApiNumber(posSummary?.net_sales)), sub: `${posSummary?.transaction_count ?? 0} ventas`, icon: Wallet, accent: 'text-brand-500' },
+                  { label: 'Margen bruto', value: formatCurrency(parseApiNumber(posSummary?.gross_margin)), sub: `${parseApiNumber(posSummary?.margin_pct).toFixed(1)}% sobre ventas`, icon: TrendingUp, accent: 'text-emerald-500' },
+                  { label: 'Ticket promedio', value: formatCurrency(parseApiNumber(posSummary?.avg_ticket)), sub: `${posSummary?.units_sold ?? 0} unidades`, icon: ShoppingBag, accent: 'text-cyan-500' },
+                  { label: 'Costo mercadería', value: formatCurrency(parseApiNumber(posSummary?.cogs)), sub: 'COGS del período', icon: Package, accent: 'text-violet-500' },
+                  { label: 'Gastos', value: formatCurrency(parseApiNumber(posSummary?.expenses_total)), sub: `Devoluciones: ${formatCurrency(parseApiNumber(posSummary?.refund_total))}`, icon: TrendingDown, accent: 'text-rose-500' },
+                  { label: 'Utilidad (− gastos)', value: formatCurrency(parseApiNumber(posSummary?.net_profit)), sub: 'Margen bruto − gastos', icon: Banknote, accent: parseApiNumber(posSummary?.net_profit) >= 0 ? 'text-emerald-500' : 'text-rose-500' },
+                ].map((card) => {
+                  const Icon = card.icon;
+                  return (
+                    <motion.div
+                      key={card.label}
+                      variants={fadeInUp}
+                      className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900"
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-surface-500">{card.label}</p>
+                        <Icon size={18} className={card.accent} />
+                      </div>
+                      <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{card.value}</p>
+                      <p className="mt-0.5 text-xs text-surface-400">{card.sub}</p>
+                    </motion.div>
+                  );
+                })}
+          </div>
+
+          {/* Sales + margin over time */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Ventas y margen en el tiempo</h2>
+            <p className="mt-1 text-sm text-surface-500">Ingresos y margen bruto por período</p>
+            <div className="mt-5 h-[300px]">
+              {posSeries.length === 0 ? (
+                <p className="py-20 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={posSeries}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-surface-100 dark:text-surface-800" />
+                    <XAxis dataKey="period" tickFormatter={(v: string) => fmtPeriod(v, posGran)} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [formatCurrency(value), name === 'revenue' ? 'Ingresos' : 'Margen']}
+                      labelFormatter={(label: string) => fmtPeriod(label, posGran)}
+                    />
+                    <Legend formatter={(value) => (value === 'revenue' ? 'Ingresos' : 'Margen')} />
+                    <Area type="monotone" dataKey="revenue" stroke="#06b6d4" strokeWidth={2} fill="#06b6d420" />
+                    <Line type="monotone" dataKey="margin" stroke="#10b981" strokeWidth={2} dot={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Breakdown by dimension */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Desglose de ventas</h2>
+                <p className="mt-1 text-sm text-surface-500">Por {POS_DIM_LABEL[posDim]}, con margen</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex gap-1 rounded-xl border border-surface-200/50 bg-surface-50 p-1 dark:border-surface-800/50 dark:bg-surface-900/50">
+                  {POS_DIMENSIONS.map((d) => (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() => setPosDim(d.value)}
+                      className={cn(
+                        'rounded-lg px-3 py-1.5 text-sm font-medium transition-all',
+                        posDim === d.value
+                          ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
+                          : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+                      )}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  disabled={posRows.length === 0}
+                  onClick={() => exportCsv(`ventas-${posDim}-${posPeriod}.csv`, [
+                    ['Nombre', 'SKU', 'Unidades', 'Ingresos', 'Costo', 'Margen', 'Margen %'],
+                    ...posRows.map((r) => [r.label, r.sku ?? '', String(r.units), String(r.revenue), String(r.cost), String(r.margin), `${r.margin_pct.toFixed(1)}%`]),
+                  ])}
+                  className="btn-secondary"
+                >
+                  <Download size={16} />
+                  Exportar
+                </button>
+              </div>
+            </div>
+            <div className="mt-5 overflow-x-auto">
+              {posReportLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}
+                </div>
+              ) : posRows.length === 0 ? (
+                <p className="py-12 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+              ) : (
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                      <th className="px-2 py-2 font-medium">{posDim === 'cashier' ? 'Cajero' : posDim === 'category' ? 'Categoría' : 'Producto'}</th>
+                      {posDim === 'product' && <th className="px-2 py-2 font-medium">SKU</th>}
+                      <th className="px-2 py-2 text-right font-medium">Unidades</th>
+                      <th className="px-2 py-2 text-right font-medium">Ingresos</th>
+                      <th className="px-2 py-2 text-right font-medium">Costo</th>
+                      <th className="px-2 py-2 text-right font-medium">Margen</th>
+                      <th className="px-2 py-2 text-right font-medium">Margen %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {posRows.map((r) => (
+                      <tr key={r.key ?? r.label} className="border-b border-surface-50 dark:border-surface-800/50">
+                        <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.label}</td>
+                        {posDim === 'product' && <td className="px-2 py-2.5 text-surface-400">{r.sku ?? '—'}</td>}
+                        <td className="px-2 py-2.5 text-right tabular-nums">{r.units}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(r.revenue)}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums text-surface-500">{formatCurrency(r.cost)}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(r.margin)}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums text-surface-500">{r.margin_pct.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-surface-200 font-semibold dark:border-surface-700">
+                      <td className="px-2 py-2.5" colSpan={posDim === 'product' ? 3 : 2}>Total</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(parseApiNumber(posReport?.total_revenue))}</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums text-surface-500">{formatCurrency(parseApiNumber(posReport?.total_cost))}</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(parseApiNumber(posReport?.total_margin))}</td>
+                      <td className="px-2 py-2.5" />
+                    </tr>
+                  </tfoot>
                 </table>
               )}
             </div>

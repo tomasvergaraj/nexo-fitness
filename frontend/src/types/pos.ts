@@ -99,6 +99,8 @@ export interface POSTransaction {
   branch_id?: string | null;
   cashier_id?: string | null;
   cashier_name?: string | null;
+  client_id?: string | null;
+  client_name?: string | null;
   subtotal: number;
   discount_amount: number;
   total: number;
@@ -117,6 +119,8 @@ export interface Expense {
   description: string;
   receipt_url?: string | null;
   expense_date: string;
+  paid_from_cash?: boolean;
+  session_id?: string | null;
   created_by?: string | null;
   created_at: string;
 }
@@ -148,6 +152,10 @@ export interface CashSession {
   sales_total: number;
   sales_count: number;
   cash_sales: number;
+  membership_cash: number;
+  cash_refunds: number;
+  cash_expenses: number;
+  cash_credit_payments: number;
   by_method: PaymentMethodBreakdownRow[];
 }
 
@@ -157,4 +165,102 @@ export interface SalesBreakdown {
   total: number;
   transaction_count: number;
   by_method: PaymentMethodBreakdownRow[];
+}
+
+// ─── Reportería del dueño (Etapa 0) ────────────────────────────────────────────
+// La API serializa Decimal como string; usar parseApiNumber al consumir.
+
+export interface PosSalesSummary {
+  from_date: string;
+  to_date: string;
+  gross_sales: number;
+  discounts: number;
+  gift_card: number;
+  net_sales: number;
+  cogs: number;
+  gross_margin: number;
+  margin_pct: number;
+  transaction_count: number;
+  units_sold: number;
+  avg_ticket: number;
+  refund_count: number;
+  refund_total: number;
+  expenses_total: number;
+  net_profit: number;
+  by_method: PaymentMethodBreakdownRow[];
+}
+
+export interface PosSalesReportRow {
+  key: string | null;
+  label: string;
+  sku?: string | null;
+  units: number;
+  transaction_count: number;
+  revenue: number;
+  cost: number;
+  margin: number;
+  margin_pct: number;
+}
+
+export interface PosSalesReport {
+  from_date: string;
+  to_date: string;
+  dimension: 'category' | 'product' | 'cashier';
+  rows: PosSalesReportRow[];
+  total_revenue: number;
+  total_cost: number;
+  total_margin: number;
+}
+
+export interface PosSalesTimeseriesPoint {
+  period: string;
+  revenue: number;
+  cost: number;
+  margin: number;
+  transaction_count: number;
+}
+
+export interface PosSalesTimeseries {
+  from_date: string;
+  to_date: string;
+  granularity: 'day' | 'week' | 'month';
+  points: PosSalesTimeseriesPoint[];
+}
+
+// ─── Fiados / cuenta corriente de socios (Etapa 2) ──────────────────────────────
+
+export interface ClientDebtor {
+  client_id: string;
+  client_name: string;
+  email?: string | null;
+  phone?: string | null;
+  charges_total: number;
+  payments_total: number;
+  balance: number;
+  last_entry_at?: string | null;
+}
+
+export interface DebtorsResponse {
+  rows: ClientDebtor[];
+  total_outstanding: number;
+}
+
+export interface ClientAccountEntry {
+  id: string;
+  kind: 'charge' | 'payment';
+  amount: number;
+  payment_method?: string | null;
+  pos_transaction_id?: string | null;
+  notes?: string | null;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  created_at: string;
+  balance_after: number;
+}
+
+export interface ClientAccountStatement {
+  client_id: string;
+  client_name: string;
+  balance: number;
+  entries: ClientAccountEntry[];
 }
