@@ -107,6 +107,38 @@ function fmtPeriod(iso: string, gran: 'day' | 'month'): string {
     : d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' });
 }
 
+// ── Selector de fecha específica para Ventas POS ──
+type PosScope = 'day' | 'month' | 'year';
+
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function toYM(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Rango [from, to] en hora local (ISO) para un alcance + ancla específicos.
+function posRange(scope: PosScope, day: string, month: string, year: number): { from: string; to: string } {
+  if (scope === 'day') {
+    const [y, m, d] = day.split('-').map(Number);
+    return {
+      from: new Date(y, m - 1, d, 0, 0, 0, 0).toISOString(),
+      to: new Date(y, m - 1, d, 23, 59, 59, 999).toISOString(),
+    };
+  }
+  if (scope === 'month') {
+    const [y, m] = month.split('-').map(Number);
+    return {
+      from: new Date(y, m - 1, 1, 0, 0, 0, 0).toISOString(),
+      to: new Date(y, m, 0, 23, 59, 59, 999).toISOString(),   // día 0 del mes siguiente = último día
+    };
+  }
+  return {
+    from: new Date(year, 0, 1, 0, 0, 0, 0).toISOString(),
+    to: new Date(year, 11, 31, 23, 59, 59, 999).toISOString(),
+  };
+}
+
 type AttendanceReport = {
   classes: Array<{
     name: string;
@@ -142,7 +174,10 @@ export default function ReportsPage() {
   const [range, setRange] = useState<RangeKey>('12m');
   const [tab, setTab] = useState<TabKey>('members');
   const [cajaPeriod, setCajaPeriod] = useState<CajaPeriod>('month');
-  const [posPeriod, setPosPeriod] = useState<CajaPeriod>('month');
+  const [posScope, setPosScope] = useState<PosScope>('month');
+  const [posDay, setPosDay] = useState<string>(() => toYMD(new Date()));
+  const [posMonth, setPosMonth] = useState<string>(() => toYM(new Date()));
+  const [posYear, setPosYear] = useState<number>(() => new Date().getFullYear());
   const [posDim, setPosDim] = useState<PosDimension>('product');
 
   const { from: cajaFrom, to: cajaTo } = useMemo(() => cajaRange(cajaPeriod), [cajaPeriod]);
@@ -171,9 +206,19 @@ export default function ReportsPage() {
   );
   const methodTotal = useMemo(() => methodData.reduce((s, m) => s + m.total, 0), [methodData]);
 
-  // ── Ventas POS (Etapa 0) ──
-  const { from: posFrom, to: posTo } = useMemo(() => cajaRange(posPeriod), [posPeriod]);
-  const posGran: 'day' | 'month' = posPeriod === 'year' ? 'month' : 'day';
+  // ── Ventas POS (Etapa 0) ── fecha específica seleccionable
+  const { from: posFrom, to: posTo } = useMemo(
+    () => posRange(posScope, posDay, posMonth, posYear),
+    [posScope, posDay, posMonth, posYear],
+  );
+  const posGran: 'day' | 'month' = posScope === 'year' ? 'month' : 'day';
+  const posLabel = posScope === 'day' ? posDay : posScope === 'month' ? posMonth : String(posYear);
+  const posYears = useMemo(() => {
+    const cur = new Date().getFullYear();
+    return Array.from({ length: 6 }, (_, i) => cur - i);
+  }, []);
+  const todayYMD = toYMD(new Date());
+  const todayYM = toYM(new Date());
 
   const { data: posSummary, isLoading: posSummaryLoading } = useQuery<PosSalesSummary>({
     queryKey: ['pos-report-summary', posFrom, posTo],
@@ -1013,25 +1058,52 @@ export default function ReportsPage() {
       {/* ── TAB: VENTAS POS ── */}
       {tab === 'pos' && (
         <>
-          {/* Period selector */}
-          <motion.div variants={fadeInUp} className="flex flex-wrap items-center justify-between gap-3">
+          {/* Period selector: alcance + fecha específica */}
+          <motion.div variants={fadeInUp} className="flex flex-wrap items-center gap-3">
             <div className="flex gap-1 rounded-xl border border-surface-200/50 bg-surface-50 p-1 dark:border-surface-800/50 dark:bg-surface-900/50 w-fit">
-              {CAJA_PERIODS.map((p) => (
+              {([['day', 'Día'], ['month', 'Mes'], ['year', 'Año']] as [PosScope, string][]).map(([value, label]) => (
                 <button
-                  key={p.value}
+                  key={value}
                   type="button"
-                  onClick={() => setPosPeriod(p.value)}
+                  onClick={() => setPosScope(value)}
                   className={cn(
                     'rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                    posPeriod === p.value
+                    posScope === value
                       ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
                       : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
                   )}
                 >
-                  {p.label}
+                  {label}
                 </button>
               ))}
             </div>
+            {posScope === 'day' && (
+              <input
+                type="date"
+                value={posDay}
+                max={todayYMD}
+                onChange={(e) => e.target.value && setPosDay(e.target.value)}
+                className="input w-auto text-sm"
+              />
+            )}
+            {posScope === 'month' && (
+              <input
+                type="month"
+                value={posMonth}
+                max={todayYM}
+                onChange={(e) => e.target.value && setPosMonth(e.target.value)}
+                className="input w-auto text-sm"
+              />
+            )}
+            {posScope === 'year' && (
+              <select
+                value={posYear}
+                onChange={(e) => setPosYear(Number(e.target.value))}
+                className="input w-auto text-sm"
+              >
+                {posYears.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            )}
           </motion.div>
 
           {/* KPI cards */}
@@ -1147,7 +1219,7 @@ export default function ReportsPage() {
                 <button
                   type="button"
                   disabled={posRows.length === 0}
-                  onClick={() => exportCsv(`ventas-${posDim}-${posPeriod}.csv`, [
+                  onClick={() => exportCsv(`ventas-${posDim}-${posLabel}.csv`, [
                     ['Nombre', 'SKU', 'Unidades', 'Ingresos', 'Costo', 'Margen', 'Margen %'],
                     ...posRows.map((r) => [r.label, r.sku ?? '', String(r.units), String(r.revenue), String(r.cost), String(r.margin), `${r.margin_pct.toFixed(1)}%`]),
                   ])}
