@@ -268,12 +268,11 @@ function NavGroup({
 // ─── Main component ────────────────────────────────────────────
 
 function getInitialOpenGroups(pathname: string, role?: UserRole | null): Record<string, boolean> {
-  const result: Record<string, boolean> = {};
-  tenantNavGroups.forEach((group) => {
-    const hasActive = group.items.some((item) => isPathActive(item.path, pathname, role));
-    result[group.key] = group.key === 'operacion' ? true : hasActive;
-  });
-  return result;
+  // Acordeón: arranca con un solo grupo abierto (el de la ruta activa, o 'operacion').
+  const active = tenantNavGroups.find((group) =>
+    group.items.some((item) => isPathActive(item.path, pathname, role)),
+  );
+  return { [active ? active.key : 'operacion']: true };
 }
 
 export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
@@ -288,17 +287,19 @@ export default function Sidebar({ isOpen, onToggle }: SidebarProps) {
     () => getInitialOpenGroups(location.pathname, userRole),
   );
 
-  // Auto-open group when navigating to one of its items
+  // Auto-open group when navigating to one of its items (acordeón: solo uno abierto)
   useEffect(() => {
-    tenantNavGroups.forEach((group) => {
-      if (group.items.some((item) => isPathActive(item.path, location.pathname, userRole))) {
-        setOpenGroups((prev) => (prev[group.key] ? prev : { ...prev, [group.key]: true }));
-      }
-    });
+    const active = tenantNavGroups.find((group) =>
+      group.items.some((item) => isPathActive(item.path, location.pathname, userRole)),
+    );
+    if (active) {
+      setOpenGroups((prev) => (prev[active.key] ? prev : { [active.key]: true }));
+    }
   }, [location.pathname, userRole]);
 
+  // Acordeón: al expandir un grupo se retraen los demás.
   const toggleGroup = (key: string) => {
-    setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+    setOpenGroups((prev) => (prev[key] ? {} : { [key]: true }));
   };
 
   const handleNavigate = () => {
