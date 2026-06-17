@@ -53,11 +53,17 @@ from app.schemas.pos import (
     ClientAccountEntryResponse,
     ClientAccountStatementResponse,
     ClientDebtorRow,
+    CreditLimitUpdate,
+    CreditPaymentRow,
     DebtorsResponse,
     ExpenseCreate,
     ExpenseResponse,
     ExpenseUpdate,
+    InventoryReportResponse,
+    InventoryReportRow,
     PaymentMethodBreakdownRow,
+    PurchaseSupplierRow,
+    PurchasesReportResponse,
     POSRefundRequest,
     SalesBreakdownResponse,
     SalesReportResponse,
@@ -151,6 +157,43 @@ def compute_expected_cash(
 def cash_difference(counted: Decimal, expected: Decimal) -> Decimal:
     """Descuadre: positivo = sobra efectivo, negativo = falta."""
     return counted - expected
+
+
+# Medios válidos para un abono o un abono al momento (fiado parcial):
+# cualquier medio real de cobro, nunca 'credit'/'mixed'/'refund'.
+CREDIT_PAYMENT_METHODS = {
+    "cash", "debit_card", "credit_card", "transfer", "other",
+    "stripe", "webpay", "tuu", "mercadopago", "fintoc",
+}
+
+
+def is_valid_credit_payment_method(method: str) -> bool:
+    """True si `method` puede usarse para cobrar un abono o el pie de un fiado."""
+    return method in CREDIT_PAYMENT_METHODS
+
+
+def credit_limit_exceeded(
+    current_balance: Decimal, charge_amount: Decimal, credit_limit: Optional[Decimal]
+) -> bool:
+    """True si sumar `charge_amount` a la deuda dejaría al socio sobre su tope.
+
+    credit_limit None = sin límite → nunca se excede.
+    """
+    if credit_limit is None:
+        return False
+    return (current_balance + charge_amount) > credit_limit
+
+
+def _credit_limit_mode(ctx: TenantContext) -> str:
+    """Modo de aplicación del tope de crédito del tenant: 'off' | 'warn' | 'block'."""
+    tenant = getattr(ctx, "tenant", None)
+    if tenant is None or not tenant.features:
+        return "warn"
+    try:
+        mode = json.loads(tenant.features).get("credit_limit_mode", "warn")
+    except (ValueError, TypeError):
+        return "warn"
+    return mode if mode in ("off", "warn", "block") else "warn"
 
 
 async def _get_product_or_404(db: AsyncSession, product_id: UUID, tenant_id: UUID) -> Product:
@@ -1107,6 +1150,15 @@ async def create_transaction(
     if is_credit and body.gift_card_code and body.gift_card_code.strip():
         raise HTTPException(status_code=400, detail="No se puede usar gift card en una venta a crédito.")
 
+    # ── fiado parcial: validar el método del abono al momento ─────────────────
+    down_payment = body.credit_down_payment or Decimal("0")
+    if not is_credit and down_payment > 0:
+        raise HTTPException(status_code=400, detail="El abono al momento solo aplica a ventas a crédito (fiado).")
+    if is_credit and down_payment < 0:
+        raise HTTPException(status_code=400, detail="El abono al momento no puede ser negativo.")
+    if is_credit and down_payment > 0 and not is_valid_credit_payment_method(body.credit_down_payment_method):
+        raise HTTPException(status_code=400, detail=f"Método de abono inválido: {body.credit_down_payment_method}")
+
     # ── validate and lock inventory rows ──────────────────────────────────────
     product_ids = [item.product_id for item in body.items]
     products = {
@@ -1155,6 +1207,40 @@ async def create_transaction(
     )
     discount = body.discount_amount
     total = subtotal - discount
+
+    # ── fiado: validar abono al momento y tope de crédito sobre el total ──────
+    credit_debt = Decimal("0")
+    if is_credit:
+        if down_payment > total:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El abono al momento (${down_payment}) supera el total (${total}).",
+            )
+        if down_payment == total:
+            raise HTTPException(
+                status_code=400,
+                detail="El abono cubre el total: registra una venta normal, no un fiado.",
+            )
+        credit_debt = total - down_payment  # lo que realmente queda como deuda
+        mode = _credit_limit_mode(ctx)
+        if mode == "block" and selected_client is not None:
+            # Lock de la fila del socio para serializar fiados concurrentes. El saldo
+            # es un SUM sobre el ledger (no hay fila que candar), así que dos cajas
+            # podrían leer el mismo saldo viejo, validar OK y ambas insertar el cargo,
+            # saltándose el límite. Lockeando la fila dueña de la cuenta, la segunda
+            # venta espera al commit de la primera y revalida contra el saldo fresco.
+            await db.execute(
+                select(User.id).where(User.id == selected_client.id).with_for_update()
+            )
+            current_balance = await _client_balance(db, ctx.tenant_id, selected_client.id)
+            if credit_limit_exceeded(current_balance, credit_debt, selected_client.credit_limit):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"La venta deja la deuda de {selected_client.first_name} en "
+                        f"${current_balance + credit_debt}, sobre su límite de ${selected_client.credit_limit}."
+                    ),
+                )
 
     if is_mixed:
         paid = sum((p.amount for p in body.payments), Decimal("0"))
@@ -1253,7 +1339,7 @@ async def create_transaction(
         tx.gift_card_amount = redemption.amount
         tx.total = tx.total - redemption.amount
 
-    # ── fiado: registra el cargo en la cuenta corriente del socio ─────────────
+    # ── fiado: registra el cargo (y el abono al momento si lo hubo) ───────────
     if is_credit:
         db.add(
             ClientAccountEntry(
@@ -1264,11 +1350,31 @@ async def create_transaction(
                 kind="charge",
                 amount=tx.total,
                 pos_transaction_id=tx.id,
+                session_id=session.id,   # enlaza el turno → "fiado otorgado" del arqueo
                 notes=body.notes,
                 created_by=user.id,
                 created_at=now,
             )
         )
+        # Fiado parcial: el abono al momento se registra como un abono más. Si es
+        # en efectivo, entra al arqueo del turno (cash_credit_payments).
+        if down_payment > 0:
+            db.add(
+                ClientAccountEntry(
+                    id=uuid4(),
+                    tenant_id=ctx.tenant_id,
+                    branch_id=body.branch_id,
+                    client_id=body.client_id,
+                    kind="payment",
+                    amount=down_payment,
+                    payment_method=body.credit_down_payment_method,
+                    pos_transaction_id=tx.id,
+                    session_id=session.id,
+                    notes="Abono al momento de la venta",
+                    created_by=user.id,
+                    created_at=now,
+                )
+            )
 
     await db.commit()
     await db.refresh(tx)
@@ -1665,6 +1771,47 @@ async def _session_cash_live(db: AsyncSession, tenant_id: UUID, session_id: UUID
     }
 
 
+async def _session_credit_breakdown(db: AsyncSession, tenant_id: UUID, session_id: UUID) -> dict:
+    """Fiados del turno: total otorgado (cargos) y abonos recibidos por medio.
+
+    Los entries de cuenta corriente son inmutables, así que esto se recalcula
+    igual para turnos abiertos o cerrados (no necesita snapshot).
+    """
+    credit_given = Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(ClientAccountEntry.amount), 0)).where(
+                ClientAccountEntry.tenant_id == tenant_id,
+                ClientAccountEntry.session_id == session_id,
+                ClientAccountEntry.kind == "charge",
+            )
+        )).scalar_one()
+    )
+    rows = (await db.execute(
+        select(
+            ClientAccountEntry.payment_method,
+            func.count().label("count"),
+            func.coalesce(func.sum(ClientAccountEntry.amount), 0).label("amount"),
+        )
+        .where(
+            ClientAccountEntry.tenant_id == tenant_id,
+            ClientAccountEntry.session_id == session_id,
+            ClientAccountEntry.kind == "payment",
+        )
+        .group_by(ClientAccountEntry.payment_method)
+    )).all()
+    by_method = [
+        CreditPaymentRow(
+            method=r.payment_method or "other",
+            label=_payment_label(r.payment_method or "other"),
+            count=r.count,
+            amount=Decimal(r.amount),
+        )
+        for r in rows
+    ]
+    by_method.sort(key=lambda x: x.method)
+    return {"credit_given": credit_given, "credit_payments_by_method": by_method}
+
+
 async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> CashSessionResponse:
     if s.status == CashSessionStatus.OPEN:
         c = await _session_cash_live(db, s.tenant_id, s.id)
@@ -1693,6 +1840,8 @@ async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> C
         cash_expenses = s.cash_expenses or Decimal("0")
         cash_credit_payments = s.cash_credit_payments or Decimal("0")
 
+    credit = await _session_credit_breakdown(db, s.tenant_id, s.id)
+
     return CashSessionResponse(
         id=s.id,
         branch_id=s.branch_id,
@@ -1716,6 +1865,8 @@ async def _build_session_response(db: AsyncSession, s: CashRegisterSession) -> C
         cash_expenses=cash_expenses,
         cash_credit_payments=cash_credit_payments,
         by_method=by_method,
+        credit_given=credit["credit_given"],
+        credit_payments_by_method=credit["credit_payments_by_method"],
     )
 
 
@@ -1928,6 +2079,21 @@ def _signed(kind: str, amount: Decimal) -> Decimal:
     return amount if kind == "charge" else -amount
 
 
+async def _client_balance(db: AsyncSession, tenant_id: UUID, client_id: UUID) -> Decimal:
+    """Saldo deudor vigente del socio: Σ cargos − Σ abonos."""
+    return Decimal(
+        (await db.execute(
+            select(func.coalesce(func.sum(
+                case((ClientAccountEntry.kind == "charge", ClientAccountEntry.amount),
+                     else_=-ClientAccountEntry.amount)
+            ), 0)).where(
+                ClientAccountEntry.tenant_id == tenant_id,
+                ClientAccountEntry.client_id == client_id,
+            )
+        )).scalar_one()
+    )
+
+
 @pos_router.get("/account/debtors", response_model=DebtorsResponse)
 async def list_debtors(
     db: AsyncSession = Depends(get_db),
@@ -1953,16 +2119,20 @@ async def list_debtors(
             User.last_name,
             User.email,
             User.phone,
+            User.credit_limit,
             charges.label("charges_total"),
             payments.label("payments_total"),
             balance.label("balance"),
             func.max(ClientAccountEntry.created_at).label("last_entry_at"),
+            func.min(
+                case((ClientAccountEntry.kind == "charge", ClientAccountEntry.created_at))
+            ).label("oldest_charge_at"),
         )
         .join(User, User.id == ClientAccountEntry.client_id)
         .where(ClientAccountEntry.tenant_id == ctx.tenant_id)
         .group_by(
             ClientAccountEntry.client_id,
-            User.first_name, User.last_name, User.email, User.phone,
+            User.first_name, User.last_name, User.email, User.phone, User.credit_limit,
         )
         .having(balance > 0)
         .order_by(balance.desc())
@@ -1981,7 +2151,9 @@ async def list_debtors(
             charges_total=Decimal(r.charges_total),
             payments_total=Decimal(r.payments_total),
             balance=bal,
+            credit_limit=r.credit_limit,
             last_entry_at=r.last_entry_at,
+            oldest_charge_at=r.oldest_charge_at,
         ))
     return DebtorsResponse(rows=out, total_outstanding=total_outstanding)
 
@@ -2031,6 +2203,7 @@ async def client_account_statement(
         client_id=client.id,
         client_name=f"{client.first_name} {client.last_name}",
         balance=running,
+        credit_limit=client.credit_limit,
         entries=rows,
     )
 
@@ -2047,11 +2220,14 @@ async def register_account_payment(
     una caja abierta en la sucursal, se imputa a su arqueo."""
     client = await _client_or_404(db, ctx.tenant_id, client_id)
 
-    # un abono en efectivo entra al arqueo del turno abierto de la sucursal (si existe)
-    session_id = None
-    if body.payment_method == "cash":
-        open_session = await _open_session_for_branch(db, ctx.tenant_id, body.branch_id)
-        session_id = open_session.id if open_session else None
+    if not is_valid_credit_payment_method(body.payment_method):
+        raise HTTPException(status_code=400, detail=f"Método de abono inválido: {body.payment_method}")
+
+    # El abono se imputa al turno abierto de la sucursal (si existe), sea cual sea
+    # el medio: así el cierre lo muestra separado por medio. Solo el efectivo entra
+    # al efectivo esperado (cash_credit_payments filtra method='cash').
+    open_session = await _open_session_for_branch(db, ctx.tenant_id, body.branch_id)
+    session_id = open_session.id if open_session else None
 
     now = _now()
     entry = ClientAccountEntry(
@@ -2095,6 +2271,22 @@ async def register_account_payment(
         created_at=entry.created_at,
         balance_after=balance,
     )
+
+
+@pos_router.patch("/account/{client_id}/credit-limit", response_model=ClientAccountStatementResponse)
+async def set_client_credit_limit(
+    client_id: UUID,
+    body: CreditLimitUpdate,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Fijar / quitar el tope de deuda de un socio (None = sin límite)."""
+    client = await _client_or_404(db, ctx.tenant_id, client_id)
+    client.credit_limit = body.credit_limit
+    await db.commit()
+    # devuelve el estado de cuenta actualizado para refrescar la UI
+    return await client_account_statement(client_id, db, ctx, _user)
 
 
 # ─── Reportería del dueño (Etapa 0, solo lectura) ───────────────────────────────
@@ -2169,6 +2361,19 @@ async def sales_report_summary(
             .select_from(POSTransactionItem)
             .join(POSTransaction, POSTransactionItem.transaction_id == POSTransaction.id)
             .where(*completed)
+        )
+    ).one()
+
+    # Honestidad del margen: líneas vendidas sin costo registrado (unit_cost=0).
+    units_without_cost, products_without_cost = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(POSTransactionItem.quantity), 0),
+                func.count(func.distinct(POSTransactionItem.product_id)),
+            )
+            .select_from(POSTransactionItem)
+            .join(POSTransaction, POSTransactionItem.transaction_id == POSTransaction.id)
+            .where(*completed, POSTransactionItem.unit_cost == 0)
         )
     ).one()
 
@@ -2259,6 +2464,8 @@ async def sales_report_summary(
         transaction_count=int(tx_count),
         units_sold=int(units),
         avg_ticket=(net_d / tx_count) if tx_count else Decimal("0"),
+        units_without_cost=int(units_without_cost),
+        products_without_cost=int(products_without_cost),
         refund_count=int(refund_count),
         refund_total=Decimal(refund_total),
         expenses_total=expenses_d,
@@ -2420,6 +2627,133 @@ async def sales_report_timeseries(
         to_date=to_date,
         granularity=granularity,
         points=points,
+    )
+
+
+@pos_router.get("/reports/inventory", response_model=InventoryReportResponse)
+async def inventory_report(
+    branch_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Stock actual valorizado (stock × costo) + bajo stock / quiebre.
+
+    Valorización con el costo VIGENTE del producto (es stock de hoy, no ventas
+    pasadas). Productos sin costo se marcan (has_cost=False) y NO se valorizan
+    en total_value en vez de asumir cero.
+    """
+    tenant_id = ctx.tenant_id
+    q = (
+        select(Inventory, Product, ProductCategory.name)
+        .join(Product, Product.id == Inventory.product_id)
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .where(Inventory.tenant_id == tenant_id, Product.is_active == True)  # noqa: E712
+    )
+    if branch_id is not None:
+        q = q.where(Inventory.branch_id == branch_id)
+    else:
+        q = q.where(Inventory.branch_id.is_(None))
+    q = q.order_by(Product.name)
+
+    rows: list[InventoryReportRow] = []
+    total_value = Decimal("0")
+    total_units = 0
+    low_count = out_count = without_cost = 0
+    for inv, prod, cat_name in (await db.execute(q)).all():
+        qty = int(inv.quantity)
+        cost = Decimal(prod.cost or 0)
+        has_cost = cost > 0
+        out_of_stock = qty <= 0
+        low_stock = (not out_of_stock) and qty <= int(inv.min_stock)
+        value = (cost * qty) if (has_cost and qty > 0) else Decimal("0")
+        if has_cost and qty > 0:
+            total_value += value
+        total_units += max(qty, 0)
+        if out_of_stock:
+            out_count += 1
+        elif low_stock:
+            low_count += 1
+        if not has_cost and qty > 0:
+            without_cost += 1
+        rows.append(InventoryReportRow(
+            product_id=prod.id,
+            product_name=prod.name,
+            sku=prod.sku,
+            category=cat_name,
+            quantity=qty,
+            min_stock=int(inv.min_stock),
+            unit_cost=cost,
+            stock_value=value,
+            low_stock=low_stock,
+            out_of_stock=out_of_stock,
+            has_cost=has_cost,
+        ))
+    return InventoryReportResponse(
+        branch_id=branch_id,
+        rows=rows,
+        total_value=total_value,
+        total_units=total_units,
+        low_stock_count=low_count,
+        out_of_stock_count=out_count,
+        items_without_cost=without_cost,
+    )
+
+
+@pos_router.get("/reports/purchases", response_model=PurchasesReportResponse)
+async def purchases_report(
+    from_date: datetime,
+    to_date: datetime,
+    branch_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    ctx: TenantContext = Depends(get_tenant_context),
+    _user=Depends(require_roles("owner", "admin")),
+):
+    """Total comprado a proveedores en el período, por proveedor.
+
+    Cuenta órdenes RECIBIDAS (el stock entró) por su received_at en el rango.
+    """
+    tenant_id = ctx.tenant_id
+    conditions = [
+        PurchaseOrder.tenant_id == tenant_id,
+        PurchaseOrder.status == PurchaseOrderStatus.RECEIVED,
+        PurchaseOrder.received_at >= from_date,
+        PurchaseOrder.received_at <= to_date,
+    ]
+    if branch_id is not None:
+        conditions.append(PurchaseOrder.branch_id == branch_id)
+
+    q = (
+        select(
+            PurchaseOrder.supplier_id,
+            Supplier.name,
+            func.count(PurchaseOrder.id).label("orders_count"),
+            func.coalesce(func.sum(PurchaseOrder.total_cost), 0).label("total"),
+        )
+        .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+        .where(*conditions)
+        .group_by(PurchaseOrder.supplier_id, Supplier.name)
+        .order_by(func.coalesce(func.sum(PurchaseOrder.total_cost), 0).desc())
+    )
+    rows: list[PurchaseSupplierRow] = []
+    grand_total = Decimal("0")
+    orders_count = 0
+    for supplier_id, supplier_name, oc, total in (await db.execute(q)).all():
+        t = Decimal(total)
+        grand_total += t
+        orders_count += int(oc)
+        rows.append(PurchaseSupplierRow(
+            supplier_id=supplier_id,
+            supplier_name=supplier_name or "Sin proveedor",
+            orders_count=int(oc),
+            total=t,
+        ))
+    return PurchasesReportResponse(
+        from_date=from_date,
+        to_date=to_date,
+        rows=rows,
+        grand_total=grand_total,
+        orders_count=orders_count,
     )
 
 

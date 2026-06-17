@@ -670,6 +670,8 @@ class TenantSettingsUpdateRequest(BaseModel):
     referral_reward_days: Optional[int] = Field(default=None, ge=0, le=90)
     # Día de corte de reportería (1-28); None = mes calendario
     report_cutoff_day: Optional[int] = Field(default=None, ge=1, le=28)
+    # Fiados: cómo aplicar el límite de crédito por socio. off/warn/block.
+    credit_limit_mode: Optional[str] = Field(default=None, pattern=r"^(off|warn|block)$")
 
 
 class TenantSettingsResponse(BaseModel):
@@ -697,6 +699,7 @@ class TenantSettingsResponse(BaseModel):
     referral_reward_enabled: bool = False
     referral_reward_days: int = 7
     report_cutoff_day: Optional[int] = None
+    credit_limit_mode: str = "warn"
     branding: TenantBranding
 
 

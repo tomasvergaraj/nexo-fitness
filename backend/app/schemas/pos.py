@@ -222,6 +222,10 @@ class POSTransactionCreate(BaseModel):
     # Pago mixto: desglose por método. Si se envía (≥1 línea), la venta es mixta;
     # la suma debe igualar el total. No combinable con fiado ni gift card.
     payments: Optional[List[POSPaymentSplitIn]] = None
+    # Fiado parcial: monto que el socio abona al momento (efectivo/tarjeta/transferencia).
+    # El resto (total − abono) queda como deuda. Solo aplica a payment_method='credit'.
+    credit_down_payment: Decimal = Decimal("0")
+    credit_down_payment_method: str = "cash"
 
 
 class POSTransactionItemResponse(BaseModel):
@@ -333,6 +337,14 @@ class PaymentMethodBreakdownRow(BaseModel):
     total: Decimal
 
 
+class CreditPaymentRow(BaseModel):
+    """Abonos de fiado recibidos en un turno, agrupados por medio de pago."""
+    method: str
+    label: str
+    count: int
+    amount: Decimal
+
+
 class CashSessionResponse(BaseModel):
     id: UUID
     branch_id: Optional[UUID] = None
@@ -358,6 +370,9 @@ class CashSessionResponse(BaseModel):
     cash_expenses: Decimal = Decimal("0")      # gastos pagados de caja
     cash_credit_payments: Decimal = Decimal("0")  # abonos de fiados en efectivo
     by_method: List[PaymentMethodBreakdownRow] = []
+    # Fiados del turno (informativo, no afecta el efectivo esperado salvo abonos cash)
+    credit_given: Decimal = Decimal("0")          # fiado otorgado en el turno (cargos)
+    credit_payments_by_method: List[CreditPaymentRow] = []  # abonos recibidos por medio
 
 
 class SalesBreakdownResponse(BaseModel):
@@ -384,6 +399,10 @@ class SalesSummaryResponse(BaseModel):
     transaction_count: int = 0
     units_sold: int = 0
     avg_ticket: Decimal = Decimal("0")         # net_sales / transaction_count
+    # Honestidad del margen: unidades/productos vendidos sin costo registrado (unit_cost=0).
+    # Si > 0, el margen está sobreestimado; la UI debe advertirlo en vez de asumir cero.
+    units_without_cost: int = 0
+    products_without_cost: int = 0
     refund_count: int = 0
     refund_total: Decimal = Decimal("0")       # total de transacciones reembolsadas
     expenses_total: Decimal = Decimal("0")     # gastos del período
@@ -452,12 +471,55 @@ class ClientDebtorRow(BaseModel):
     charges_total: Decimal = Decimal("0")
     payments_total: Decimal = Decimal("0")
     balance: Decimal = Decimal("0")            # charges − payments (deuda vigente)
+    credit_limit: Optional[Decimal] = None     # tope de deuda; None = sin límite
     last_entry_at: Optional[datetime] = None
+    oldest_charge_at: Optional[datetime] = None  # primer cargo → antigüedad de la deuda
 
 
 class DebtorsResponse(BaseModel):
     rows: List[ClientDebtorRow] = []
     total_outstanding: Decimal = Decimal("0")  # suma de saldos positivos
+
+
+# ─── Reportes de inventario y compras (panel del dueño) ─────────────────────────
+
+class InventoryReportRow(BaseModel):
+    product_id: UUID
+    product_name: str
+    sku: Optional[str] = None
+    category: Optional[str] = None
+    quantity: int = 0
+    min_stock: int = 0
+    unit_cost: Decimal = Decimal("0")
+    stock_value: Decimal = Decimal("0")        # quantity * unit_cost
+    low_stock: bool = False                     # quantity <= min_stock (y > 0)
+    out_of_stock: bool = False                  # quantity <= 0
+    has_cost: bool = True                       # unit_cost > 0
+
+
+class InventoryReportResponse(BaseModel):
+    branch_id: Optional[UUID] = None
+    rows: List[InventoryReportRow] = []
+    total_value: Decimal = Decimal("0")         # suma de stock_value (solo con costo)
+    total_units: int = 0
+    low_stock_count: int = 0
+    out_of_stock_count: int = 0
+    items_without_cost: int = 0                  # productos con stock pero sin costo
+
+
+class PurchaseSupplierRow(BaseModel):
+    supplier_id: Optional[UUID] = None
+    supplier_name: str
+    orders_count: int = 0
+    total: Decimal = Decimal("0")
+
+
+class PurchasesReportResponse(BaseModel):
+    from_date: datetime
+    to_date: datetime
+    rows: List[PurchaseSupplierRow] = []
+    grand_total: Decimal = Decimal("0")
+    orders_count: int = 0
 
 
 class ClientAccountEntryResponse(BaseModel):
@@ -478,4 +540,10 @@ class ClientAccountStatementResponse(BaseModel):
     client_id: UUID
     client_name: str
     balance: Decimal = Decimal("0")
+    credit_limit: Optional[Decimal] = None     # tope de deuda; None = sin límite
     entries: List[ClientAccountEntryResponse] = []
+
+
+class CreditLimitUpdate(BaseModel):
+    """Fijar / quitar el tope de deuda de un socio. None = sin límite."""
+    credit_limit: Optional[Decimal] = Field(default=None, ge=0)

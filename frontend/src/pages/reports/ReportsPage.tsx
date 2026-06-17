@@ -2,16 +2,21 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
+  AlertTriangle,
   BarChart2,
   Banknote,
+  Boxes,
   ClipboardList,
+  Coins,
   Download,
   Filter,
   Package,
   ShoppingBag,
+  Truck,
   TrendingDown,
   TrendingUp,
   User,
+  Users,
   Wallet,
 } from 'lucide-react';
 import {
@@ -32,7 +37,7 @@ import {
   YAxis,
   Cell,
 } from 'recharts';
-import { reportsApi, posApi, settingsApi } from '@/services/api';
+import { reportsApi, posApi, settingsApi, branchesApi } from '@/services/api';
 import { fadeInUp, staggerContainer } from '@/utils/animations';
 import { cn, formatCurrency, parseApiNumber } from '@/utils';
 import type {
@@ -42,11 +47,17 @@ import type {
   PosSalesSummary,
   PosSalesReport,
   PosSalesTimeseries,
+  InventoryReport,
+  PurchasesReport,
+  DebtorsResponse,
+  InventoryMovementRow,
+  Branch,
 } from '@/types';
 
 type RangeKey = '30d' | '90d' | '12m';
 type TabKey = 'members' | 'pl' | 'caja' | 'pos';
 type PosDimension = 'product' | 'category' | 'cashier';
+type PosSection = 'ventas' | 'productos' | 'inventario' | 'compras' | 'fiados';
 type CajaPeriod = 'day' | 'week' | 'month' | 'year';
 
 const CAJA_PERIODS: { value: CajaPeriod; label: string }[] = [
@@ -97,6 +108,43 @@ const POS_DIM_LABEL: Record<PosDimension, string> = {
   cashier: 'cajero',
 };
 
+const POS_SECTIONS: { value: PosSection; label: string }[] = [
+  { value: 'ventas', label: 'Ventas' },
+  { value: 'productos', label: 'Productos' },
+  { value: 'inventario', label: 'Inventario' },
+  { value: 'compras', label: 'Compras' },
+  { value: 'fiados', label: 'Fiados' },
+];
+
+const MOV_LABEL: Record<string, string> = {
+  sale: 'Venta', purchase: 'Compra', adjustment: 'Ajuste',
+  return: 'Devoluci\u00f3n', loss: 'Merma', transfer: 'Transferencia',
+};
+const ORIGIN_LABEL: Record<string, string> = {
+  pos_transaction: 'Venta POS', purchase_order: 'Compra', manual: 'Ajuste manual',
+};
+function movLabel(t: string): string { return MOV_LABEL[t] ?? t; }
+function originLabel(r?: string | null): string { return r ? (ORIGIN_LABEL[r] ?? r) : '\u2014'; }
+
+// Antig\u00fcedad de una deuda en d\u00edas desde su cargo m\u00e1s antiguo.
+function agingDays(iso?: string | null): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+function agingLabel(days: number | null): string {
+  if (days == null) return '\u2014';
+  if (days === 0) return 'Hoy';
+  if (days === 1) return '1 d\u00eda';
+  return `${days} d\u00edas`;
+}
+// % de variaci\u00f3n vs per\u00edodo anterior; null si no hay base.
+function pctDelta(cur: number, prev: number): number | null {
+  if (!prev) return null;
+  return ((cur - prev) / prev) * 100;
+}
+
 // El backend agrupa la serie por d\u00eda/mes en la zona del tenant; el per\u00edodo llega
 // como 'YYYY-MM-DD'. Forzar hora local evita el corrimiento de un d\u00eda.
 function fmtPeriod(iso: string, gran: 'day' | 'month'): string {
@@ -139,6 +187,23 @@ function posRange(scope: PosScope, day: string, month: string, year: number): { 
   };
 }
 
+// Período inmediatamente anterior (mismo alcance) para la comparación.
+function posPrevRange(scope: PosScope, day: string, month: string, year: number): { from: string; to: string } {
+  if (scope === 'day') {
+    const [y, m, d] = day.split('-').map(Number);
+    const prev = new Date(y, m - 1, d - 1);
+    return posRange('day', toYMD(prev), month, year);
+  }
+  if (scope === 'month') {
+    const [y, m] = month.split('-').map(Number);
+    const prev = new Date(y, m - 2, 1);
+    return posRange('month', day, toYM(prev), year);
+  }
+  return posRange('year', day, month, year - 1);
+}
+
+const PERIOD_LABEL: Record<PosScope, string> = { day: 'día anterior', month: 'mes anterior', year: 'año anterior' };
+
 type AttendanceReport = {
   classes: Array<{
     name: string;
@@ -179,6 +244,8 @@ export default function ReportsPage() {
   const [posMonth, setPosMonth] = useState<string>(() => toYM(new Date()));
   const [posYear, setPosYear] = useState<number>(() => new Date().getFullYear());
   const [posDim, setPosDim] = useState<PosDimension>('product');
+  const [posSection, setPosSection] = useState<PosSection>('ventas');
+  const [posBranch, setPosBranch] = useState<string>('');   // '' = todas las sedes
 
   const { from: cajaFrom, to: cajaTo } = useMemo(() => cajaRange(cajaPeriod), [cajaPeriod]);
 
@@ -219,23 +286,65 @@ export default function ReportsPage() {
   }, []);
   const todayYMD = toYMD(new Date());
   const todayYM = toYM(new Date());
+  const { from: posPrevFrom, to: posPrevTo } = useMemo(
+    () => posPrevRange(posScope, posDay, posMonth, posYear),
+    [posScope, posDay, posMonth, posYear],
+  );
+  // Filtro por sede: '' = todas. Se añade a cada reporte.
+  const branchParam = useMemo(() => (posBranch ? { branch_id: posBranch } : {}), [posBranch]);
+
+  const { data: branches = [] } = useQuery<Branch[]>({
+    queryKey: ['reports-branches'],
+    queryFn: () => branchesApi.list().then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const { data: posSummary, isLoading: posSummaryLoading } = useQuery<PosSalesSummary>({
-    queryKey: ['pos-report-summary', posFrom, posTo],
-    queryFn: () => posApi.reportSummary({ from_date: posFrom, to_date: posTo }).then((r) => r.data),
+    queryKey: ['pos-report-summary', posFrom, posTo, posBranch],
+    queryFn: () => posApi.reportSummary({ from_date: posFrom, to_date: posTo, ...branchParam }).then((r) => r.data),
     enabled: tab === 'pos',
+  });
+
+  const { data: posPrevSummary } = useQuery<PosSalesSummary>({
+    queryKey: ['pos-report-summary-prev', posPrevFrom, posPrevTo, posBranch],
+    queryFn: () => posApi.reportSummary({ from_date: posPrevFrom, to_date: posPrevTo, ...branchParam }).then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'ventas',
   });
 
   const { data: posTs } = useQuery<PosSalesTimeseries>({
-    queryKey: ['pos-report-ts', posFrom, posTo, posGran],
-    queryFn: () => posApi.reportTimeseries({ from_date: posFrom, to_date: posTo, granularity: posGran }).then((r) => r.data),
-    enabled: tab === 'pos',
+    queryKey: ['pos-report-ts', posFrom, posTo, posGran, posBranch],
+    queryFn: () => posApi.reportTimeseries({ from_date: posFrom, to_date: posTo, granularity: posGran, ...branchParam }).then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'ventas',
   });
 
   const { data: posReport, isLoading: posReportLoading } = useQuery<PosSalesReport>({
-    queryKey: ['pos-report-dim', posDim, posFrom, posTo],
-    queryFn: () => posApi.reportByDimension({ dimension: posDim, from_date: posFrom, to_date: posTo, limit: 100 }).then((r) => r.data),
-    enabled: tab === 'pos',
+    queryKey: ['pos-report-dim', posDim, posFrom, posTo, posBranch],
+    queryFn: () => posApi.reportByDimension({ dimension: posDim, from_date: posFrom, to_date: posTo, limit: 100, ...branchParam }).then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'productos',
+  });
+
+  const { data: posInventory, isLoading: posInventoryLoading } = useQuery<InventoryReport>({
+    queryKey: ['pos-report-inventory', posBranch],
+    queryFn: () => posApi.reportInventory({ ...branchParam }).then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'inventario',
+  });
+
+  const { data: posMovements = [] } = useQuery<InventoryMovementRow[]>({
+    queryKey: ['pos-report-movements', posFrom, posTo, posBranch],
+    queryFn: () => posApi.listMovements({ from_date: posFrom, to_date: posTo, size: 200, ...branchParam }).then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'inventario',
+  });
+
+  const { data: posPurchases, isLoading: posPurchasesLoading } = useQuery<PurchasesReport>({
+    queryKey: ['pos-report-purchases', posFrom, posTo, posBranch],
+    queryFn: () => posApi.reportPurchases({ from_date: posFrom, to_date: posTo, ...branchParam }).then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'compras',
+  });
+
+  const { data: posDebtors, isLoading: posDebtorsLoading } = useQuery<DebtorsResponse>({
+    queryKey: ['pos-report-debtors'],
+    queryFn: () => posApi.accountDebtors().then((r) => r.data),
+    enabled: tab === 'pos' && posSection === 'fiados',
   });
 
   const posSeries = useMemo(
@@ -1104,6 +1213,60 @@ export default function ReportsPage() {
                 {posYears.map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             )}
+            {/* Filtro por sede */}
+            {branches.length > 0 && (
+              <select
+                value={posBranch}
+                onChange={(e) => setPosBranch(e.target.value)}
+                className="input w-auto text-sm"
+                aria-label="Sede"
+              >
+                <option value="">Todas las sedes</option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            )}
+          </motion.div>
+
+          {/* Sub-secciones del panel */}
+          <motion.div variants={fadeInUp} className="flex flex-wrap gap-1 rounded-xl border border-surface-200/50 bg-surface-50 p-1 dark:border-surface-800/50 dark:bg-surface-900/50 w-fit">
+            {POS_SECTIONS.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setPosSection(s.value)}
+                className={cn(
+                  'rounded-lg px-4 py-2 text-sm font-medium transition-all',
+                  posSection === s.value
+                    ? 'bg-white shadow-sm text-surface-900 dark:bg-surface-800 dark:text-white'
+                    : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300',
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </motion.div>
+
+          {posSection === 'ventas' && (
+          <>
+          {/* Exportar resumen de ventas */}
+          <motion.div variants={fadeInUp} className="flex justify-end">
+            <button
+              type="button"
+              disabled={!posSummary}
+              onClick={() => exportCsv(`ventas-resumen-${posLabel}.csv`, [
+                ['Métrica', 'Período actual', 'Período anterior'],
+                ['Ventas netas', String(parseApiNumber(posSummary?.net_sales)), String(parseApiNumber(posPrevSummary?.net_sales))],
+                ['N° de tickets', String(posSummary?.transaction_count ?? 0), String(posPrevSummary?.transaction_count ?? 0)],
+                ['Ticket promedio', String(parseApiNumber(posSummary?.avg_ticket)), String(parseApiNumber(posPrevSummary?.avg_ticket))],
+                ['Unidades', String(posSummary?.units_sold ?? 0), String(posPrevSummary?.units_sold ?? 0)],
+                ['Margen bruto', String(parseApiNumber(posSummary?.gross_margin)), String(parseApiNumber(posPrevSummary?.gross_margin))],
+                ...((posSummary?.by_method ?? []).map((m) => [`Medio: ${m.label}`, String(parseApiNumber(m.total)), ''])),
+              ])}
+              className="btn-secondary"
+            >
+              <Download size={16} />
+              Exportar ventas
+            </button>
           </motion.div>
 
           {/* KPI cards */}
@@ -1111,7 +1274,11 @@ export default function ReportsPage() {
             {posSummaryLoading
               ? Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-28 rounded-3xl" />)
               : [
-                  { label: 'Ventas netas', value: formatCurrency(parseApiNumber(posSummary?.net_sales)), sub: `${posSummary?.transaction_count ?? 0} ventas`, icon: Wallet, accent: 'text-brand-500' },
+                  { label: 'Ventas netas', value: formatCurrency(parseApiNumber(posSummary?.net_sales)), sub: (() => {
+                      const d = pctDelta(parseApiNumber(posSummary?.net_sales), parseApiNumber(posPrevSummary?.net_sales));
+                      const cmp = d == null ? 'sin base anterior' : `${d >= 0 ? '+' : ''}${d.toFixed(0)}% vs ${PERIOD_LABEL[posScope]}`;
+                      return `${posSummary?.transaction_count ?? 0} ventas · ${cmp}`;
+                    })(), icon: Wallet, accent: 'text-brand-500' },
                   { label: 'Margen bruto', value: formatCurrency(parseApiNumber(posSummary?.gross_margin)), sub: `${parseApiNumber(posSummary?.margin_pct).toFixed(1)}% sobre ventas`, icon: TrendingUp, accent: 'text-emerald-500' },
                   { label: 'Ticket promedio', value: formatCurrency(parseApiNumber(posSummary?.avg_ticket)), sub: `${posSummary?.units_sold ?? 0} unidades`, icon: ShoppingBag, accent: 'text-cyan-500' },
                   { label: 'Costo mercadería', value: formatCurrency(parseApiNumber(posSummary?.cogs)), sub: 'COGS del período', icon: Package, accent: 'text-violet-500' },
@@ -1190,6 +1357,53 @@ export default function ReportsPage() {
               )}
             </div>
           </motion.div>
+
+          {/* Medios de pago */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Medios de pago</h2>
+              <span className="text-xs text-surface-400">Cómo pagaron</span>
+            </div>
+            {(posSummary?.by_method.length ?? 0) === 0 ? (
+              <p className="py-8 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {(() => {
+                  const tot = (posSummary?.by_method ?? []).reduce((s, m) => s + parseApiNumber(m.total), 0);
+                  return (posSummary?.by_method ?? []).map((m, i) => {
+                    const val = parseApiNumber(m.total);
+                    const pct = tot ? (val / tot) * 100 : 0;
+                    return (
+                      <div key={m.payment_method}>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium text-surface-700 dark:text-surface-300">{m.label}</span>
+                          <span className="tabular-nums text-surface-900 dark:text-white">{formatCurrency(val)} <span className="text-xs text-surface-400">({pct.toFixed(0)}%)</span></span>
+                        </div>
+                        <div className="mt-1 h-2 overflow-hidden rounded-full bg-surface-100 dark:bg-surface-800">
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length] }} />
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </motion.div>
+          </>
+          )}
+
+          {/* ── SECCIÓN: PRODUCTOS ── */}
+          {posSection === 'productos' && (
+          <>
+          {posSummary && posSummary.units_without_cost > 0 && (
+            <motion.div variants={fadeInUp} className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-sm dark:border-amber-900/40 dark:bg-amber-950/20">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <p className="text-amber-800 dark:text-amber-300">
+                {posSummary.products_without_cost} producto(s) ({posSummary.units_without_cost} unidad(es)) se vendieron sin costo registrado.
+                El margen mostrado está sobreestimado para esas líneas. Carga el costo en cada producto para un margen real.
+              </p>
+            </motion.div>
+          )}
 
           {/* Breakdown by dimension */}
           <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
@@ -1276,6 +1490,307 @@ export default function ReportsPage() {
               )}
             </div>
           </motion.div>
+          </>
+          )}
+
+          {/* ── SECCIÓN: INVENTARIO ── */}
+          {posSection === 'inventario' && (
+          <>
+          <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+            {[
+              { label: 'Stock valorizado', value: formatCurrency(parseApiNumber(posInventory?.total_value)), sub: `${posInventory?.total_units ?? 0} unidades`, icon: Boxes, accent: 'text-brand-500' },
+              { label: 'Bajo stock', value: String(posInventory?.low_stock_count ?? 0), sub: 'Conviene reponer', icon: AlertTriangle, accent: 'text-amber-500' },
+              { label: 'En quiebre', value: String(posInventory?.out_of_stock_count ?? 0), sub: 'Sin stock', icon: TrendingDown, accent: 'text-rose-500' },
+              { label: 'Sin costo', value: String(posInventory?.items_without_cost ?? 0), sub: 'No valorizables', icon: Package, accent: 'text-violet-500' },
+            ].map((card) => {
+              const Icon = card.icon;
+              return (
+                <motion.div key={card.label} variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-surface-500">{card.label}</p>
+                    <Icon size={18} className={card.accent} />
+                  </div>
+                  <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{card.value}</p>
+                  <p className="mt-0.5 text-xs text-surface-400">{card.sub}</p>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          {/* Stock valorizado */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Stock valorizado</h2>
+                <p className="mt-1 text-sm text-surface-500">Stock actual × costo. Los productos sin costo no se valorizan.</p>
+              </div>
+              <button
+                type="button"
+                disabled={(posInventory?.rows.length ?? 0) === 0}
+                onClick={() => exportCsv(`inventario-${posLabel}.csv`, [
+                  ['Producto', 'SKU', 'Categoría', 'Stock', 'Mínimo', 'Costo unit.', 'Valor', 'Estado'],
+                  ...(posInventory?.rows ?? []).map((r) => [
+                    r.product_name, r.sku ?? '', r.category ?? '', String(r.quantity), String(r.min_stock),
+                    r.has_cost ? String(r.unit_cost) : 'sin costo', String(r.stock_value),
+                    r.out_of_stock ? 'Quiebre' : r.low_stock ? 'Bajo stock' : 'OK',
+                  ]),
+                ])}
+                className="btn-secondary"
+              >
+                <Download size={16} /> Exportar
+              </button>
+            </div>
+            <div className="mt-5 overflow-x-auto">
+              {posInventoryLoading ? (
+                <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}</div>
+              ) : (posInventory?.rows.length ?? 0) === 0 ? (
+                <p className="py-12 text-center text-sm text-surface-400">Sin productos en inventario.</p>
+              ) : (
+                <table className="w-full min-w-[680px] text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                      <th className="px-2 py-2 font-medium">Producto</th>
+                      <th className="px-2 py-2 font-medium">Categoría</th>
+                      <th className="px-2 py-2 text-right font-medium">Stock</th>
+                      <th className="px-2 py-2 text-right font-medium">Costo unit.</th>
+                      <th className="px-2 py-2 text-right font-medium">Valor</th>
+                      <th className="px-2 py-2 text-right font-medium">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(posInventory?.rows ?? []).map((r) => (
+                      <tr key={r.product_id} className="border-b border-surface-50 dark:border-surface-800/50">
+                        <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.product_name}{r.sku ? <span className="ml-1 text-xs text-surface-400">{r.sku}</span> : null}</td>
+                        <td className="px-2 py-2.5 text-surface-500">{r.category ?? '—'}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{r.quantity}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums text-surface-500">{r.has_cost ? formatCurrency(parseApiNumber(r.unit_cost)) : <span className="text-amber-600 dark:text-amber-400">sin costo</span>}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(parseApiNumber(r.stock_value))}</td>
+                        <td className="px-2 py-2.5 text-right">
+                          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium',
+                            r.out_of_stock ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400'
+                            : r.low_stock ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400'
+                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400')}>
+                            {r.out_of_stock ? 'Quiebre' : r.low_stock ? 'Bajo' : 'OK'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-surface-200 font-semibold dark:border-surface-700">
+                      <td className="px-2 py-2.5" colSpan={4}>Total valorizado</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(parseApiNumber(posInventory?.total_value))}</td>
+                      <td className="px-2 py-2.5" />
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Movimientos de inventario */}
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Movimientos del período</h2>
+                <p className="mt-1 text-sm text-surface-500">Entradas por compras, salidas por ventas y ajustes, con su origen.</p>
+              </div>
+              <button
+                type="button"
+                disabled={posMovements.length === 0}
+                onClick={() => exportCsv(`movimientos-${posLabel}.csv`, [
+                  ['Fecha', 'Producto', 'Tipo', 'Cantidad', 'Origen', 'Costo unit.'],
+                  ...posMovements.map((m) => [
+                    new Date(m.created_at).toLocaleString('es-CL'), m.product_name ?? '', movLabel(m.movement_type),
+                    String(m.quantity), originLabel(m.reference_type), m.unit_cost != null ? String(m.unit_cost) : '',
+                  ]),
+                ])}
+                className="btn-secondary"
+              >
+                <Download size={16} /> Exportar
+              </button>
+            </div>
+            <div className="mt-5 overflow-x-auto">
+              {posMovements.length === 0 ? (
+                <p className="py-12 text-center text-sm text-surface-400">Sin movimientos en el período.</p>
+              ) : (
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                      <th className="px-2 py-2 font-medium">Fecha</th>
+                      <th className="px-2 py-2 font-medium">Producto</th>
+                      <th className="px-2 py-2 font-medium">Tipo</th>
+                      <th className="px-2 py-2 text-right font-medium">Cantidad</th>
+                      <th className="px-2 py-2 font-medium">Origen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {posMovements.map((m) => (
+                      <tr key={m.id} className="border-b border-surface-50 dark:border-surface-800/50">
+                        <td className="px-2 py-2.5 text-surface-500">{new Date(m.created_at).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                        <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{m.product_name ?? '—'}</td>
+                        <td className="px-2 py-2.5 text-surface-600 dark:text-surface-300">{movLabel(m.movement_type)}</td>
+                        <td className={cn('px-2 py-2.5 text-right tabular-nums font-medium', m.quantity >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{m.quantity >= 0 ? '+' : ''}{m.quantity}</td>
+                        <td className="px-2 py-2.5 text-surface-400">{originLabel(m.reference_type)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </motion.div>
+          </>
+          )}
+
+          {/* ── SECCIÓN: COMPRAS ── */}
+          {posSection === 'compras' && (
+          <>
+          <div className="grid grid-cols-2 gap-4">
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center justify-between"><p className="text-sm text-surface-500">Total comprado</p><Truck size={18} className="text-brand-500" /></div>
+              <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{formatCurrency(parseApiNumber(posPurchases?.grand_total))}</p>
+              <p className="mt-0.5 text-xs text-surface-400">Órdenes recibidas en el período</p>
+            </motion.div>
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center justify-between"><p className="text-sm text-surface-500">N° de órdenes</p><ClipboardList size={18} className="text-cyan-500" /></div>
+              <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{posPurchases?.orders_count ?? 0}</p>
+              <p className="mt-0.5 text-xs text-surface-400">{posPurchases?.rows.length ?? 0} proveedor(es)</p>
+            </motion.div>
+          </div>
+
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Compras por proveedor</h2>
+                <p className="mt-1 text-sm text-surface-500">Total comprado a cada proveedor en el período.</p>
+              </div>
+              <button
+                type="button"
+                disabled={(posPurchases?.rows.length ?? 0) === 0}
+                onClick={() => exportCsv(`compras-${posLabel}.csv`, [
+                  ['Proveedor', 'Órdenes', 'Total'],
+                  ...(posPurchases?.rows ?? []).map((r) => [r.supplier_name, String(r.orders_count), String(r.total)]),
+                ])}
+                className="btn-secondary"
+              >
+                <Download size={16} /> Exportar
+              </button>
+            </div>
+            <div className="mt-5 overflow-x-auto">
+              {posPurchasesLoading ? (
+                <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}</div>
+              ) : (posPurchases?.rows.length ?? 0) === 0 ? (
+                <p className="py-12 text-center text-sm text-surface-400">Sin compras recibidas en el período.</p>
+              ) : (
+                <table className="w-full min-w-[420px] text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                      <th className="px-2 py-2 font-medium">Proveedor</th>
+                      <th className="px-2 py-2 text-right font-medium">Órdenes</th>
+                      <th className="px-2 py-2 text-right font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(posPurchases?.rows ?? []).map((r) => (
+                      <tr key={r.supplier_id ?? r.supplier_name} className="border-b border-surface-50 dark:border-surface-800/50">
+                        <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.supplier_name}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{r.orders_count}</td>
+                        <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(parseApiNumber(r.total))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-surface-200 font-semibold dark:border-surface-700">
+                      <td className="px-2 py-2.5">Total</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums">{posPurchases?.orders_count ?? 0}</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(parseApiNumber(posPurchases?.grand_total))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </motion.div>
+          </>
+          )}
+
+          {/* ── SECCIÓN: FIADOS (cuentas por cobrar) ── */}
+          {posSection === 'fiados' && (
+          <>
+          <div className="grid grid-cols-2 gap-4">
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center justify-between"><p className="text-sm text-surface-500">Saldo por cobrar</p><Coins size={18} className="text-rose-500" /></div>
+              <p className="mt-2 text-2xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">{formatCurrency(parseApiNumber(posDebtors?.total_outstanding))}</p>
+              <p className="mt-0.5 text-xs text-surface-400">Deuda viva total (todas las sedes)</p>
+            </motion.div>
+            <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+              <div className="flex items-center justify-between"><p className="text-sm text-surface-500">Socios con deuda</p><Users size={18} className="text-brand-500" /></div>
+              <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{posDebtors?.rows.length ?? 0}</p>
+              <p className="mt-0.5 text-xs text-surface-400">Clientes registrados</p>
+            </motion.div>
+          </div>
+
+          <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Clientes con deuda</h2>
+                <p className="mt-1 text-sm text-surface-500">Saldo pendiente y antigüedad (desde el primer cargo sin pagar).</p>
+              </div>
+              <button
+                type="button"
+                disabled={(posDebtors?.rows.length ?? 0) === 0}
+                onClick={() => exportCsv('fiados-deudores.csv', [
+                  ['Cliente', 'Email', 'Teléfono', 'Deuda', 'Límite', 'Antigüedad (días)'],
+                  ...(posDebtors?.rows ?? []).map((r) => [
+                    r.client_name, r.email ?? '', r.phone ?? '', String(r.balance),
+                    r.credit_limit != null ? String(r.credit_limit) : '', String(agingDays(r.oldest_charge_at) ?? ''),
+                  ]),
+                ])}
+                className="btn-secondary"
+              >
+                <Download size={16} /> Exportar
+              </button>
+            </div>
+            <div className="mt-5 overflow-x-auto">
+              {posDebtorsLoading ? (
+                <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}</div>
+              ) : (posDebtors?.rows.length ?? 0) === 0 ? (
+                <p className="py-12 text-center text-sm text-surface-400">Sin deudas pendientes.</p>
+              ) : (
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                      <th className="px-2 py-2 font-medium">Cliente</th>
+                      <th className="px-2 py-2 font-medium">Contacto</th>
+                      <th className="px-2 py-2 text-right font-medium">Deuda</th>
+                      <th className="px-2 py-2 text-right font-medium">Antigüedad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(posDebtors?.rows ?? []).map((r) => {
+                      const days = agingDays(r.oldest_charge_at);
+                      return (
+                        <tr key={r.client_id} className="border-b border-surface-50 dark:border-surface-800/50">
+                          <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.client_name}</td>
+                          <td className="px-2 py-2.5 text-surface-400">{r.email ?? r.phone ?? '—'}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums font-medium text-rose-600 dark:text-rose-400">{formatCurrency(parseApiNumber(r.balance))}</td>
+                          <td className={cn('px-2 py-2.5 text-right tabular-nums', (days ?? 0) >= 30 ? 'text-amber-600 dark:text-amber-400' : 'text-surface-500')}>{agingLabel(days)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-surface-200 font-semibold dark:border-surface-700">
+                      <td className="px-2 py-2.5" colSpan={2}>Total por cobrar</td>
+                      <td className="px-2 py-2.5 text-right tabular-nums text-rose-600 dark:text-rose-400">{formatCurrency(parseApiNumber(posDebtors?.total_outstanding))}</td>
+                      <td className="px-2 py-2.5" />
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </motion.div>
+          </>
+          )}
         </>
       )}
     </motion.div>

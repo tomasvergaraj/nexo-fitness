@@ -186,6 +186,7 @@ function FiadosPanel() {
   const [abonoAmount, setAbonoAmount] = useState(0);
   const [abonoMethod, setAbonoMethod] = useState('cash');
   const [abonoNotes, setAbonoNotes] = useState('');
+  const [limitInput, setLimitInput] = useState('');
 
   const { data: debtors, isLoading } = useQuery<DebtorsResponse>({
     queryKey: ['pos-debtors'],
@@ -196,6 +197,21 @@ function FiadosPanel() {
     queryKey: ['pos-statement', selected?.client_id],
     queryFn: () => posApi.accountStatement(selected!.client_id).then(r => r.data),
     enabled: !!selected,
+  });
+
+  // Prefill del input de límite con el valor vigente del socio.
+  useEffect(() => {
+    setLimitInput(statement?.credit_limit != null ? String(statement.credit_limit) : '');
+  }, [statement?.client_id, statement?.credit_limit]);
+
+  const limitMutation = useMutation({
+    mutationFn: ({ id, limit }: { id: string; limit: number | null }) => posApi.setCreditLimit(id, limit),
+    onSuccess: () => {
+      toast.success('Límite de crédito actualizado');
+      queryClient.invalidateQueries({ queryKey: ['pos-statement'] });
+      queryClient.invalidateQueries({ queryKey: ['pos-debtors'] });
+    },
+    onError: err => toast.error(getApiError(err)),
   });
 
   const abonoMutation = useMutation({
@@ -281,6 +297,43 @@ function FiadosPanel() {
           {abonoMethod === 'cash' && (
             <p className="mt-2 text-xs text-surface-400">Un abono en efectivo entra al arqueo del turno de caja abierto.</p>
           )}
+        </div>
+
+        {/* Límite de crédito */}
+        <div className="mb-6 rounded-2xl border border-surface-200 p-4 dark:border-surface-800">
+          <h3 className="mb-1 text-sm font-semibold text-surface-700 dark:text-surface-300">Límite de crédito</h3>
+          <p className="mb-3 text-xs text-surface-400">
+            Tope de deuda del socio. Vacío = sin límite. El modo (avisar o bloquear) se ajusta en Configuración.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min={0}
+              value={limitInput}
+              onChange={e => setLimitInput(e.target.value)}
+              placeholder="Sin límite"
+              className="input min-w-0 flex-1 text-sm"
+            />
+            <button
+              onClick={() => limitMutation.mutate({
+                id: selected.client_id,
+                limit: limitInput.trim() === '' ? null : Math.max(0, Number(limitInput) || 0),
+              })}
+              disabled={limitMutation.isPending}
+              className="btn-secondary shrink-0 text-sm"
+            >
+              {limitMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : 'Guardar'}
+            </button>
+            {statement?.credit_limit != null && (
+              <button
+                onClick={() => limitMutation.mutate({ id: selected.client_id, limit: null })}
+                disabled={limitMutation.isPending}
+                className="shrink-0 rounded-xl px-3 text-sm text-surface-400 hover:text-surface-600"
+              >
+                Quitar
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Movimientos */}
@@ -385,6 +438,9 @@ export default function POSPage() {
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [view, setView] = useState<'sell' | 'fiados'>('sell');
   const [client, setClient] = useState<ClientLite | null>(null);
+  // Fiado parcial: abono al momento de la venta a crédito.
+  const [downPayment, setDownPayment] = useState(0);
+  const [downMethod, setDownMethod] = useState('cash');
   const [refundTx, setRefundTx] = useState<POSTransaction | null>(null);
   const [refundQty, setRefundQty] = useState<Record<string, number>>({});
   const [mixedRows, setMixedRows] = useState<{ method: string; amount: number }[]>([]);
@@ -437,6 +493,15 @@ export default function POSPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Estado de cuenta del socio a fiar: saldo + límite, para advertir/bloquear.
+  const { data: creditAccount = null } = useQuery<ClientAccountStatement | null>({
+    queryKey: ['pos-credit-account', client?.id],
+    queryFn: () => posApi.accountStatement(client!.id).then(r => r.data),
+    enabled: checkoutOpen && paymentMethod === 'credit' && !!client,
+    staleTime: 0,                 // saldo siempre fresco al abrir el cobro
+    refetchOnMount: 'always',
+  });
+
   // ── Mutations ─────────────────────────────────────────────────────────────
   const saleMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => posApi.createTransaction(data),
@@ -457,11 +522,14 @@ export default function POSPage() {
       setMixedRows([]);
       setPaymentMethod('cash');
       setCashReceived(0);
+      setDownPayment(0);
+      setDownMethod('cash');
       setCheckoutOpen(false);
       queryClient.invalidateQueries({ queryKey: ['pos-transactions-today'] });
       queryClient.invalidateQueries({ queryKey: ['pos-products'] });
       queryClient.invalidateQueries({ queryKey: ['pos-cash-session'] });
       queryClient.invalidateQueries({ queryKey: ['pos-debtors'] });
+      queryClient.invalidateQueries({ queryKey: ['pos-credit-account'] });
     },
     onError: (err) => toast.error(getApiError(err)),
   });
@@ -605,7 +673,21 @@ export default function POSPage() {
     mixedRows.every(r => r.method && Number(r.amount) > 0) &&
     mixedAssigned === total
   );
-  const canCheckout = cart.length > 0 && hasOpenCaja && (!isCredit || !!client) && mixedValid;
+  // Fiado parcial: el abono al momento no puede alcanzar el total (eso es venta normal).
+  const downCapped = isCredit ? Math.min(Math.max(0, downPayment), Math.max(0, finalTotal - 1)) : 0;
+  const creditDebt = isCredit ? Math.max(0, finalTotal - downCapped) : 0;
+  // Advertencia / bloqueo por límite de crédito del socio.
+  // La API serializa Decimal como string → coercionar a número antes de sumar
+  // (si no, "21410.00" + 1000 concatena en vez de sumar).
+  const creditLimit = creditAccount?.credit_limit != null ? Number(creditAccount.credit_limit) : null;
+  const currentBalance = Number(creditAccount?.balance ?? 0);
+  const creditMode = gymSettings?.credit_limit_mode ?? 'warn';
+  const projectedBalance = currentBalance + creditDebt;
+  const overCreditLimit =
+    isCredit && creditLimit != null && creditMode !== 'off' && projectedBalance > creditLimit;
+  const creditBlocked = overCreditLimit && creditMode === 'block';
+  const canCheckout =
+    cart.length > 0 && hasOpenCaja && (!isCredit || !!client) && mixedValid && !creditBlocked;
   // Vuelto (solo venta en efectivo): efectivo recibido − total.
   const change = paymentMethod === 'cash' && cashReceived > 0 ? Math.max(0, cashReceived - finalTotal) : 0;
   const cashShort = paymentMethod === 'cash' && cashReceived > 0 && cashReceived < finalTotal;
@@ -632,6 +714,10 @@ export default function POSPage() {
       toast.error('La suma de los métodos debe igualar el total');
       return;
     }
+    if (creditBlocked) {
+      toast.error('La venta supera el límite de crédito del socio');
+      return;
+    }
     saleMutation.mutate({
       items: cart.map(i => ({ product_id: i.product.id, quantity: i.quantity })),
       payment_method: paymentMethod,
@@ -640,6 +726,8 @@ export default function POSPage() {
       notes: notes || undefined,
       client_id: client?.id,
       payments: isMixed ? mixedRows.map(r => ({ method: r.method, amount: Number(r.amount) })) : undefined,
+      credit_down_payment: isCredit && downCapped > 0 ? downCapped : undefined,
+      credit_down_payment_method: isCredit && downCapped > 0 ? downMethod : undefined,
     });
   }
 
@@ -1274,12 +1362,58 @@ export default function POSPage() {
           )}
 
           {isCredit && (
-            <div className="flex items-center gap-2 rounded-xl border border-brand-300 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/30">
-              <User size={15} className="shrink-0 text-brand-600 dark:text-brand-400" />
-              <span className="text-sm text-surface-500">Fiar a:</span>
-              <span className="truncate font-medium text-surface-800 dark:text-white">
-                {client ? `${client.first_name} ${client.last_name}` : '—'}
-              </span>
+            <div className="space-y-2 rounded-xl border border-brand-300 bg-brand-50/60 p-3 dark:border-brand-800 dark:bg-brand-950/30">
+              <div className="flex items-center gap-2">
+                <User size={15} className="shrink-0 text-brand-600 dark:text-brand-400" />
+                <span className="text-sm text-surface-500">Fiar a:</span>
+                <span className="truncate font-medium text-surface-800 dark:text-white">
+                  {client ? `${client.first_name} ${client.last_name}` : '—'}
+                </span>
+              </div>
+              {/* Saldo actual del socio */}
+              {creditAccount && (
+                <p className="text-xs text-surface-500">
+                  Deuda actual: <span className="font-semibold text-surface-700 dark:text-surface-300">{formatCLP(currentBalance)}</span>
+                  {creditLimit != null && <> · Límite: {formatCLP(creditLimit)}</>}
+                </p>
+              )}
+              {/* Fiado parcial: abono al momento */}
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-surface-500">Abona ahora (opcional)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={Math.max(0, finalTotal - 1)}
+                    inputMode="numeric"
+                    value={downPayment || ''}
+                    onChange={e => setDownPayment(Math.max(0, Number(e.target.value) || 0))}
+                    placeholder="0"
+                    className="input w-full text-sm"
+                  />
+                </div>
+                <div className="w-32">
+                  <label className="mb-1 block text-xs text-surface-500">Medio</label>
+                  <select value={downMethod} onChange={e => setDownMethod(e.target.value)} className="input w-full text-sm">
+                    {ABONO_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-between border-t border-brand-200 pt-2 text-sm dark:border-brand-800">
+                <span className="text-surface-500">Queda fiado</span>
+                <span className="font-bold text-surface-800 dark:text-white">{formatCLP(creditDebt)}</span>
+              </div>
+              {overCreditLimit && (
+                <p className={cn(
+                  'rounded-lg px-2.5 py-2 text-xs font-medium',
+                  creditBlocked
+                    ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400'
+                    : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400',
+                )}>
+                  {creditBlocked ? 'Bloqueado: ' : 'Atención: '}
+                  la deuda quedaría en {formatCLP(projectedBalance)}, sobre el límite de {formatCLP(creditLimit ?? 0)}.
+                </p>
+              )}
             </div>
           )}
 
@@ -1329,7 +1463,7 @@ export default function POSPage() {
             </button>
             <button
               onClick={handleCheckout}
-              disabled={saleMutation.isPending || (isCredit && !client) || !mixedValid}
+              disabled={saleMutation.isPending || (isCredit && !client) || !mixedValid || creditBlocked}
               className="flex-1 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-sm
                          flex items-center justify-center gap-2 disabled:opacity-60"
             >
@@ -1422,6 +1556,22 @@ export default function POSPage() {
               <div className="flex justify-between text-surface-500 pt-1">
                 <span>Total ventas turno</span><span>{formatCLP(session.sales_total)} ({session.sales_count})</span>
               </div>
+              {/* Fiados del turno (informativo: no afecta el efectivo salvo abonos cash) */}
+              {(Number(session.credit_given ?? 0) > 0 || (session.credit_payments_by_method?.length ?? 0) > 0) && (
+                <div className="border-t border-dashed border-surface-200 pt-2 dark:border-surface-700">
+                  <p className="mb-1 text-xs font-medium text-surface-400">Fiados (no entra a caja salvo abonos en efectivo)</p>
+                  {Number(session.credit_given ?? 0) > 0 && (
+                    <div className="flex justify-between text-surface-500">
+                      <span>Fiado otorgado en el turno</span><span>{formatCLP(session.credit_given)}</span>
+                    </div>
+                  )}
+                  {session.credit_payments_by_method?.map(cp => (
+                    <div key={cp.method} className="flex justify-between text-surface-500">
+                      <span>Abonos recibidos · {cp.label}</span><span>{formatCLP(cp.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <div>

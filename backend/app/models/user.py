@@ -3,9 +3,10 @@
 import enum
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Enum as SAEnum
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -53,6 +54,8 @@ class User(Base):
     prefers_qr_card: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    # Tope de deuda (fiados). NULL = sin límite. El modo off/warn/block es del tenant.
+    credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
 
     # Member referral program (Fase 6.4)
     referral_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, index=True)

@@ -542,11 +542,15 @@ export const posApi = {
   accountStatement: (clientId: string) => api.get(`/pos/account/${clientId}/statement`),
   accountPayment: (clientId: string, data: Record<string, unknown>) =>
     api.post(`/pos/account/${clientId}/payment`, data),
+  setCreditLimit: (clientId: string, creditLimit: number | null) =>
+    api.patch(`/pos/account/${clientId}/credit-limit`, { credit_limit: creditLimit }),
 
   // Reportería del dueño (Etapa 0)
   reportSummary: (params: Record<string, unknown>) => api.get('/pos/reports/summary', { params }),
   reportByDimension: (params: Record<string, unknown>) => api.get('/pos/reports/by-dimension', { params }),
   reportTimeseries: (params: Record<string, unknown>) => api.get('/pos/reports/timeseries', { params }),
+  reportInventory: (params: Record<string, unknown>) => api.get('/pos/reports/inventory', { params }),
+  reportPurchases: (params: Record<string, unknown>) => api.get('/pos/reports/purchases', { params }),
 
   // Expenses
   listExpenses: (params?: Record<string, unknown>) => api.get('/pos/expenses', { params }),

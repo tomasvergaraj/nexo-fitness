@@ -161,6 +161,15 @@ export interface CashSession {
   cash_expenses: number;
   cash_credit_payments: number;
   by_method: PaymentMethodBreakdownRow[];
+  credit_given: number;
+  credit_payments_by_method: CreditPaymentRow[];
+}
+
+export interface CreditPaymentRow {
+  method: string;
+  label: string;
+  count: number;
+  amount: number;
 }
 
 export interface SalesBreakdown {
@@ -187,6 +196,8 @@ export interface PosSalesSummary {
   transaction_count: number;
   units_sold: number;
   avg_ticket: number;
+  units_without_cost: number;
+  products_without_cost: number;
   refund_count: number;
   refund_total: number;
   expenses_total: number;
@@ -244,7 +255,64 @@ export interface ClientDebtor {
   charges_total: number;
   payments_total: number;
   balance: number;
+  credit_limit?: number | null;
   last_entry_at?: string | null;
+  oldest_charge_at?: string | null;
+}
+
+// ─── Reportes de inventario y compras (panel del dueño) ─────────────────────────
+
+export interface InventoryReportRow {
+  product_id: string;
+  product_name: string;
+  sku?: string | null;
+  category?: string | null;
+  quantity: number;
+  min_stock: number;
+  unit_cost: number;
+  stock_value: number;
+  low_stock: boolean;
+  out_of_stock: boolean;
+  has_cost: boolean;
+}
+
+export interface InventoryReport {
+  branch_id?: string | null;
+  rows: InventoryReportRow[];
+  total_value: number;
+  total_units: number;
+  low_stock_count: number;
+  out_of_stock_count: number;
+  items_without_cost: number;
+}
+
+export interface PurchaseSupplierRow {
+  supplier_id?: string | null;
+  supplier_name: string;
+  orders_count: number;
+  total: number;
+}
+
+export interface PurchasesReport {
+  from_date: string;
+  to_date: string;
+  rows: PurchaseSupplierRow[];
+  grand_total: number;
+  orders_count: number;
+}
+
+export interface InventoryMovementRow {
+  id: string;
+  product_id: string;
+  product_name?: string | null;
+  branch_id?: string | null;
+  movement_type: string;
+  quantity: number;
+  unit_cost?: number | null;
+  reference_type?: string | null;
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: string;
 }
 
 export interface DebtorsResponse {
@@ -269,5 +337,6 @@ export interface ClientAccountStatement {
   client_id: string;
   client_name: string;
   balance: number;
+  credit_limit?: number | null;
   entries: ClientAccountEntry[];
 }

@@ -1176,6 +1176,26 @@ export default function SettingsPage() {
                 ) : null}
               </div>
 
+              {/* Fiados: límite de crédito */}
+              <div className="rounded-2xl border border-surface-200 px-4 py-4 dark:border-surface-800">
+                <p className="text-sm font-medium text-surface-900 dark:text-white">Fiados · límite de crédito</p>
+                <p className="mt-0.5 text-xs text-surface-500">
+                  Qué hacer cuando una venta a crédito deja al socio sobre su tope de deuda. El tope se define por socio en el POS.
+                </p>
+                <div className="mt-3 flex items-center gap-2 border-t border-surface-100 pt-3 dark:border-surface-800">
+                  <label className="text-sm text-surface-700 dark:text-surface-300">Al superar el límite</label>
+                  <select
+                    className="input w-48"
+                    value={form.credit_limit_mode ?? 'warn'}
+                    onChange={(event) => setForm((current) => current ? { ...current, credit_limit_mode: event.target.value as 'off' | 'warn' | 'block' } : current)}
+                  >
+                    <option value="off">No controlar</option>
+                    <option value="warn">Solo advertir</option>
+                    <option value="block">Bloquear la venta</option>
+                  </select>
+                </div>
+              </div>
+
               {/* 2FA obligatorio */}
               <div className="flex items-start justify-between gap-4 rounded-2xl border border-surface-200 px-4 py-4 dark:border-surface-800">
                 <div className="flex items-start gap-3">

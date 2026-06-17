@@ -44,6 +44,7 @@ export interface TenantSettings {
   public_checkout_enabled: boolean;
   referral_reward_enabled: boolean;
   referral_reward_days: number;
+  credit_limit_mode?: 'off' | 'warn' | 'block';
   branding: TenantBranding;
 }
 
