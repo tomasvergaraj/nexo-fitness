@@ -64,6 +64,8 @@ docker-compose.override.yml
 
 # DB backups (dumps locales en VPS, off-site va a R2)
 /backups/
+# Dumps SQL comprimidos sueltos (datos de clientes — NUNCA al repo)
+*.sql.gz
 
 # Impeccable design skill (reinstalable con `npx impeccable skills install`)
 # Se versiona el contexto de diseño (PRODUCT.md, DESIGN.md, .impeccable/design.json),
