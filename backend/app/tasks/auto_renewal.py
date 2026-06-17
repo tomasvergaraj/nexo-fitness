@@ -46,7 +46,12 @@ async def _run_auto_renewals() -> dict:
         memberships = (
             await db.execute(
                 select(Membership).where(
-                    Membership.status == MembershipStatus.ACTIVE,
+                    # No confiar en el enum == ACTIVE: una membresía vigente cuyo
+                    # estado quedó stale (p.ej. flippeada a EXPIRED por un acceso, o
+                    # PENDING ya iniciada) seguía perdiendo su renovación. Filtramos
+                    # por fecha: ya comenzó y no está cancelada/pausada.
+                    Membership.status.notin_([MembershipStatus.CANCELLED, MembershipStatus.FROZEN]),
+                    Membership.starts_at <= today,
                     Membership.auto_renew.is_(True),
                     Membership.expires_at.is_not(None),
                     Membership.expires_at >= today,

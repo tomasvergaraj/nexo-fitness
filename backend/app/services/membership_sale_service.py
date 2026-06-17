@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.business import Membership, MembershipStatus, Payment, PaymentMethod, PaymentStatus, Plan, PlanDuration, PlanKind
@@ -85,6 +85,49 @@ def _resolved_membership_status(membership: Membership, today: date) -> Membersh
     if membership.uses_remaining is not None and membership.uses_remaining <= 0:
         return MembershipStatus.EXPIRED
     return MembershipStatus.ACTIVE
+
+
+# ─── Predicados SQL por fecha ────────────────────────────────────────────────
+# Espejan _resolved_membership_status() para usarse en WHERE sin confiar en el
+# enum stored (que puede quedar stale entre corridas del job de sync). Mismo
+# orden de prioridad: cancelled > frozen > pending > expired > active.
+
+
+def membership_is_pending(today: date):
+    """Programada: comienza en el futuro (y no cancelada/pausada)."""
+    return and_(
+        Membership.status.notin_([MembershipStatus.CANCELLED, MembershipStatus.FROZEN]),
+        Membership.starts_at > today,
+    )
+
+
+def membership_is_expired(today: date):
+    """Vencida: frozen cuya fecha pasó, o ya comenzó y venció por fecha o agotó usos."""
+    return or_(
+        and_(
+            Membership.status == MembershipStatus.FROZEN,
+            Membership.expires_at.is_not(None),
+            Membership.expires_at <= today,
+        ),
+        and_(
+            Membership.status.notin_([MembershipStatus.CANCELLED, MembershipStatus.FROZEN]),
+            Membership.starts_at <= today,
+            or_(
+                and_(Membership.expires_at.is_not(None), Membership.expires_at <= today),
+                and_(Membership.uses_remaining.is_not(None), Membership.uses_remaining <= 0),
+            ),
+        ),
+    )
+
+
+def membership_is_active(today: date):
+    """Activa: ya comenzó, no venció por fecha ni agotó usos, no cancelada/pausada."""
+    return and_(
+        Membership.status.notin_([MembershipStatus.CANCELLED, MembershipStatus.FROZEN]),
+        Membership.starts_at <= today,
+        or_(Membership.expires_at.is_(None), Membership.expires_at > today),
+        or_(Membership.uses_remaining.is_(None), Membership.uses_remaining > 0),
+    )
 
 
 @dataclass

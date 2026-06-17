@@ -44,7 +44,10 @@ async def _run_membership_alerts() -> dict:
         memberships = (
             await db.execute(
                 select(Membership).where(
-                    Membership.status == MembershipStatus.ACTIVE,
+                    # Por fecha, no por enum: incluye membresías vigentes cuyo estado
+                    # quedó stale. Ya comenzó y no está cancelada/pausada.
+                    Membership.status.notin_([MembershipStatus.CANCELLED, MembershipStatus.FROZEN]),
+                    Membership.starts_at <= today,
                     Membership.expires_at.is_not(None),
                     Membership.expires_at >= window_start,
                     Membership.expires_at <= window_end,

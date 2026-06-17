@@ -18,6 +18,7 @@ celery = Celery(
         "app.tasks.membership_alerts",
         "app.tasks.class_reminders",
         "app.tasks.class_status_updater",
+        "app.tasks.membership_status_sync",
         "app.tasks.auto_renewal",
         "app.tasks.nps_surveys",
     ],
@@ -62,6 +63,11 @@ celery.conf.update(
         "sync-class-statuses": {
             "task": "app.tasks.class_status_updater.sync_class_statuses",
             "schedule": 300,
+        },
+        # Reconcilia estado de membresías (pending→active, →expired): cada 15 min
+        "sync-membership-statuses": {
+            "task": "app.tasks.membership_status_sync.sync_membership_statuses",
+            "schedule": 900,
         },
         # Renovación automática de membresías: una vez al día a las 8am UTC (≈ 5am Chile)
         "process-auto-renewals": {

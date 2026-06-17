@@ -1,6 +1,6 @@
 """Memberships router: list, create, manual-sale, update."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -14,7 +14,8 @@ from app.core.dependencies import (
     get_tenant_context,
     require_roles,
 )
-from app.models.business import Membership, PaymentMethod, PaymentStatus, Plan
+from app.core.timezone import tenant_zone
+from app.models.business import Membership, MembershipStatus, PaymentMethod, PaymentStatus, Plan
 from app.models.pos import CashRegisterSession, CashSessionStatus
 from app.models.user import User, UserRole
 from app.schemas.business import PaginatedResponse
@@ -25,7 +26,12 @@ from app.schemas.platform import (
     MembershipResponse,
     MembershipUpdateRequest,
 )
-from app.services.membership_sale_service import create_manual_membership_sale
+from app.services.membership_sale_service import (
+    create_manual_membership_sale,
+    membership_is_active,
+    membership_is_expired,
+    membership_is_pending,
+)
 
 from ._common import _membership_payload
 
@@ -47,8 +53,22 @@ async def list_memberships(
     count_query = select(func.count()).select_from(Membership).where(Membership.tenant_id == ctx.tenant_id)
 
     if status_filter:
-        query = query.where(Membership.status == status_filter)
-        count_query = count_query.where(Membership.status == status_filter)
+        # Estados derivados de fecha (expired/pending/active) se filtran por
+        # predicado para no depender del enum stored (que puede estar stale entre
+        # corridas del job de sync). cancelled/frozen son estados de BD: enum directo.
+        today = datetime.now(tenant_zone(ctx)).date()
+        derived_predicates = {
+            MembershipStatus.EXPIRED.value: membership_is_expired,
+            MembershipStatus.PENDING.value: membership_is_pending,
+            MembershipStatus.ACTIVE.value: membership_is_active,
+        }
+        predicate_factory = derived_predicates.get(status_filter)
+        if predicate_factory is not None:
+            condition = predicate_factory(today)
+        else:
+            condition = Membership.status == status_filter
+        query = query.where(condition)
+        count_query = count_query.where(condition)
     if user_id:
         query = query.where(Membership.user_id == user_id)
         count_query = count_query.where(Membership.user_id == user_id)

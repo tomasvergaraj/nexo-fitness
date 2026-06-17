@@ -6,7 +6,11 @@ from uuid import uuid4
 
 from app.models.business import Membership, MembershipStatus, Payment, PaymentMethod, PaymentStatus, Plan, PlanDuration
 from app.services.membership_sale_service import (
+    _resolved_membership_status,
     apply_payment_membership_snapshot,
+    membership_is_active,
+    membership_is_expired,
+    membership_is_pending,
     resolve_membership_expiration,
     resolve_membership_timeline,
     resolve_plan_sale_amount,
@@ -183,3 +187,65 @@ def test_apply_payment_membership_snapshot_preserves_plan_and_period() -> None:
     assert payment.membership_starts_at_snapshot == membership.starts_at
     assert payment.membership_expires_at_snapshot == membership.expires_at
     assert payment.membership_status_snapshot == MembershipStatus.PENDING.value
+
+
+# ─── Estado resuelto por fecha (fuente de verdad de filtros + job de sync) ─────
+
+TODAY = date(2026, 5, 1)
+
+
+def test_resolved_status_cancelled_is_terminal() -> None:
+    m = make_membership(status=MembershipStatus.CANCELLED, starts_at=date(2026, 4, 1), expires_at=date(2026, 6, 1))
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.CANCELLED
+
+
+def test_resolved_status_pending_when_starts_in_future() -> None:
+    m = make_membership(status=MembershipStatus.ACTIVE, starts_at=date(2026, 5, 2), expires_at=date(2026, 6, 2))
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.PENDING
+
+
+def test_resolved_status_active_when_starts_today() -> None:
+    m = make_membership(status=MembershipStatus.PENDING, starts_at=TODAY, expires_at=date(2026, 6, 1))
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.ACTIVE
+
+
+def test_resolved_status_expired_when_expires_today() -> None:
+    # expires_at <= today → vencida (el día de vencimiento ya no da acceso)
+    m = make_membership(status=MembershipStatus.ACTIVE, starts_at=date(2026, 4, 1), expires_at=TODAY)
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.EXPIRED
+
+
+def test_resolved_status_active_perpetual_without_expiry() -> None:
+    m = make_membership(status=MembershipStatus.ACTIVE, starts_at=date(2026, 4, 1), expires_at=None)
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.ACTIVE
+
+
+def test_resolved_status_frozen_expired_when_date_passed() -> None:
+    m = make_membership(status=MembershipStatus.FROZEN, starts_at=date(2026, 4, 1), expires_at=date(2026, 4, 30))
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.EXPIRED
+
+
+def test_resolved_status_frozen_stays_when_still_valid() -> None:
+    m = make_membership(status=MembershipStatus.FROZEN, starts_at=date(2026, 4, 1), expires_at=date(2026, 6, 1))
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.FROZEN
+
+
+def test_resolved_status_expired_when_punch_pass_exhausted() -> None:
+    m = make_membership(
+        status=MembershipStatus.ACTIVE, starts_at=date(2026, 4, 1), expires_at=None, uses_remaining=0
+    )
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.EXPIRED
+
+
+def test_resolved_status_active_punch_pass_with_uses_left() -> None:
+    m = make_membership(
+        status=MembershipStatus.ACTIVE, starts_at=date(2026, 4, 1), expires_at=None, uses_remaining=3
+    )
+    assert _resolved_membership_status(m, TODAY) == MembershipStatus.ACTIVE
+
+
+def test_status_predicates_compile_to_sql() -> None:
+    # Smoke: los predicados producen SQL válido y referencian la tabla memberships.
+    for factory in (membership_is_active, membership_is_pending, membership_is_expired):
+        sql = str(factory(TODAY).compile(compile_kwargs={"literal_binds": True}))
+        assert "memberships" in sql
