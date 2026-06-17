@@ -13,7 +13,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import TenantContext
@@ -458,13 +458,26 @@ async def create_checkin_record(
             reservation is not None and reservation.status == ReservationStatus.ATTENDED
         )
         if not is_duplicate_attendance:
-            if access_membership.uses_remaining <= 0:
+            # Decremento atómico condicional: serializa check-ins concurrentes del
+            # mismo pase (doble-scan QR / kiosko+recepción). El UPDATE solo descuenta
+            # si aún quedan pases; 0 filas afectadas = sin pases → rebota. Evita el
+            # read-modify-write con lost-update que dejaba gastar de más.
+            new_remaining = (
+                await db.execute(
+                    update(Membership)
+                    .where(Membership.id == access_membership.id, Membership.uses_remaining > 0)
+                    .values(uses_remaining=Membership.uses_remaining - 1)
+                    .returning(Membership.uses_remaining)
+                )
+            ).scalar_one_or_none()
+            if new_remaining is None:
                 raise HTTPException(
                     status_code=400,
                     detail="No quedan pases disponibles en esta membresía.",
                 )
-            access_membership.uses_remaining -= 1
-            if access_membership.uses_remaining <= 0:
+            # Sincroniza el objeto ORM en memoria con el valor atómico de la DB.
+            access_membership.uses_remaining = new_remaining
+            if new_remaining <= 0:
                 access_membership.status = MembershipStatus.EXPIRED
                 access_membership.expires_at = now_utc.date()
 

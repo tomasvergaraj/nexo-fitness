@@ -173,6 +173,22 @@ async def redeem(
     if applied <= 0:
         raise GiftCardError("La gift card no tiene saldo disponible.")
 
+    # Monitoreo del residual paid-path [2B] (decisión: aceptar + alertar, no reservar
+    # en init). Si se pidió más de lo disponible, el saldo se topa (clamp). En el flujo
+    # online normal el cobro ya se calculó contra el saldo, así que un clamp acá es
+    # señal de carrera init/capture o doble-gasto concurrente de la misma card →
+    # warning estructurado para alertar (ops). El saldo nunca queda negativo (min()).
+    if total > card.balance:
+        logger.warning(
+            "gift_card_redeem_clamped",
+            gift_card_id=str(card.id),
+            requested=str(total),
+            available=str(card.balance),
+            applied=str(applied),
+            context=context,
+            payment_id=str(payment_id) if payment_id else None,
+        )
+
     card.balance = _money(card.balance - applied)
     card.last_used_at = datetime.now(timezone.utc)
     if card.balance <= 0:

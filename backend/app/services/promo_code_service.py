@@ -9,10 +9,30 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.business import Plan, PromoCode
+
+
+async def consume_promo_use(db: AsyncSession, *, promo_id: UUID) -> bool:
+    """Incrementa `uses_count` de forma atómica respetando `max_uses`.
+
+    Devuelve True si se consumió un uso; False si el código ya estaba en su tope
+    (carrera concurrente). El UPDATE condicional `WHERE uses_count < max_uses`
+    cierra el race de check-then-increment: dos redenciones simultáneas de un
+    código de un solo uso no pueden ambas incrementar.
+    """
+    result = await db.execute(
+        update(PromoCode)
+        .where(
+            PromoCode.id == promo_id,
+            or_(PromoCode.max_uses.is_(None), PromoCode.uses_count < PromoCode.max_uses),
+        )
+        .values(uses_count=PromoCode.uses_count + 1)
+    )
+    return (result.rowcount or 0) == 1
+
 
 CLP_QUANTUM = Decimal("1")
 DEFAULT_QUANTUM = Decimal("0.01")

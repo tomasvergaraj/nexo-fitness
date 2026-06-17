@@ -415,10 +415,14 @@ async def allocate_membership_purchase(
                 # Falla del programa de referidos no debe romper la venta.
                 pass
 
-        # 2) Si este es el PRIMER pago completado del cliente y vino referido,
-        #    otorgar la recompensa automática al referrer (opt-in del gym).
+        # 2) Si este es el PRIMER pago REAL (monto > 0) del cliente y vino referido,
+        #    otorgar la recompensa automática al referrer (opt-in del gym). Se exige
+        #    monto > 0 para que pagos de $0 (plan gratis / promo 100% / gift card que
+        #    cubre todo) NO disparen el reward: si no, se podría farmear creando
+        #    cuentas falsas con el propio referral_code. Contar solo pagos pagados
+        #    además cubre el caso trial-gratis-luego-pago: premia en el pago real.
         try:
-            completed_count = (
+            paid_count = (
                 await db.execute(
                     select(func.count())
                     .select_from(Payment)
@@ -426,10 +430,11 @@ async def allocate_membership_purchase(
                         Payment.tenant_id == tenant.id,
                         Payment.user_id == client.id,
                         Payment.status == PaymentStatus.COMPLETED,
+                        Payment.amount > 0,
                     )
                 )
             ).scalar() or 0
-            if completed_count == 1 and client.referrer_user_id:
+            if paid_count == 1 and client.referrer_user_id and payment.amount > 0:
                 from app.services.referral_service import grant_referral_reward
                 await grant_referral_reward(
                     db, tenant=tenant, referred_user=client, payment_id=payment.id

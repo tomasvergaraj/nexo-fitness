@@ -81,11 +81,18 @@ def make_membership(**overrides) -> Membership:
 
 
 class FakeSession:
-    """Sesión mínima — captura objetos añadidos y soporta flush/refresh."""
+    """Sesión mínima — captura objetos añadidos y soporta flush/refresh.
 
-    def __init__(self):
+    `execute` emula el UPDATE atómico condicional de punch passes
+    (`UPDATE memberships SET uses_remaining = uses_remaining-1 WHERE id=:id AND
+    uses_remaining>0 RETURNING uses_remaining`): descuenta sobre `membership`
+    sólo si quedan pases y devuelve el nuevo valor, o None si está agotado.
+    """
+
+    def __init__(self, membership=None):
         self.added: list = []
         self.flushed = 0
+        self._membership = membership
 
     def add(self, obj):
         self.added.append(obj)
@@ -99,6 +106,19 @@ class FakeSession:
 
     async def refresh(self, _obj):
         return None
+
+    async def execute(self, _stmt):
+        m = self._membership
+        new_val = None
+        if m is not None and m.uses_remaining is not None and m.uses_remaining > 0:
+            m.uses_remaining -= 1
+            new_val = m.uses_remaining
+
+        class _Result:
+            def scalar_one_or_none(_self):
+                return new_val
+
+        return _Result()
 
 
 # ─── Status resolution ───────────────────────────────────────────────────────
@@ -145,7 +165,7 @@ def test_timeline_excludes_exhausted_punch_pass() -> None:
 
 def test_create_checkin_decrements_punch_pass() -> None:
     membership = make_membership(uses_remaining=5)
-    session = FakeSession()
+    session = FakeSession(membership=membership)
     checkin, resolution = asyncio.run(
         create_checkin_record(
             db=session,  # type: ignore[arg-type]
@@ -167,7 +187,7 @@ def test_create_checkin_decrements_punch_pass() -> None:
 
 def test_create_checkin_marks_expired_on_last_use() -> None:
     membership = make_membership(uses_remaining=1)
-    session = FakeSession()
+    session = FakeSession(membership=membership)
     asyncio.run(
         create_checkin_record(
             db=session,  # type: ignore[arg-type]
@@ -188,7 +208,7 @@ def test_create_checkin_marks_expired_on_last_use() -> None:
 
 def test_create_checkin_rejects_when_no_uses() -> None:
     membership = make_membership(uses_remaining=0)
-    session = FakeSession()
+    session = FakeSession(membership=membership)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             create_checkin_record(

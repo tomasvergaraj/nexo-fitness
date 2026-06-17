@@ -31,7 +31,6 @@ from app.models.business import (
     PaymentMethod,
     PaymentStatus,
     Plan,
-    PromoCode,
 )
 from app.models.platform import PlatformLead, TenantPaymentProviderAccount, TuuTransaction, WebpayTransaction
 from app.models.tenant import LicenseType, Tenant
@@ -547,14 +546,15 @@ async def _activate_checkout_purchase(
     membership = purchase.membership
     payment = purchase.payment
 
-    # Increment promo code uses_count if a promo was applied
+    # Increment promo code uses_count if a promo was applied (atómico, respeta max_uses).
+    # Nota: el cobro ya se redujo en el init sin reservar el uso; cerrar del todo el
+    # race online requiere reservar el uso al crear la sesión (mismo rediseño que gift
+    # cards [2]). Esto evita over-count/lost-update; el descuento ya fue cobrado.
     if promo_code_id:
         try:
-            promo = (await db.execute(
-                select(PromoCode).where(PromoCode.id == UUID(promo_code_id))
-            )).scalars().first()
-            if promo:
-                promo.uses_count = (promo.uses_count or 0) + 1
+            from app.services.promo_code_service import consume_promo_use
+
+            await consume_promo_use(db, promo_id=UUID(promo_code_id))
         except Exception:
             pass  # Don't fail the checkout on promo tracking error
 
@@ -586,6 +586,16 @@ async def _activate_checkout_purchase(
         except Exception as exc:  # noqa: BLE001
             import structlog as _sl
             _sl.get_logger().warning("checkout_gift_card_redeem_failed", payment_id=str(payment.id), exc_info=exc)
+            # Si la orden está cubierta 100% por la gift card (sin pago de pasarela),
+            # un redeem fallido NO debe activar gratis: abortar para que get_db haga
+            # rollback. Dos free-path concurrentes con la misma card se serializan por
+            # el for_update de redeem: el 2º ve la card agotada, rebota y no activa.
+            # Si hubo pago real (amount > 0), la plata de la pasarela es real → se
+            # mantiene best-effort (solo log) para no negar una membresía pagada.
+            if (payment.amount or Decimal("0")) <= 0:
+                raise RuntimeError(
+                    "No se pudo aplicar la gift card (sin saldo o ya utilizada)."
+                ) from exc
 
     if is_new_user and settings.RESEND_API_KEY.strip():
         await email_service.send_password_reset(customer_email, _build_checkout_reset_url(user.id))

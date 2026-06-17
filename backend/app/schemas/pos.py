@@ -213,7 +213,7 @@ class POSPaymentSplitIn(BaseModel):
 class POSTransactionCreate(BaseModel):
     items: List[POSTransactionItemIn] = Field(min_length=1)
     payment_method: str = "cash"
-    discount_amount: Decimal = Decimal("0")
+    discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
     gift_card_code: Optional[str] = None
     branch_id: Optional[UUID] = None
     notes: Optional[str] = None

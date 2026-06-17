@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -182,6 +183,14 @@ def credit_limit_exceeded(
     if credit_limit is None:
         return False
     return (current_balance + charge_amount) > credit_limit
+
+
+def discount_exceeds_subtotal(discount: Decimal, subtotal: Decimal) -> bool:
+    """True si el descuento supera el subtotal (el total quedaría negativo).
+
+    El schema ya garantiza `discount >= 0`; esto acota el extremo superior.
+    """
+    return discount > subtotal
 
 
 def _credit_limit_mode(ctx: TenantContext) -> str:
@@ -1206,6 +1215,11 @@ async def create_transaction(
         products[i.product_id].price * i.quantity for i in body.items
     )
     discount = body.discount_amount
+    if discount_exceeds_subtotal(discount, subtotal):
+        raise HTTPException(
+            status_code=400,
+            detail=f"El descuento (${discount}) no puede superar el subtotal (${subtotal}).",
+        )
     total = subtotal - discount
 
     # ── fiado: validar abono al momento y tope de crédito sobre el total ──────
@@ -1439,12 +1453,15 @@ async def refund_transaction(
     Con `items` → devolución parcial (ítems/cantidades sueltas). El descuento y
     la gift card se prorratean; el inventario se restaura por ítem; en ventas
     fiadas se reduce la deuda del socio."""
+    # Lock de la fila de la venta: serializa refunds concurrentes del mismo tx
+    # (doble-click / retry). La 2ª devolución espera el commit de la 1ª y revalida
+    # contra `refunded_amount`/`refunded_quantity` frescos, evitando doble-refund.
     tx = (
         await db.execute(
             select(POSTransaction).where(
                 POSTransaction.id == tx_id,
                 POSTransaction.tenant_id == ctx.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if not tx:
@@ -1923,7 +1940,17 @@ async def open_cash_session(
         created_at=now,
     )
     db.add(s)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # El índice único parcial uq_open_cash_session_per_branch rechazó un segundo
+        # turno OPEN para la misma (tenant, branch): apertura concurrente / doble-click
+        # que el check-then-insert no alcanzó a ver. La invariante la garantiza la DB.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ya hay un turno de caja abierto para esta sucursal",
+        )
     await db.refresh(s)
     return await _build_session_response(db, s)
 

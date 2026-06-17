@@ -238,9 +238,15 @@ async def create_manual_membership_sale_endpoint(
         gift_redemption.payment_id = result.payment.id
         await db.flush()
 
-    # Contabilizar el uso del promo code.
+    # Contabilizar el uso del promo code de forma atómica (respeta max_uses).
     if promo_pricing is not None and promo_pricing.promo is not None:
-        promo_pricing.promo.uses_count = (promo_pricing.promo.uses_count or 0) + 1
+        from app.services.promo_code_service import consume_promo_use
+
+        if not await consume_promo_use(db, promo_id=promo_pricing.promo.id):
+            raise HTTPException(
+                status_code=409,
+                detail="El código promocional alcanzó su límite de usos.",
+            )
         await db.flush()
 
     effective_plan = None

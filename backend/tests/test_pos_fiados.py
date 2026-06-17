@@ -12,6 +12,7 @@ from app.api.v1.endpoints.pos import (
     cash_difference,
     compute_expected_cash,
     credit_limit_exceeded,
+    discount_exceeds_subtotal,
     is_valid_credit_payment_method,
     _signed,
 )
@@ -97,3 +98,19 @@ def test_abono_de_fiado_en_efectivo_suma_al_arqueo():
     assert got == D("134960")
     # Caja cuadrada cuando se cuenta exactamente lo esperado.
     assert cash_difference(D("134960"), got) == D("0")
+
+
+# ─── Tope del descuento en venta (evita total negativo / robo de caja) ──────────
+
+def test_descuento_igual_al_subtotal_es_valido():
+    # Descuento del 100% deja total en 0: permitido (venta de cortesía).
+    assert discount_exceeds_subtotal(D("10000"), D("10000")) is False
+
+
+def test_descuento_menor_al_subtotal_es_valido():
+    assert discount_exceeds_subtotal(D("3000"), D("10000")) is False
+
+
+def test_descuento_mayor_al_subtotal_se_rechaza():
+    # Descuento > subtotal dejaría el total negativo → debe rechazarse.
+    assert discount_exceeds_subtotal(D("12000"), D("10000")) is True
