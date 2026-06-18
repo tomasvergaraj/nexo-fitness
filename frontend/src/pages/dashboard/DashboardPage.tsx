@@ -178,7 +178,7 @@ export default function DashboardPage() {
       <motion.div variants={fadeInUp} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Dashboard</h1>
-          <p className="mt-1 text-sm text-surface-500">
+          <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">
             {isLoading ? 'Cargando métricas del negocio...' : 'Resumen operativo del negocio'}
           </p>
         </div>
@@ -224,7 +224,7 @@ export default function DashboardPage() {
               <h2 className="mt-3 text-2xl font-bold font-display text-surface-900 dark:text-white">
                 {subscriptionData.plan_name || 'Sin plan asignado'}
               </h2>
-              <p className="mt-1 text-sm text-surface-500">
+              <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">
                 {licenseTypeLabel(subscriptionData.license_type)} · {billingDateLabel(subscriptionData)}
               </p>
             </div>
@@ -235,17 +235,17 @@ export default function DashboardPage() {
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
-              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Clave</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Clave</p>
               <p className="mt-1 font-semibold text-surface-900 dark:text-white">{subscriptionData.plan_key}</p>
             </div>
             <div className="rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
-              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Miembros incluidos</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Miembros incluidos</p>
               <p className="mt-1 font-semibold text-surface-900 dark:text-white">
                 {subscriptionData.max_members ? subscriptionData.max_members.toLocaleString('es-CL') : 'Sin límite visible'}
               </p>
             </div>
             <div className="rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
-              <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Sucursales incluidas</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Sucursales incluidas</p>
               <p className="mt-1 font-semibold text-surface-900 dark:text-white">
                 {subscriptionData.max_branches ?? 'Sin límite visible'}
               </p>
@@ -256,7 +256,7 @@ export default function DashboardPage() {
             <div className="rounded-xl border border-surface-200/70 bg-surface-50 px-4 py-4 dark:border-surface-800/70 dark:bg-surface-800/30">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Uso de clientes</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Uso de clientes</p>
                   <p className="mt-1 font-semibold text-surface-900 dark:text-white">
                     {subscriptionData.usage_active_clients.toLocaleString('es-CL')} / {(subscriptionData.max_members ?? 0).toLocaleString('es-CL')}
                   </p>
@@ -294,7 +294,7 @@ export default function DashboardPage() {
             <div className="rounded-xl border border-surface-200/70 bg-surface-50 px-4 py-4 dark:border-surface-800/70 dark:bg-surface-800/30">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500">Uso de sucursales</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Uso de sucursales</p>
                   <p className="mt-1 font-semibold text-surface-900 dark:text-white">
                     {subscriptionData.usage_active_branches} / {subscriptionData.max_branches ?? 0}
                   </p>
@@ -386,15 +386,15 @@ export default function DashboardPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Ingresos del Día" value={parseApiNumber(data?.revenue_today)} icon={DollarSign} format="currency" color="brand" />
-            <StatCard label="Miembros Activos" value={data?.active_members ?? 0} icon={Users} color="emerald" />
-            <StatCard label="Clases Hoy" value={data?.classes_today ?? 0} icon={CalendarDays} color="violet" />
-            <StatCard label="Check-ins Hoy" value={data?.checkins_today ?? 0} icon={UserCheck} color="blue" />
+            <StatCard label="Ingresos del día" value={parseApiNumber(data?.revenue_today)} icon={DollarSign} format="currency" color="brand" />
+            <StatCard label="Miembros activos" value={data?.active_members ?? 0} icon={Users} color="emerald" />
+            <StatCard label="Clases hoy" value={data?.classes_today ?? 0} icon={CalendarDays} color="violet" />
+            <StatCard label="Check-ins hoy" value={data?.checkins_today ?? 0} icon={UserCheck} color="blue" />
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <StatCard label="Reservas Hoy" value={data?.reservations_today ?? 0} icon={ClipboardCheck} color="amber" />
-            <StatCard label="Pagos Pendientes" value={data?.pending_payments ?? 0} icon={AlertTriangle} color="rose" />
+            <StatCard label="Reservas hoy" value={data?.reservations_today ?? 0} icon={ClipboardCheck} color="amber" />
+            <StatCard label="Pagos pendientes" value={data?.pending_payments ?? 0} icon={AlertTriangle} color="rose" />
             <StatCard label="Miembros por vencer" value={data?.expiring_memberships ?? 0} icon={TrendingUp} color="emerald" />
           </div>
         </>
@@ -408,7 +408,7 @@ export default function DashboardPage() {
           <div className="mb-6 flex items-center justify-between">
             <div>
               <h3 className="text-base font-semibold text-surface-900 dark:text-white">Ingresos comparados</h3>
-              <p className="text-sm text-surface-500">Hoy, semana y mes</p>
+              <p className="text-sm text-surface-500 dark:text-surface-400">Hoy, semana y mes</p>
             </div>
             <span className="text-2xl font-bold font-display text-surface-900 dark:text-white">
               {formatCurrency(parseApiNumber(data?.revenue_month))}
@@ -443,14 +443,14 @@ export default function DashboardPage() {
                   <p className="font-medium text-surface-900 dark:text-white">
                     {checkin.user_name || `Usuario ${checkin.user_id.slice(0, 8)}`}
                   </p>
-                  <p className="text-surface-500">{new Date(checkin.checked_in_at).toLocaleString('es-CL')}</p>
+                  <p className="text-surface-500 dark:text-surface-400">{new Date(checkin.checked_in_at).toLocaleString('es-CL')}</p>
                 </div>
               ))}
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-surface-300 px-4 py-8 text-center dark:border-surface-700">
               <p className="font-medium text-surface-700 dark:text-surface-200">Sin check-ins recientes</p>
-              <p className="mt-1 text-sm text-surface-500">Puedes registrarlos desde el módulo de check-in.</p>
+              <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Puedes registrarlos desde el módulo de check-in.</p>
             </div>
           )}
         </motion.div>
@@ -483,15 +483,15 @@ export default function DashboardPage() {
           <h3 className="mb-4 text-base font-semibold text-surface-900 dark:text-white">Estado general</h3>
           <div className="space-y-3 text-sm">
             <div className="flex items-center justify-between rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
-              <span className="text-surface-500">Ingresos del mes</span>
+              <span className="text-surface-500 dark:text-surface-400">Ingresos del mes</span>
               <span className="font-semibold text-surface-900 dark:text-white">{formatCurrency(parseApiNumber(data?.revenue_month))}</span>
             </div>
             <div className="flex items-center justify-between rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
-              <span className="text-surface-500">Miembros totales</span>
+              <span className="text-surface-500 dark:text-surface-400">Miembros totales</span>
               <span className="font-semibold text-surface-900 dark:text-white">{data?.total_members ?? 0}</span>
             </div>
             <div className="flex items-center justify-between rounded-xl bg-surface-50 px-4 py-3 dark:bg-surface-800/40">
-              <span className="text-surface-500">Pendientes de pago</span>
+              <span className="text-surface-500 dark:text-surface-400">Pendientes de pago</span>
               <span className="font-semibold text-surface-900 dark:text-white">{data?.pending_payments ?? 0}</span>
             </div>
           </div>
@@ -503,7 +503,7 @@ export default function DashboardPage() {
         <motion.div variants={fadeInUp}>
           <h2 className="mb-4 text-lg font-bold font-display text-surface-900 dark:text-white flex items-center gap-2">
             <Clock size={20} className="text-brand-500" />
-            Panel del Día
+            Panel del día
           </h2>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             {/* Classes today */}
@@ -530,7 +530,7 @@ export default function DashboardPage() {
                             {cls.current_bookings}/{cls.max_capacity}
                           </span>
                         </div>
-                        <p className="text-xs text-surface-500 mt-0.5">
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
                           {new Date(cls.start_time).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
                           {cls.instructor_name && ` · ${cls.instructor_name}`}
                         </p>
@@ -542,7 +542,7 @@ export default function DashboardPage() {
                   })}
                 </div>
               ) : (
-                <p className="text-sm text-surface-500">Sin clases programadas para hoy</p>
+                <p className="text-sm text-surface-500 dark:text-surface-400">Sin clases programadas para hoy</p>
               )}
             </motion.div>
 
@@ -555,7 +555,7 @@ export default function DashboardPage() {
                 <CreditCard size={16} className="text-emerald-500" />
                 Pagos de hoy ({todayData.payments.length})
               </h3>
-              <p className="text-xs text-surface-500 mb-4">{formatCurrency(todayData.revenue_today)} recaudado</p>
+              <p className="text-xs text-surface-500 dark:text-surface-400 mb-4">{formatCurrency(todayData.revenue_today)} recaudado</p>
               {todayData.payments.length ? (
                 <div className="space-y-2">
                   {todayData.payments.slice(0, 8).map((pay) => (
@@ -564,7 +564,7 @@ export default function DashboardPage() {
                         <p className="text-sm font-medium text-surface-900 dark:text-white truncate">
                           {pay.user_name || 'Cliente'}
                         </p>
-                        <p className="text-xs text-surface-500">{pay.method}</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">{pay.method}</p>
                       </div>
                       <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
                         {formatCurrency(pay.amount)}
@@ -573,7 +573,7 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-surface-500">Sin pagos registrados hoy</p>
+                <p className="text-sm text-surface-500 dark:text-surface-400">Sin pagos registrados hoy</p>
               )}
             </motion.div>
 
@@ -594,13 +594,13 @@ export default function DashboardPage() {
                         <User size={14} className="text-pink-500 shrink-0" />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-surface-900 dark:text-white truncate">{b.full_name}</p>
-                          <p className="text-xs text-surface-500 truncate">{b.email}</p>
+                          <p className="text-xs text-surface-500 dark:text-surface-400 truncate">{b.email}</p>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-surface-500">Sin cumpleaños hoy</p>
+                  <p className="text-sm text-surface-500 dark:text-surface-400">Sin cumpleaños hoy</p>
                 )}
               </div>
               <div className="border-t border-surface-100 dark:border-surface-800 pt-4">
