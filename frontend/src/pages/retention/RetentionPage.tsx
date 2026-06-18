@@ -91,7 +91,7 @@ export default function RetentionPage() {
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Retención</h1>
-          <p className="text-sm text-surface-500 mt-0.5">Cohorts, churn mensual y clientes en riesgo</p>
+          <p className="text-sm text-surface-500 dark:text-surface-400 mt-0.5">Cohorts, churn mensual y clientes en riesgo</p>
         </div>
         <div className="flex gap-2">
           {MONTH_OPTIONS.map((m) => (
@@ -190,17 +190,17 @@ export default function RetentionPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-surface-900 dark:text-white">Cohort de retención</h2>
-                <p className="text-xs text-surface-500">% de cada cohorte de altas que sigue activa luego de N meses</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">% de cada cohorte de altas que sigue activa luego de N meses</p>
               </div>
             </div>
 
             {data.cohort_matrix.every((r) => r.cohort_size === 0) ? (
-              <p className="py-8 text-center text-sm text-surface-400">Sin datos suficientes para el periodo.</p>
+              <p className="py-8 text-center text-sm text-surface-500 dark:text-surface-400">Sin datos suficientes para el periodo.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-xs">
                   <thead>
-                    <tr className="text-surface-400">
+                    <tr className="text-surface-500 dark:text-surface-400">
                       <th className="px-2 py-1.5 text-left font-medium">Cohorte</th>
                       <th className="px-2 py-1.5 text-left font-medium">N°</th>
                       {Array.from({ length: maxOffset }).map((_, i) => (
@@ -216,7 +216,7 @@ export default function RetentionPage() {
                         <td className="px-2 py-1 text-surface-600 dark:text-surface-300">
                           {formatMonthLabel(row.cohort_month)}
                         </td>
-                        <td className="px-2 py-1 text-surface-500">{row.cohort_size}</td>
+                        <td className="px-2 py-1 text-surface-500 dark:text-surface-400">{row.cohort_size}</td>
                         {Array.from({ length: maxOffset }).map((_, i) => {
                           const cell = row.cells[i];
                           if (!cell || row.cohort_size === 0) {
@@ -253,7 +253,7 @@ export default function RetentionPage() {
                 const widthPct = Math.min(100, (m.churn_pct / maxChurn) * 100);
                 return (
                   <div key={m.month} className="flex items-center gap-3">
-                    <span className="w-16 shrink-0 text-xs text-surface-500">{formatMonthLabel(m.month)}</span>
+                    <span className="w-16 shrink-0 text-xs text-surface-500 dark:text-surface-400">{formatMonthLabel(m.month)}</span>
                     <div className="flex-1">
                       <div className="h-6 w-full overflow-hidden rounded-md bg-surface-100 dark:bg-surface-800">
                         <div
@@ -267,7 +267,7 @@ export default function RetentionPage() {
                     </div>
                     <span className="w-28 shrink-0 text-right text-xs text-surface-600 dark:text-surface-300">
                       <span className="font-semibold">{m.churn_pct.toFixed(1)}%</span>
-                      <span className="text-surface-400"> · {m.cancelled}/{m.active_at_start}</span>
+                      <span className="text-surface-500 dark:text-surface-400"> · {m.cancelled}/{m.active_at_start}</span>
                     </span>
                   </div>
                 );
@@ -300,7 +300,7 @@ function NpsPanel({ nps, months }: { nps: NpsSummary; months: number }) {
         <Smile size={16} className="text-brand-500" />
         <div>
           <h2 className="text-sm font-semibold text-surface-900 dark:text-white">NPS post-clase</h2>
-          <p className="text-xs text-surface-500">Satisfacción de miembros tras asistir a clase · últimos {months}m</p>
+          <p className="text-xs text-surface-500 dark:text-surface-400">Satisfacción de miembros tras asistir a clase · últimos {months}m</p>
         </div>
       </div>
 
@@ -363,7 +363,7 @@ function ReferralPanel({ data }: { data: ReferralMetrics }) {
         <Gift size={16} className="text-pink-500" />
         <div>
           <h2 className="text-sm font-semibold text-surface-900 dark:text-white">Referidos</h2>
-          <p className="text-xs text-surface-500">Clientes que llegaron por recomendación y recompensas otorgadas</p>
+          <p className="text-xs text-surface-500 dark:text-surface-400">Clientes que llegaron por recomendación y recompensas otorgadas</p>
         </div>
       </div>
 
@@ -382,7 +382,7 @@ function ReferralPanel({ data }: { data: ReferralMetrics }) {
               <div key={r.user_id} className="flex items-center gap-3 text-sm">
                 <span className="w-5 shrink-0 text-center text-xs font-bold text-surface-500 dark:text-surface-400">{i + 1}</span>
                 <span className="min-w-0 flex-1 truncate text-surface-700 dark:text-surface-300">{r.name}</span>
-                <span className="shrink-0 text-xs text-surface-500">
+                <span className="shrink-0 text-xs text-surface-500 dark:text-surface-400">
                   {r.referred_count} {r.referred_count === 1 ? 'referido' : 'referidos'}
                   {r.reward_days > 0 ? ` · ${r.reward_days}d` : ''}
                 </span>
@@ -402,7 +402,7 @@ function ReferralPanel({ data }: { data: ReferralMetrics }) {
 function MiniStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-xl bg-surface-50 px-3 py-2.5 dark:bg-surface-800/40">
-      <p className="text-xs font-medium uppercase tracking-wide text-surface-500">{label}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-surface-500 dark:text-surface-400">{label}</p>
       <p className="mt-0.5 text-xl font-bold text-surface-900 dark:text-white">{value}</p>
       {hint && <p className="mt-0.5 truncate text-xs text-surface-500 dark:text-surface-400">{hint}</p>}
     </div>
@@ -429,10 +429,10 @@ function KpiCard({
     >
       <div className="flex items-center gap-2">
         {icon}
-        <span className="text-xs font-medium uppercase tracking-wide text-surface-500">{label}</span>
+        <span className="text-xs font-medium uppercase tracking-wide text-surface-500 dark:text-surface-400">{label}</span>
       </div>
       <p className="mt-1 text-2xl font-bold text-surface-900 dark:text-white">{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-surface-400">{hint}</p>}
+      {hint && <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">{hint}</p>}
     </div>
   );
 }
