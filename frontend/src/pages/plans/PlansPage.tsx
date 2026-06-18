@@ -467,7 +467,7 @@ export default function PlansPage() {
                     <span className={cn('text-3xl font-extrabold font-display', plan.id !== featuredPlanId && 'text-surface-900 dark:text-white')}>
                       {formatCurrency(applyDiscount(parseApiNumber(plan.price), plan.discount_pct), plan.currency)}
                     </span>
-                    <span className={cn('text-sm line-through', plan.id === featuredPlanId ? 'text-white/50' : 'text-surface-400')}>
+                    <span className={cn('text-sm line-through', plan.id === featuredPlanId ? 'text-white/50' : 'text-surface-500 dark:text-surface-400')}>
                       {formatCurrency(parseApiNumber(plan.price), plan.currency)}
                     </span>
                   </div>
@@ -479,7 +479,7 @@ export default function PlansPage() {
                   </span>
                 </div>
               )}
-              <p className={cn('mt-1 text-sm', plan.id === featuredPlanId ? 'text-white/65' : 'text-surface-400')}>
+              <p className={cn('mt-1 text-sm', plan.id === featuredPlanId ? 'text-white/65' : 'text-surface-500 dark:text-surface-400')}>
                 {plan.plan_kind === 'punch_pass'
                   ? `Pack de ${plan.total_uses ?? 0} clases`
                   : plan.plan_kind === 'drop_in'
@@ -761,7 +761,7 @@ export default function PlansPage() {
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium uppercase tracking-[0.18em] text-surface-400">
+              <span className="text-xs font-medium uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">
                 Opciones avanzadas
               </span>
               <button
