@@ -40,6 +40,7 @@ export default function ExpensesPage() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
+  const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [form, setForm] = useState({
     category: 'other',
@@ -72,7 +73,7 @@ export default function ExpensesPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => posApi.deleteExpense(id),
-    onSuccess: () => { toast.success('Gasto eliminado'); queryClient.invalidateQueries({ queryKey: ['pos-expenses'] }); },
+    onSuccess: () => { toast.success('Gasto eliminado'); setExpenseToDelete(null); queryClient.invalidateQueries({ queryKey: ['pos-expenses'] }); },
     onError: (err) => toast.error(getApiError(err)),
   });
 
@@ -303,7 +304,7 @@ export default function ExpensesPage() {
                           className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500 dark:text-surface-400 hover:text-brand-500">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={() => deleteMutation.mutate(expense.id)} aria-label="Eliminar gasto" title="Eliminar gasto"
+                        <button onClick={() => setExpenseToDelete(expense)} aria-label="Eliminar gasto" title="Eliminar gasto"
                           className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-500 dark:text-surface-400 hover:text-red-500">
                           <Trash2 size={14} />
                         </button>
@@ -432,6 +433,32 @@ export default function ExpensesPage() {
               className="flex-1 btn-primary text-sm py-2.5 flex items-center justify-center gap-2">
               {isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
               {editing ? 'Guardar' : 'Registrar'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Confirmación de eliminación */}
+      <Modal
+        open={Boolean(expenseToDelete)}
+        title="Eliminar gasto"
+        onClose={() => !deleteMutation.isPending && setExpenseToDelete(null)}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-surface-600 dark:text-surface-300">
+            ¿Eliminar el gasto <span className="font-semibold text-surface-900 dark:text-white">{expenseToDelete?.description}</span>
+            {expenseToDelete ? ` por ${formatCLP(toNum(expenseToDelete.amount))}` : ''}? Esta acción no se puede deshacer.
+          </p>
+          <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row">
+            <button type="button" className="flex-1 btn-secondary text-sm py-2.5"
+              onClick={() => setExpenseToDelete(null)} disabled={deleteMutation.isPending}>
+              Cancelar
+            </button>
+            <button type="button" className="flex-1 btn-danger text-sm py-2.5 flex items-center justify-center gap-2"
+              onClick={() => expenseToDelete && deleteMutation.mutate(expenseToDelete.id)}
+              disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+              Eliminar
             </button>
           </div>
         </div>

@@ -253,6 +253,7 @@ export default function ApiClientsPage() {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [createdClient, setCreatedClient] = useState<ApiClientWithSecret | null>(null);
+  const [clientToRevoke, setClientToRevoke] = useState<ApiClient | null>(null);
 
   const { data: clients = [], isLoading, isError, error, refetch } = useQuery<ApiClient[]>({
     queryKey: ['api-clients'],
@@ -276,6 +277,7 @@ export default function ApiClientsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['api-clients'] });
       toast.success('Cliente eliminado.');
+      setClientToRevoke(null);
     },
     onError: () => toast.error('No se pudo eliminar.'),
   });
@@ -376,12 +378,10 @@ export default function ApiClientsPage() {
                   <td className="px-4 py-3">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(`¿Revocar cliente "${c.name}"? Las integraciones que lo usen dejarán de funcionar.`)) {
-                          deleteMutation.mutate(c.id);
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-600 transition-colors"
+                      onClick={() => setClientToRevoke(c)}
+                      aria-label={`Revocar cliente ${c.name}`}
+                      title="Revocar cliente"
+                      className="text-red-500 hover:text-red-600 transition-colors"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -409,6 +409,32 @@ export default function ApiClientsPage() {
           client={createdClient}
           onClose={() => setCreatedClient(null)}
         />
+      )}
+
+      {clientToRevoke && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="dialog" aria-modal="true" aria-label="Revocar cliente API">
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-surface-900 shadow-2xl p-6 space-y-5">
+            <h2 className="text-xl font-bold text-surface-900 dark:text-white flex items-center gap-2">
+              <Trash2 size={20} className="text-red-500" />
+              Revocar cliente
+            </h2>
+            <p className="text-sm text-surface-600 dark:text-surface-300">
+              ¿Revocar el cliente <span className="font-semibold text-surface-900 dark:text-white">{clientToRevoke.name}</span>?
+              Las integraciones que lo usen dejarán de funcionar. Esta acción no se puede deshacer.
+            </p>
+            <div className="flex flex-col-reverse gap-3 sm:flex-row">
+              <button type="button" className="flex-1 btn-secondary text-sm py-2.5"
+                onClick={() => setClientToRevoke(null)} disabled={deleteMutation.isPending}>
+                Cancelar
+              </button>
+              <button type="button" className="flex-1 btn-danger text-sm py-2.5"
+                onClick={() => deleteMutation.mutate(clientToRevoke.id)} disabled={deleteMutation.isPending}>
+                {deleteMutation.isPending ? 'Revocando…' : 'Revocar cliente'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
