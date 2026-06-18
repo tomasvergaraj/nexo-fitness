@@ -23,7 +23,7 @@ export default function CTAFinal() {
               </Button>
             </div>
             <p className="cta-note">
-              ¿Dudas? <a href="mailto:contacto@nexosoftware.cl">Escríbenos</a> o agenda una demo de 15 min.
+              ¿Dudas? <a href="mailto:contacto@nexofitness.cl">Escríbenos</a> o agenda una demo de 15 min.
             </p>
           </div>
         </ScrollReveal>
