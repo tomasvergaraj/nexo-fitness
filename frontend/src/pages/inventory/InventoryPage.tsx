@@ -205,7 +205,7 @@ function ProductsTab() {
         <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
           <table className="min-w-[760px] w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-surface-400 border-b border-surface-200 dark:border-surface-800">
+              <tr className="text-left text-xs text-surface-500 dark:text-surface-400 border-b border-surface-200 dark:border-surface-800">
                 <th className="pb-2 pr-4 font-medium">Producto</th>
                 <th className="pb-2 pr-4 font-medium">SKU</th>
                 <th className="pb-2 pr-4 font-medium">Precio</th>
@@ -234,7 +234,7 @@ function ProductsTab() {
                       )}
                       <div className="min-w-0">
                         <p className="font-medium text-surface-800 dark:text-surface-200 truncate">{p.name}</p>
-                        {p.category_name && <p className="text-xs text-surface-400 truncate">{p.category_name}</p>}
+                        {p.category_name && <p className="text-xs text-surface-500 dark:text-surface-400 truncate">{p.category_name}</p>}
                       </div>
                     </div>
                   </td>
@@ -297,7 +297,7 @@ function ProductsTab() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs text-surface-500">Imagen del producto</p>
-                <p className="text-[11px] text-surface-400">JPG, PNG o WebP · máx 5 MB · se optimiza automáticamente</p>
+                <p className="text-[11px] text-surface-500 dark:text-surface-400">JPG, PNG o WebP · máx 5 MB · se optimiza automáticamente</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <label className="btn-secondary cursor-pointer text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5">
                     {uploadImageMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <ImagePlus size={13} />}
@@ -326,7 +326,7 @@ function ProductsTab() {
             </div>
           )}
           {!editing && (
-            <p className="text-[11px] text-surface-400 rounded-lg bg-surface-50 dark:bg-surface-800/40 px-3 py-2">
+            <p className="text-[11px] text-surface-500 dark:text-surface-400 rounded-lg bg-surface-50 dark:bg-surface-800/40 px-3 py-2">
               Crea el producto primero; luego podrás añadir una imagen editándolo.
             </p>
           )}
@@ -424,14 +424,14 @@ function ProductsTab() {
                   <input type="number" min={0} value={form.initial_stock}
                     onChange={e => setForm(f => ({ ...f, initial_stock: e.target.value }))}
                     className="input w-full" placeholder="0" />
-                  <p className="mt-1 text-[11px] text-surface-400">Cuántas unidades tienes hoy. Puedes dejarlo en 0 y ajustarlo luego.</p>
+                  <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">Cuántas unidades tienes hoy. Puedes dejarlo en 0 y ajustarlo luego.</p>
                 </div>
                 <div>
                   <label className="text-xs text-surface-500 block mb-1">Stock mínimo</label>
                   <input type="number" min={0} value={form.min_stock}
                     onChange={e => setForm(f => ({ ...f, min_stock: e.target.value }))}
                     className="input w-full" placeholder="5" />
-                  <p className="mt-1 text-[11px] text-surface-400">Alerta cuando bajes de este umbral.</p>
+                  <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">Alerta cuando bajes de este umbral.</p>
                 </div>
               </>
             ) : null}
@@ -503,7 +503,7 @@ function MovementsTab() {
         <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
           <table className="min-w-[760px] w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-surface-400 border-b border-surface-200 dark:border-surface-800">
+              <tr className="text-left text-xs text-surface-500 dark:text-surface-400 border-b border-surface-200 dark:border-surface-800">
                 <th className="pb-2 pr-4 font-medium">Producto</th>
                 <th className="pb-2 pr-4 font-medium">Tipo</th>
                 <th className="pb-2 pr-4 font-medium">Cantidad</th>
@@ -534,8 +534,8 @@ function MovementsTab() {
                     </span>
                   </td>
                   <td className="py-3 pr-4 text-surface-500">{m.unit_cost ? formatCLP(m.unit_cost) : '—'}</td>
-                  <td className="py-3 pr-4 text-xs text-surface-400">{m.reference_type || '—'}</td>
-                  <td className="py-3 text-xs text-surface-400">
+                  <td className="py-3 pr-4 text-xs text-surface-500 dark:text-surface-400">{m.reference_type || '—'}</td>
+                  <td className="py-3 text-xs text-surface-500 dark:text-surface-400">
                     {new Date(m.created_at).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}
                   </td>
                 </tr>
@@ -543,7 +543,7 @@ function MovementsTab() {
             </tbody>
           </table>
           {movements.length === 0 && (
-            <p className="text-center text-surface-400 py-8 text-sm">Sin movimientos</p>
+            <p className="text-center text-surface-500 dark:text-surface-400 py-8 text-sm">Sin movimientos</p>
           )}
         </div>
       )}
@@ -634,7 +634,7 @@ function PurchaseOrdersTab() {
                       <span className="text-sm text-surface-600 dark:text-surface-400">{po.supplier_name}</span>
                     )}
                   </div>
-                  <p className="text-xs text-surface-400 mt-1">
+                  <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">
                     {new Date(po.created_at).toLocaleDateString('es-CL')}
                     {po.total_cost != null && ` · ${formatCLP(po.total_cost)}`}
                   </p>
@@ -667,7 +667,7 @@ function PurchaseOrdersTab() {
             </div>
           ))}
           {orders.length === 0 && (
-            <p className="text-center text-surface-400 py-8 text-sm">Sin órdenes de compra</p>
+            <p className="text-center text-surface-500 dark:text-surface-400 py-8 text-sm">Sin órdenes de compra</p>
           )}
         </div>
       )}
@@ -715,7 +715,7 @@ function PurchaseOrdersTab() {
                 </div>
               ))}
               {items.length === 0 && (
-                <p className="text-xs text-surface-400 text-center py-2">Sin productos — agrega uno</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400 text-center py-2">Sin productos — agrega uno</p>
               )}
             </div>
           </div>
@@ -837,7 +837,7 @@ function SuppliersTab() {
             <div key={s.id} className="flex flex-col gap-3 rounded-2xl border border-surface-200 bg-white p-4 dark:border-surface-700 dark:bg-surface-800 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-medium text-surface-800 dark:text-surface-200">{s.name}</p>
-                <p className="text-xs text-surface-400">{[s.contact_name, s.email, s.phone].filter(Boolean).join(' · ')}</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">{[s.contact_name, s.email, s.phone].filter(Boolean).join(' · ')}</p>
               </div>
               <div className="flex gap-1">
                 <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-400 hover:text-brand-500">
@@ -849,7 +849,7 @@ function SuppliersTab() {
               </div>
             </div>
           ))}
-          {suppliers.length === 0 && <p className="text-center text-surface-400 py-8 text-sm">Sin proveedores</p>}
+          {suppliers.length === 0 && <p className="text-center text-surface-500 dark:text-surface-400 py-8 text-sm">Sin proveedores</p>}
         </div>
       )}
 
@@ -979,7 +979,7 @@ function CategoriesTab() {
             </div>
           ))}
           {categories.length === 0 && (
-            <p className="col-span-full text-center text-surface-400 py-8 text-sm">Sin categorías — crea una para organizar tus productos</p>
+            <p className="col-span-full text-center text-surface-500 dark:text-surface-400 py-8 text-sm">Sin categorías — crea una para organizar tus productos</p>
           )}
         </div>
       )}
