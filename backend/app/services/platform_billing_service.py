@@ -10,6 +10,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.business import PaymentMethod
@@ -394,8 +395,11 @@ async def record_platform_billing_payment(
         raise ValueError("No se puede registrar un cobro SaaS sin cotización válida.")
 
     normalized_reference = (external_reference or "").strip() or None
-    if normalized_reference:
-        existing = (
+
+    async def _find_existing() -> PlatformBillingPayment | None:
+        if not normalized_reference:
+            return None
+        return (
             await db.execute(
                 select(PlatformBillingPayment).where(
                     PlatformBillingPayment.tenant_id == tenant_id,
@@ -404,8 +408,10 @@ async def record_platform_billing_payment(
                 )
             )
         ).scalars().first()
-        if existing:
-            return existing
+
+    existing = await _find_existing()
+    if existing:
+        return existing
 
     payment = PlatformBillingPayment(
         tenant_id=tenant_id,
@@ -429,7 +435,20 @@ async def record_platform_billing_payment(
         metadata_json=json.dumps(metadata or {}),
     )
     db.add(payment)
-    await db.flush()
+    try:
+        # SAVEPOINT: si un webhook concurrente con la MISMA referencia ganó la
+        # carrera, el índice único uq_platform_billing_external_ref dispara
+        # IntegrityError en el flush. Lo capturamos, revertimos sólo este insert
+        # (no la txn externa, p.ej. la activación del tenant que ya corrió) y
+        # devolvemos la fila del ganador → idempotente.
+        async with db.begin_nested():
+            await db.flush()
+    except IntegrityError:
+        db.expunge(payment)
+        existing = await _find_existing()
+        if existing is not None:
+            return existing
+        raise
 
     if pricing.promo is not None:
         pricing.promo.uses_count = int(pricing.promo.uses_count or 0) + 1
