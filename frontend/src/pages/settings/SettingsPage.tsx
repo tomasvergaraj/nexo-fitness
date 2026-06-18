@@ -832,13 +832,13 @@ export default function SettingsPage() {
                       ) : null}
 
                       {(branch.phone || branch.email) ? (
-                        <p className="mt-0.5 text-xs text-surface-400">
+                        <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">
                           {[branch.phone, branch.email].filter(Boolean).join(' · ')}
                         </p>
                       ) : null}
 
                       {(branch.opening_time || branch.closing_time || branch.capacity) ? (
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-surface-400">
+                        <p className="mt-0.5 flex items-center gap-1 text-xs text-surface-500 dark:text-surface-400">
                           <Clock size={11} className="shrink-0" />
                           {branch.opening_time && branch.closing_time
                             ? `${branch.opening_time.slice(0, 5)} – ${branch.closing_time.slice(0, 5)}`
@@ -1386,7 +1386,7 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-3 text-sm">
               <div className="rounded-xl bg-surface-50 px-3 py-2 dark:bg-surface-950/40">
-                <p className="text-xs text-surface-400">URL de la tienda online</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">URL de la tienda online</p>
                 <p className="mt-0.5 break-all font-mono font-medium text-brand-600 dark:text-brand-400">{storefrontUrl}</p>
               </div>
               <div className="space-y-2 text-surface-500">
@@ -1427,13 +1427,13 @@ export default function SettingsPage() {
             <div className="rounded-2xl border border-dashed border-surface-200 py-10 text-center dark:border-surface-700">
               <Users size={32} className="mx-auto mb-3 text-surface-300 dark:text-surface-600" />
               <p className="text-sm text-surface-500">Aún no hay miembros del equipo.</p>
-              <p className="mt-1 text-xs text-surface-400">Invita a tu primer colaborador con el botón de arriba.</p>
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">Invita a tu primer colaborador con el botón de arriba.</p>
             </div>
           ) : (
             <div className="space-y-4">
               {staffList.length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-400">Miembros activos</p>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">Miembros activos</p>
                   <div className="divide-y divide-surface-100 dark:divide-surface-800">
                     {staffList.map((member) => (
                       <div key={member.id} className="flex items-center justify-between gap-4 py-3">
@@ -1445,10 +1445,10 @@ export default function SettingsPage() {
                             <p className="truncate text-sm font-medium text-surface-900 dark:text-white">
                               {member.full_name}
                               {!member.is_active && (
-                                <span className="ml-2 text-xs text-surface-400">(inactivo)</span>
+                                <span className="ml-2 text-xs text-surface-500 dark:text-surface-400">(inactivo)</span>
                               )}
                             </p>
-                            <p className="truncate text-xs text-surface-400">{member.email}</p>
+                            <p className="truncate text-xs text-surface-500 dark:text-surface-400">{member.email}</p>
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
@@ -1525,7 +1525,7 @@ export default function SettingsPage() {
               {/* Pending invitations */}
               {pendingInvitations.length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-400">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">
                     Invitaciones pendientes
                   </p>
                   <div className="divide-y divide-surface-100 dark:divide-surface-800">
@@ -1539,7 +1539,7 @@ export default function SettingsPage() {
                             <p className="truncate text-sm font-medium text-surface-900 dark:text-white">
                               {inv.first_name} {inv.last_name}
                             </p>
-                            <p className="truncate text-xs text-surface-400">
+                            <p className="truncate text-xs text-surface-500 dark:text-surface-400">
                               {inv.email} · vence en {inv.expires_in_hours}h
                             </p>
                           </div>
@@ -1643,7 +1643,7 @@ export default function SettingsPage() {
                   <p className={`text-sm font-semibold ${inviteForm.role === r.value ? 'text-brand-700 dark:text-brand-300' : 'text-surface-800 dark:text-surface-200'}`}>
                     {r.label}
                   </p>
-                  <p className="mt-0.5 text-xs text-surface-400">{r.description}</p>
+                  <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">{r.description}</p>
                 </button>
               ))}
             </div>
@@ -2046,7 +2046,7 @@ export default function SettingsPage() {
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
                   Secret key de TUU <span className="text-rose-500">*</span>
-                  <span className="ml-1 text-surface-400">(entregada por TUU al habilitar Pago Online)</span>
+                  <span className="ml-1 text-surface-500 dark:text-surface-400">(entregada por TUU al habilitar Pago Online)</span>
                 </label>
                 <input
                   className="input font-mono text-sm"
@@ -2066,7 +2066,7 @@ export default function SettingsPage() {
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-surface-600 dark:text-surface-400">
                   API Key secreta de Fintoc <span className="text-rose-500">*</span>
-                  <span className="ml-1 text-surface-400">(dashboard Fintoc → API Keys)</span>
+                  <span className="ml-1 text-surface-500 dark:text-surface-400">(dashboard Fintoc → API Keys)</span>
                 </label>
                 <input
                   className="input font-mono text-sm"
