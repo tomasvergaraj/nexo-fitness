@@ -647,15 +647,15 @@ export default function ReportsPage() {
                 {attendanceLoading ? (
                   Array.from({ length: 5 }).map((_, i) => <div key={i} className="shimmer h-14 rounded-2xl" />)
                 ) : (attendanceData?.classes ?? []).length === 0 ? (
-                  <p className="py-6 text-center text-sm text-surface-400">Sin datos de clases para el período seleccionado.</p>
+                  <p className="py-6 text-center text-sm text-surface-500 dark:text-surface-400">Sin datos de clases para el período seleccionado.</p>
                 ) : (
                   (attendanceData?.classes ?? []).map((item, index) => (
                     <div key={item.name} className="rounded-2xl border border-surface-200/60 px-4 py-3 dark:border-surface-800/60">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-xs font-bold text-surface-400 w-5 text-right flex-shrink-0">#{index + 1}</span>
+                          <span className="text-xs font-bold text-surface-500 dark:text-surface-400 w-5 text-right flex-shrink-0">#{index + 1}</span>
                           <span className="truncate text-sm font-medium text-surface-900 dark:text-white">{item.name}</span>
-                          <span className="flex-shrink-0 text-xs text-surface-400">{item.sessions} ses.</span>
+                          <span className="flex-shrink-0 text-xs text-surface-500 dark:text-surface-400">{item.sessions} ses.</span>
                         </div>
                         <div className="flex flex-shrink-0 items-center gap-3 text-xs text-surface-500">
                           <span>{item.total_checkins} check-ins</span>
@@ -683,17 +683,17 @@ export default function ReportsPage() {
                 {attendanceLoading ? (
                   Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-14 rounded-2xl" />)
                 ) : (attendanceData?.instructors ?? []).length === 0 ? (
-                  <p className="py-6 text-center text-sm text-surface-400">Sin instructores asignados en el período.</p>
+                  <p className="py-6 text-center text-sm text-surface-500 dark:text-surface-400">Sin instructores asignados en el período.</p>
                 ) : (
                   (attendanceData?.instructors ?? []).map((item, index) => (
                     <div key={item.instructor_id} className="flex items-center gap-3 rounded-2xl border border-surface-200/60 px-4 py-3 dark:border-surface-800/60">
-                      <span className="text-xs font-bold text-surface-400 w-4 text-right">{index + 1}</span>
+                      <span className="text-xs font-bold text-surface-500 dark:text-surface-400 w-4 text-right">{index + 1}</span>
                       <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
                         <User size={14} className="text-violet-600 dark:text-violet-400" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-surface-900 dark:text-white">{item.name ?? 'Sin nombre'}</p>
-                        <p className="text-xs text-surface-400">{item.sessions} clases · {item.total_checkins} check-ins</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">{item.sessions} clases · {item.total_checkins} check-ins</p>
                       </div>
                     </div>
                   ))
@@ -753,7 +753,7 @@ export default function ReportsPage() {
                     ))}
                   </select>
                   {cutoffDay != null && (
-                    <span className="text-xs text-surface-400">cada mes va del {cutoffDay + 1} al {cutoffDay}</span>
+                    <span className="text-xs text-surface-500 dark:text-surface-400">cada mes va del {cutoffDay + 1} al {cutoffDay}</span>
                   )}
                 </label>
               </div>
@@ -803,7 +803,7 @@ export default function ReportsPage() {
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[560px] text-sm">
                   <thead>
-                    <tr className="text-left text-xs text-surface-400">
+                    <tr className="text-left text-xs text-surface-500 dark:text-surface-400">
                       <th className="px-2 py-2 font-medium">Mes</th>
                       <th className="px-2 py-2 text-right font-medium">Ingresos</th>
                       <th className="px-2 py-2 text-right font-medium">Costos y gastos</th>
@@ -864,7 +864,7 @@ export default function ReportsPage() {
                 {isLoading ? (
                   <div className="shimmer h-full rounded-2xl" />
                 ) : (data?.expenses_by_category ?? []).length === 0 ? (
-                  <p className="py-16 text-center text-sm text-surface-400">Sin gastos registrados en el período.</p>
+                  <p className="py-16 text-center text-sm text-surface-500 dark:text-surface-400">Sin gastos registrados en el período.</p>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={data?.expenses_by_category ?? []} layout="vertical">
@@ -891,7 +891,7 @@ export default function ReportsPage() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => <div key={i} className="shimmer h-12 rounded-2xl" />)
                 ) : (data?.top_products ?? []).length === 0 ? (
-                  <p className="py-10 text-center text-sm text-surface-400">Sin ventas POS en el período.</p>
+                  <p className="py-10 text-center text-sm text-surface-500 dark:text-surface-400">Sin ventas POS en el período.</p>
                 ) : (
                   (data?.top_products ?? []).map((product, index) => {
                     const maxRevenue = Math.max(...(data?.top_products ?? []).map((p) => p.revenue), 1);
@@ -900,7 +900,7 @@ export default function ReportsPage() {
                       <div key={product.name} className="rounded-2xl border border-surface-200/60 px-4 py-3 dark:border-surface-800/60">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-xs font-bold text-surface-400 w-5 text-right flex-shrink-0">#{index + 1}</span>
+                            <span className="text-xs font-bold text-surface-500 dark:text-surface-400 w-5 text-right flex-shrink-0">#{index + 1}</span>
                             <span className="truncate text-sm font-medium text-surface-900 dark:text-white">{product.name}</span>
                           </div>
                           <div className="flex flex-shrink-0 items-center gap-2 text-xs text-surface-500">
@@ -941,8 +941,8 @@ export default function ReportsPage() {
                     'flex items-center justify-between px-2 py-3',
                     row.type === 'subtotal' && 'bg-surface-50 dark:bg-surface-800/40 rounded-lg font-semibold',
                     row.type === 'net' && 'bg-surface-50 dark:bg-surface-800/40 rounded-lg font-bold text-base',
-                    row.type === 'note' && 'text-xs text-surface-400',
-                    row.type === 'net-note' && 'text-xs text-surface-400',
+                    row.type === 'note' && 'text-xs text-surface-500 dark:text-surface-400',
+                    row.type === 'net-note' && 'text-xs text-surface-500 dark:text-surface-400',
                   )}
                 >
                   <span className={cn('text-sm', row.type === 'net' && 'text-base font-bold', row.type === 'subtotal' && 'font-semibold')}>{row.label}</span>
@@ -957,7 +957,7 @@ export default function ReportsPage() {
                       {row.type === 'expense' ? `− ${formatCurrency(row.value)}` : formatCurrency(row.value)}
                     </span>
                   ) : (
-                    <span className="text-xs tabular-nums text-surface-400">{row.extra}</span>
+                    <span className="text-xs tabular-nums text-surface-500 dark:text-surface-400">{row.extra}</span>
                   )}
                 </div>
               ))}
@@ -1038,7 +1038,7 @@ export default function ReportsPage() {
                 {breakdownLoading ? (
                   <div className="shimmer h-full rounded-2xl" />
                 ) : methodData.length === 0 ? (
-                  <p className="py-16 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+                  <p className="py-16 text-center text-sm text-surface-500 dark:text-surface-400">Sin ventas en el período.</p>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -1073,7 +1073,7 @@ export default function ReportsPage() {
                 {breakdownLoading ? (
                   Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-12 rounded-2xl" />)
                 ) : methodData.length === 0 ? (
-                  <p className="py-10 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+                  <p className="py-10 text-center text-sm text-surface-500 dark:text-surface-400">Sin ventas en el período.</p>
                 ) : (
                   methodData.map((m, i) => {
                     const pct = methodTotal > 0 ? Math.round((m.total / methodTotal) * 100) : 0;
@@ -1083,7 +1083,7 @@ export default function ReportsPage() {
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length] }} />
                             <span className="truncate text-sm font-medium text-surface-900 dark:text-white">{m.label}</span>
-                            <span className="flex-shrink-0 text-xs text-surface-400">{m.count} ventas</span>
+                            <span className="flex-shrink-0 text-xs text-surface-500 dark:text-surface-400">{m.count} ventas</span>
                           </div>
                           <span className="flex-shrink-0 text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(m.total)}</span>
                         </div>
@@ -1091,7 +1091,7 @@ export default function ReportsPage() {
                           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-100 dark:bg-surface-800">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length] }} />
                           </div>
-                          <span className="w-9 text-right text-xs text-surface-400">{pct}%</span>
+                          <span className="w-9 text-right text-xs text-surface-500 dark:text-surface-400">{pct}%</span>
                         </div>
                       </div>
                     );
@@ -1112,11 +1112,11 @@ export default function ReportsPage() {
               {sessionsLoading ? (
                 <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-12 rounded-2xl" />)}</div>
               ) : cashSessions.length === 0 ? (
-                <p className="py-10 text-center text-sm text-surface-400">Sin turnos de caja registrados.</p>
+                <p className="py-10 text-center text-sm text-surface-500 dark:text-surface-400">Sin turnos de caja registrados.</p>
               ) : (
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
-                    <tr className="text-left text-xs text-surface-400">
+                    <tr className="text-left text-xs text-surface-500 dark:text-surface-400">
                       <th className="px-2 py-2 font-medium">Apertura</th>
                       <th className="px-2 py-2 font-medium">Responsable</th>
                       <th className="px-2 py-2 font-medium">Estado</th>
@@ -1297,7 +1297,7 @@ export default function ReportsPage() {
                         <Icon size={18} className={card.accent} />
                       </div>
                       <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{card.value}</p>
-                      <p className="mt-0.5 text-xs text-surface-400">{card.sub}</p>
+                      <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">{card.sub}</p>
                     </motion.div>
                   );
                 })}
@@ -1312,7 +1312,7 @@ export default function ReportsPage() {
             <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Fiados</h2>
-                <span className="text-xs text-surface-400">Cuentas por cobrar</span>
+                <span className="text-xs text-surface-500 dark:text-surface-400">Cuentas por cobrar</span>
               </div>
               <p className="mt-1 text-sm text-surface-500">Las ventas fiadas ya cuentan en ventas; aquí ves los cobros y la deuda viva.</p>
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -1338,7 +1338,7 @@ export default function ReportsPage() {
             <p className="mt-1 text-sm text-surface-500">Ingresos y margen bruto por período</p>
             <div className="mt-5 h-[300px]">
               {posSeries.length === 0 ? (
-                <p className="py-20 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+                <p className="py-20 text-center text-sm text-surface-500 dark:text-surface-400">Sin ventas en el período.</p>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={posSeries}>
@@ -1362,10 +1362,10 @@ export default function ReportsPage() {
           <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Medios de pago</h2>
-              <span className="text-xs text-surface-400">Cómo pagaron</span>
+              <span className="text-xs text-surface-500 dark:text-surface-400">Cómo pagaron</span>
             </div>
             {(posSummary?.by_method.length ?? 0) === 0 ? (
-              <p className="py-8 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+              <p className="py-8 text-center text-sm text-surface-500 dark:text-surface-400">Sin ventas en el período.</p>
             ) : (
               <div className="mt-4 space-y-2">
                 {(() => {
@@ -1377,7 +1377,7 @@ export default function ReportsPage() {
                       <div key={m.payment_method}>
                         <div className="flex items-center justify-between text-sm">
                           <span className="font-medium text-surface-700 dark:text-surface-300">{m.label}</span>
-                          <span className="tabular-nums text-surface-900 dark:text-white">{formatCurrency(val)} <span className="text-xs text-surface-400">({pct.toFixed(0)}%)</span></span>
+                          <span className="tabular-nums text-surface-900 dark:text-white">{formatCurrency(val)} <span className="text-xs text-surface-500 dark:text-surface-400">({pct.toFixed(0)}%)</span></span>
                         </div>
                         <div className="mt-1 h-2 overflow-hidden rounded-full bg-surface-100 dark:bg-surface-800">
                           <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length] }} />
@@ -1450,11 +1450,11 @@ export default function ReportsPage() {
                   {Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}
                 </div>
               ) : posRows.length === 0 ? (
-                <p className="py-12 text-center text-sm text-surface-400">Sin ventas en el período.</p>
+                <p className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">Sin ventas en el período.</p>
               ) : (
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
-                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-500 dark:text-surface-400 dark:border-surface-800">
                       <th className="px-2 py-2 font-medium">{posDim === 'cashier' ? 'Cajero' : posDim === 'category' ? 'Categoría' : 'Producto'}</th>
                       {posDim === 'product' && <th className="px-2 py-2 font-medium">SKU</th>}
                       <th className="px-2 py-2 text-right font-medium">Unidades</th>
@@ -1468,7 +1468,7 @@ export default function ReportsPage() {
                     {posRows.map((r) => (
                       <tr key={r.key ?? r.label} className="border-b border-surface-50 dark:border-surface-800/50">
                         <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.label}</td>
-                        {posDim === 'product' && <td className="px-2 py-2.5 text-surface-400">{r.sku ?? '—'}</td>}
+                        {posDim === 'product' && <td className="px-2 py-2.5 text-surface-500 dark:text-surface-400">{r.sku ?? '—'}</td>}
                         <td className="px-2 py-2.5 text-right tabular-nums">{r.units}</td>
                         <td className="px-2 py-2.5 text-right tabular-nums">{formatCurrency(r.revenue)}</td>
                         <td className="px-2 py-2.5 text-right tabular-nums text-surface-500">{formatCurrency(r.cost)}</td>
@@ -1511,7 +1511,7 @@ export default function ReportsPage() {
                     <Icon size={18} className={card.accent} />
                   </div>
                   <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{card.value}</p>
-                  <p className="mt-0.5 text-xs text-surface-400">{card.sub}</p>
+                  <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">{card.sub}</p>
                 </motion.div>
               );
             })}
@@ -1544,11 +1544,11 @@ export default function ReportsPage() {
               {posInventoryLoading ? (
                 <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}</div>
               ) : (posInventory?.rows.length ?? 0) === 0 ? (
-                <p className="py-12 text-center text-sm text-surface-400">Sin productos en inventario.</p>
+                <p className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">Sin productos en inventario.</p>
               ) : (
                 <table className="w-full min-w-[680px] text-sm">
                   <thead>
-                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-500 dark:text-surface-400 dark:border-surface-800">
                       <th className="px-2 py-2 font-medium">Producto</th>
                       <th className="px-2 py-2 font-medium">Categoría</th>
                       <th className="px-2 py-2 text-right font-medium">Stock</th>
@@ -1560,7 +1560,7 @@ export default function ReportsPage() {
                   <tbody>
                     {(posInventory?.rows ?? []).map((r) => (
                       <tr key={r.product_id} className="border-b border-surface-50 dark:border-surface-800/50">
-                        <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.product_name}{r.sku ? <span className="ml-1 text-xs text-surface-400">{r.sku}</span> : null}</td>
+                        <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.product_name}{r.sku ? <span className="ml-1 text-xs text-surface-500 dark:text-surface-400">{r.sku}</span> : null}</td>
                         <td className="px-2 py-2.5 text-surface-500">{r.category ?? '—'}</td>
                         <td className="px-2 py-2.5 text-right tabular-nums">{r.quantity}</td>
                         <td className="px-2 py-2.5 text-right tabular-nums text-surface-500">{r.has_cost ? formatCurrency(parseApiNumber(r.unit_cost)) : <span className="text-amber-600 dark:text-amber-400">sin costo</span>}</td>
@@ -1612,11 +1612,11 @@ export default function ReportsPage() {
             </div>
             <div className="mt-5 overflow-x-auto">
               {posMovements.length === 0 ? (
-                <p className="py-12 text-center text-sm text-surface-400">Sin movimientos en el período.</p>
+                <p className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">Sin movimientos en el período.</p>
               ) : (
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
-                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-500 dark:text-surface-400 dark:border-surface-800">
                       <th className="px-2 py-2 font-medium">Fecha</th>
                       <th className="px-2 py-2 font-medium">Producto</th>
                       <th className="px-2 py-2 font-medium">Tipo</th>
@@ -1631,7 +1631,7 @@ export default function ReportsPage() {
                         <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{m.product_name ?? '—'}</td>
                         <td className="px-2 py-2.5 text-surface-600 dark:text-surface-300">{movLabel(m.movement_type)}</td>
                         <td className={cn('px-2 py-2.5 text-right tabular-nums font-medium', m.quantity >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{m.quantity >= 0 ? '+' : ''}{m.quantity}</td>
-                        <td className="px-2 py-2.5 text-surface-400">{originLabel(m.reference_type)}</td>
+                        <td className="px-2 py-2.5 text-surface-500 dark:text-surface-400">{originLabel(m.reference_type)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1649,12 +1649,12 @@ export default function ReportsPage() {
             <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
               <div className="flex items-center justify-between"><p className="text-sm text-surface-500">Total comprado</p><Truck size={18} className="text-brand-500" /></div>
               <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{formatCurrency(parseApiNumber(posPurchases?.grand_total))}</p>
-              <p className="mt-0.5 text-xs text-surface-400">Órdenes recibidas en el período</p>
+              <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">Órdenes recibidas en el período</p>
             </motion.div>
             <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
               <div className="flex items-center justify-between"><p className="text-sm text-surface-500">N° de órdenes</p><ClipboardList size={18} className="text-cyan-500" /></div>
               <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{posPurchases?.orders_count ?? 0}</p>
-              <p className="mt-0.5 text-xs text-surface-400">{posPurchases?.rows.length ?? 0} proveedor(es)</p>
+              <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">{posPurchases?.rows.length ?? 0} proveedor(es)</p>
             </motion.div>
           </div>
 
@@ -1680,11 +1680,11 @@ export default function ReportsPage() {
               {posPurchasesLoading ? (
                 <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}</div>
               ) : (posPurchases?.rows.length ?? 0) === 0 ? (
-                <p className="py-12 text-center text-sm text-surface-400">Sin compras recibidas en el período.</p>
+                <p className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">Sin compras recibidas en el período.</p>
               ) : (
                 <table className="w-full min-w-[420px] text-sm">
                   <thead>
-                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-500 dark:text-surface-400 dark:border-surface-800">
                       <th className="px-2 py-2 font-medium">Proveedor</th>
                       <th className="px-2 py-2 text-right font-medium">Órdenes</th>
                       <th className="px-2 py-2 text-right font-medium">Total</th>
@@ -1720,12 +1720,12 @@ export default function ReportsPage() {
             <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
               <div className="flex items-center justify-between"><p className="text-sm text-surface-500">Saldo por cobrar</p><Coins size={18} className="text-rose-500" /></div>
               <p className="mt-2 text-2xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">{formatCurrency(parseApiNumber(posDebtors?.total_outstanding))}</p>
-              <p className="mt-0.5 text-xs text-surface-400">Deuda viva total (todas las sedes)</p>
+              <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">Deuda viva total (todas las sedes)</p>
             </motion.div>
             <motion.div variants={fadeInUp} className="rounded-3xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
               <div className="flex items-center justify-between"><p className="text-sm text-surface-500">Socios con deuda</p><Users size={18} className="text-brand-500" /></div>
               <p className="mt-2 text-2xl font-bold font-display tabular-nums text-surface-900 dark:text-white">{posDebtors?.rows.length ?? 0}</p>
-              <p className="mt-0.5 text-xs text-surface-400">Clientes registrados</p>
+              <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">Clientes registrados</p>
             </motion.div>
           </div>
 
@@ -1754,11 +1754,11 @@ export default function ReportsPage() {
               {posDebtorsLoading ? (
                 <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="shimmer h-10 rounded-xl" />)}</div>
               ) : (posDebtors?.rows.length ?? 0) === 0 ? (
-                <p className="py-12 text-center text-sm text-surface-400">Sin deudas pendientes.</p>
+                <p className="py-12 text-center text-sm text-surface-500 dark:text-surface-400">Sin deudas pendientes.</p>
               ) : (
                 <table className="w-full min-w-[560px] text-sm">
                   <thead>
-                    <tr className="border-b border-surface-100 text-left text-xs text-surface-400 dark:border-surface-800">
+                    <tr className="border-b border-surface-100 text-left text-xs text-surface-500 dark:text-surface-400 dark:border-surface-800">
                       <th className="px-2 py-2 font-medium">Cliente</th>
                       <th className="px-2 py-2 font-medium">Contacto</th>
                       <th className="px-2 py-2 text-right font-medium">Deuda</th>
@@ -1771,7 +1771,7 @@ export default function ReportsPage() {
                       return (
                         <tr key={r.client_id} className="border-b border-surface-50 dark:border-surface-800/50">
                           <td className="px-2 py-2.5 font-medium text-surface-900 dark:text-white">{r.client_name}</td>
-                          <td className="px-2 py-2.5 text-surface-400">{r.email ?? r.phone ?? '—'}</td>
+                          <td className="px-2 py-2.5 text-surface-500 dark:text-surface-400">{r.email ?? r.phone ?? '—'}</td>
                           <td className="px-2 py-2.5 text-right tabular-nums font-medium text-rose-600 dark:text-rose-400">{formatCurrency(parseApiNumber(r.balance))}</td>
                           <td className={cn('px-2 py-2.5 text-right tabular-nums', (days ?? 0) >= 30 ? 'text-amber-600 dark:text-amber-400' : 'text-surface-500')}>{agingLabel(days)}</td>
                         </tr>
