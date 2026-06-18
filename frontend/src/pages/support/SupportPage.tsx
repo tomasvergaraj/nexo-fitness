@@ -540,7 +540,7 @@ export default function SupportPage() {
 
         <div className="mt-4 grid gap-3 lg:grid-cols-3">
           <label className="block">
-            <span className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">
+            <span className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">
               <Filter size={13} />
               Canal
             </span>
@@ -559,7 +559,7 @@ export default function SupportPage() {
           </label>
 
           <label className="block">
-            <span className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">
+            <span className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">
               <UserRound size={13} />
               Cliente
             </span>
@@ -574,7 +574,7 @@ export default function SupportPage() {
           </label>
 
           <label className="block">
-            <span className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">
+            <span className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">
               <UserCheck size={13} />
               Responsable
             </span>
@@ -622,7 +622,7 @@ export default function SupportPage() {
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Desde</span>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Desde</span>
               <input
                 type="date"
                 className="input"
@@ -632,7 +632,7 @@ export default function SupportPage() {
               />
             </label>
             <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Hasta</span>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Hasta</span>
               <input
                 type="date"
                 className="input"
@@ -936,7 +936,7 @@ export default function SupportPage() {
               </div>
 
               <div className="space-y-4 rounded-[1.25rem] border border-surface-200 bg-surface-50/80 p-4 dark:border-white/10 dark:bg-surface-950/35">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Seguimiento del caso</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Seguimiento del caso</p>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">Asunto</label>
                   <input
@@ -1046,7 +1046,7 @@ export default function SupportPage() {
 
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Historial de la solicitud</p>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Historial de la solicitud</p>
                 <span className="text-xs text-surface-500 dark:text-surface-400">
                   {selectedDisplayedTraceCount} {selectedDisplayedTraceCount === 1 ? 'entrada' : 'entradas'}
                 </span>
@@ -1251,7 +1251,7 @@ function SupportMetricCard({
 function SupportMetaItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-white/10 dark:bg-surface-950/35">
-      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">{label}</p>
+      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">{label}</p>
       <p className="mt-2 text-sm font-semibold text-surface-900 dark:text-white">{value}</p>
     </div>
   );
