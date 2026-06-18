@@ -515,7 +515,7 @@ export default function CheckInPage() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-500">Operación</p>
           <h1 className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">Check-in</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-500">
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-500 dark:text-surface-400">
             Registra ingresos manuales o por QR, revisa historial con fecha y hora exacta, y gestiona casos sospechosos para investigación.
           </p>
         </div>
@@ -592,7 +592,7 @@ export default function CheckInPage() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Resultados para ingreso</h2>
-              <p className="mt-1 text-sm text-surface-500">Clientes activos listos para check-in manual.</p>
+              <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Clientes activos listos para check-in manual.</p>
             </div>
             {candidatesLoading ? <Loader2 size={18} className="animate-spin text-surface-400" /> : null}
           </div>
@@ -608,7 +608,7 @@ export default function CheckInPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-surface-900 dark:text-white">{client.first_name} {client.last_name}</p>
-                  <p className="truncate text-xs text-surface-500">{client.email}</p>
+                  <p className="truncate text-xs text-surface-500 dark:text-surface-400">{client.email}</p>
                 </div>
                 <button
                   type="button"
@@ -627,7 +627,7 @@ export default function CheckInPage() {
             {!candidatesLoading && clientResults.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-8 text-center dark:border-surface-700">
                 <p className="font-medium text-surface-700 dark:text-surface-200">No encontramos clientes activos</p>
-                <p className="mt-1 text-sm text-surface-500">Prueba con otro criterio o usa el escáner QR.</p>
+                <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Prueba con otro criterio o usa el escáner QR.</p>
               </div>
             ) : null}
           </div>
@@ -637,7 +637,7 @@ export default function CheckInPage() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Historial reciente</h2>
-              <p className="mt-1 text-sm text-surface-500">Fecha, hora, método, sucursal y operador.</p>
+              <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Fecha, hora, método, sucursal y operador.</p>
             </div>
             {historyQuery.isFetching ? <Loader2 size={18} className="animate-spin text-surface-400" /> : null}
           </div>
@@ -648,7 +648,7 @@ export default function CheckInPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-medium text-surface-900 dark:text-white">{item.user_name || 'Cliente sin nombre'}</p>
-                    <p className="mt-1 text-xs text-surface-500">
+                    <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                       {formatDateTimeInZone(item.checked_in_at, timeZone)}
                     </p>
                   </div>
@@ -671,7 +671,7 @@ export default function CheckInPage() {
             {!historyQuery.isFetching && historyItems.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-8 text-center dark:border-surface-700">
                 <p className="font-medium text-surface-700 dark:text-surface-200">Aún no hay historial</p>
-                <p className="mt-1 text-sm text-surface-500">Los próximos ingresos aparecerán aquí con hora y fecha exacta.</p>
+                <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Los próximos ingresos aparecerán aquí con hora y fecha exacta.</p>
               </div>
             ) : null}
           </div>
@@ -681,7 +681,7 @@ export default function CheckInPage() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Casos sospechosos</h2>
-              <p className="mt-1 text-sm text-surface-500">Detección automática por frecuencia anómala de QR.</p>
+              <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Detección automática por frecuencia anómala de QR.</p>
             </div>
             {!isManager ? (
               <span className="badge badge-neutral">
@@ -723,7 +723,7 @@ export default function CheckInPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-medium text-surface-900 dark:text-white">{item.user_name || 'Cliente'}</p>
-                        <p className="mt-1 text-xs text-surface-500">{getRuleLabel(item.rule_code)}</p>
+                        <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{getRuleLabel(item.rule_code)}</p>
                       </div>
                       <span className={cn('badge shrink-0', getCaseStatusBadgeClass(item.status))}>
                         {getCaseStatusLabel(item.status)}
@@ -733,7 +733,7 @@ export default function CheckInPage() {
                       <p>Ventana 2h: <span className="font-semibold text-surface-700 dark:text-surface-200">{item.window_qr_count}</span></p>
                       <p>Día local: <span className="font-semibold text-surface-700 dark:text-surface-200">{item.daily_qr_count}</span></p>
                     </div>
-                    <p className="mt-3 text-xs text-surface-500">
+                    <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
                       Último disparo: {formatDateTimeInZone(item.last_triggered_at, timeZone)}
                     </p>
                   </button>
@@ -742,7 +742,7 @@ export default function CheckInPage() {
                 {!suspiciousCasesQuery.isFetching && suspiciousCases.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-8 text-center dark:border-surface-700">
                     <p className="font-medium text-surface-700 dark:text-surface-200">Sin casos en este filtro</p>
-                    <p className="mt-1 text-sm text-surface-500">Los casos QR sospechosos aparecerán aquí para revisión.</p>
+                    <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Los casos QR sospechosos aparecerán aquí para revisión.</p>
                   </div>
                 ) : null}
               </div>
@@ -750,7 +750,7 @@ export default function CheckInPage() {
           ) : (
             <div className="mt-6 rounded-2xl border border-dashed border-surface-300 px-4 py-8 text-center dark:border-surface-700">
               <p className="font-medium text-surface-700 dark:text-surface-200">La investigación queda en owner/admin</p>
-              <p className="mt-1 text-sm text-surface-500">Recepción puede seguir operando check-ins desde esta pantalla o desde el modo recepción.</p>
+              <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Recepción puede seguir operando check-ins desde esta pantalla o desde el modo recepción.</p>
             </div>
           )}
         </motion.section>
@@ -906,7 +906,7 @@ export default function CheckInPage() {
         size="lg"
       >
         {caseDetailQuery.isLoading || !caseDetailQuery.data ? (
-          <div className="flex items-center justify-center py-16 text-surface-500">
+          <div className="flex items-center justify-center py-16 text-surface-500 dark:text-surface-400">
             <Loader2 size={22} className="animate-spin" />
           </div>
         ) : (
@@ -919,9 +919,9 @@ export default function CheckInPage() {
                 </div>
                 <div className="mt-4 space-y-3 text-sm">
                   <div>
-                    <p className="text-surface-500">Cliente</p>
+                    <p className="text-surface-500 dark:text-surface-400">Cliente</p>
                     <p className="font-medium text-surface-900 dark:text-white">{caseDetailQuery.data.user_name || 'Cliente'}</p>
-                    <p className="text-xs text-surface-500">{caseDetailQuery.data.user_email || 'Sin correo'}</p>
+                    <p className="text-xs text-surface-500 dark:text-surface-400">{caseDetailQuery.data.user_email || 'Sin correo'}</p>
                   </div>
                   <p className="text-surface-600 dark:text-surface-300">
                     Regla: <span className="font-medium">{getRuleLabel(caseDetailQuery.data.rule_code)}</span>
@@ -984,7 +984,7 @@ export default function CheckInPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-medium text-surface-900 dark:text-white">{formatTimeInZone(item.checked_in_at, timeZone)}</p>
-                        <p className="mt-1 text-xs text-surface-500">{formatDateTimeInZone(item.checked_in_at, timeZone)}</p>
+                        <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{formatDateTimeInZone(item.checked_in_at, timeZone)}</p>
                       </div>
                       <span className="badge badge-info">
                         QR
