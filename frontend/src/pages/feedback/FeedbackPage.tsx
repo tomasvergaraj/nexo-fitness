@@ -331,7 +331,7 @@ export default function FeedbackPage() {
             </div>
 
             <div className="rounded-[1.25rem] border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">Lo que haremos con esto</p>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Lo que haremos con esto</p>
               <p className="mt-2 text-sm leading-6 text-surface-600 dark:text-surface-300">
                 Tu feedback quedará registrado en un historial compartido para tu cuenta y también lo recibirá el equipo de Nexo.
                 Así evitamos duplicados y mantenemos trazabilidad de lo que más importa.
