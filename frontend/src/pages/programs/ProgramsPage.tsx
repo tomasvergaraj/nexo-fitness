@@ -541,7 +541,7 @@ function ExerciseLibraryManager({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-surface-900 dark:text-white">{group}</h3>
-                  <p className="text-xs text-surface-400">{groupExercises.length} ejercicio{groupExercises.length !== 1 ? 's' : ''}</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">{groupExercises.length} ejercicio{groupExercises.length !== 1 ? 's' : ''}</p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-brand-500 shadow-sm dark:bg-surface-900">
                   <Dumbbell size={18} />
@@ -843,7 +843,7 @@ function ScheduleBuilder({
                     {exercise.name}
                   </span>
                 )) : (
-                  <p className="text-xs text-surface-400">Selecciona este día para asignar ejercicios desde la biblioteca.</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">Selecciona este día para asignar ejercicios desde la biblioteca.</p>
                 )}
                 {item.exercises.length > 4 ? (
                   <span className="rounded-full border border-dashed border-surface-300 px-3 py-1 text-xs font-medium text-surface-400 dark:border-surface-700">
@@ -999,7 +999,7 @@ function ScheduleBuilder({
                             ))}
                           </select>
                           {!plans.length ? (
-                            <p className="mt-2 text-xs text-surface-400">Aún no hay planes disponibles para restringir esta clase.</p>
+                            <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">Aún no hay planes disponibles para restringir esta clase.</p>
                           ) : null}
                         </ProgramDayClassConfigField>
 
@@ -1044,7 +1044,7 @@ function ScheduleBuilder({
           ))}
         </div>
       ) : (
-        <p className="text-sm text-surface-400">Selecciona los días de entrenamiento arriba.</p>
+        <p className="text-sm text-surface-500 dark:text-surface-400">Selecciona los días de entrenamiento arriba.</p>
       )}
     </div>
   );
@@ -1653,7 +1653,7 @@ export default function ProgramsPage() {
             {totalWeeks || <span className="text-surface-400">—</span>}
           </p>
           {indefinitePrograms > 0 ? (
-            <p className="mt-1 text-xs text-surface-400">{indefinitePrograms} indefinido{indefinitePrograms !== 1 ? 's' : ''}</p>
+            <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{indefinitePrograms} indefinido{indefinitePrograms !== 1 ? 's' : ''}</p>
           ) : null}
         </div>
         <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
@@ -1724,7 +1724,7 @@ export default function ProgramsPage() {
                     {scheduleDay.focus ? ` · ${scheduleDay.focus}` : ''}
                   </span>
                 )) : (
-                  <span className="text-xs text-surface-400">Sin días definidos</span>
+                  <span className="text-xs text-surface-500 dark:text-surface-400">Sin días definidos</span>
                 )}
               </div>
 
@@ -1951,7 +1951,7 @@ export default function ProgramsPage() {
               <div>
                 <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
                   Duración
-                  <span className="ml-2 text-xs font-normal text-surface-400">
+                  <span className="ml-2 text-xs font-normal text-surface-500 dark:text-surface-400">
                     {form.duration_weeks === '0' || form.duration_weeks === '' ? 'Sin límite — programa indefinido' : `${form.duration_weeks} semanas`}
                   </span>
                 </label>
@@ -2050,7 +2050,7 @@ export default function ProgramsPage() {
                               {selectedScheduleDay.day}
                               {selectedScheduleDay.focus ? ` — ${selectedScheduleDay.focus}` : ''}
                             </p>
-                            <p className="mt-0.5 text-xs text-surface-400">{selectedScheduleDay.exercises.length} ejercicio{selectedScheduleDay.exercises.length !== 1 ? 's' : ''} asignado{selectedScheduleDay.exercises.length !== 1 ? 's' : ''}</p>
+                            <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">{selectedScheduleDay.exercises.length} ejercicio{selectedScheduleDay.exercises.length !== 1 ? 's' : ''} asignado{selectedScheduleDay.exercises.length !== 1 ? 's' : ''}</p>
                           </div>
                           {selectedScheduleDay.exercises.length > 0 && (
                             <button type="button" onClick={clearSelectedDayExercises} className="rounded-full border border-rose-200 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300">
@@ -2075,7 +2075,7 @@ export default function ProgramsPage() {
                               </div>
                             </div>
                           )) : (
-                            <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-center text-xs text-surface-400 dark:border-surface-700">
+                            <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-6 text-center text-xs text-surface-500 dark:text-surface-400 dark:border-surface-700">
                               Seleccioná ejercicios desde la biblioteca →
                             </div>
                           )}
@@ -2105,7 +2105,7 @@ export default function ProgramsPage() {
                                   <div className="flex items-center justify-between gap-3">
                                     <div>
                                       <p className="text-sm font-semibold text-surface-900 dark:text-white">{group}</p>
-                                      <p className="text-xs text-surface-400">{selectedFromGroup}/{groupExercises.length} seleccionados</p>
+                                      <p className="text-xs text-surface-500 dark:text-surface-400">{selectedFromGroup}/{groupExercises.length} seleccionados</p>
                                     </div>
                                     <button type="button" onClick={() => allGroupSelected ? removeExerciseGroupFromSelectedDay(group) : addExercisesToSelectedDay(groupExercises)} className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors', allGroupSelected ? 'border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300' : 'border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-900/50 dark:bg-brand-950/20 dark:text-brand-300')}>
                                       {allGroupSelected ? 'Quitar todo' : 'Agregar todo'}
@@ -2531,7 +2531,7 @@ export default function ProgramsPage() {
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
                 Sede
-                <span className="ml-2 text-xs font-normal text-surface-400">
+                <span className="ml-2 text-xs font-normal text-surface-500 dark:text-surface-400">
                   {generateForm.modality === 'online' ? 'Opcional para clases online' : 'Obligatoria para clases presenciales e híbridas'}
                 </span>
               </label>
@@ -2576,7 +2576,7 @@ export default function ProgramsPage() {
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
                 Tipo / categoría
-                <span className="ml-2 text-xs font-normal text-surface-400">Opcional</span>
+                <span className="ml-2 text-xs font-normal text-surface-500 dark:text-surface-400">Opcional</span>
               </label>
               <input
                 className="input"
@@ -2609,7 +2609,7 @@ export default function ProgramsPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">
-                Plan restringido <span className="text-xs font-normal text-surface-400">(opcional)</span>
+                Plan restringido <span className="text-xs font-normal text-surface-500 dark:text-surface-400">(opcional)</span>
               </label>
               <select
                 className="input"
@@ -2621,7 +2621,7 @@ export default function ProgramsPage() {
                   <option key={plan.id} value={plan.id}>{plan.name}</option>
                 ))}
               </select>
-              <p className="mt-1.5 text-xs text-surface-400">Solo los clientes con este plan podrán ver y reservar esta clase.</p>
+              <p className="mt-1.5 text-xs text-surface-500 dark:text-surface-400">Solo los clientes con este plan podrán ver y reservar esta clase.</p>
             </div>
 
             <div>
@@ -2633,7 +2633,7 @@ export default function ProgramsPage() {
                 value={generateForm.cancellation_deadline_hours}
                 onChange={(e) => setGenerateForm((f) => ({ ...f, cancellation_deadline_hours: e.target.value }))}
               />
-              <p className="mt-1.5 text-xs text-surface-400">
+              <p className="mt-1.5 text-xs text-surface-500 dark:text-surface-400">
                 Horas antes del inicio en las que el cliente aún puede cancelar. 0 = se puede cancelar hasta el inicio.
               </p>
             </div>
