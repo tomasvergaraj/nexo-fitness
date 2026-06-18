@@ -245,7 +245,6 @@ export default function HowItWorks() {
                       ))}
                     </ul>
                     <div className="hiw-step-inline-scene">
-                      <div className="hiw-step-inline-glow" aria-hidden />
                       <InlineScene />
                     </div>
                   </div>
@@ -256,7 +255,6 @@ export default function HowItWorks() {
 
           <div className="hiw-stage">
             <div className="hiw-stage-inner">
-              <div className="hiw-stage-glow" aria-hidden />
               <div className="hiw-stage-progress">
                 {STEPS.map((_, i) => (
                   <span key={i} className={`hiw-pip${active >= i ? ' done' : ''}${active === i ? ' current' : ''}`} />

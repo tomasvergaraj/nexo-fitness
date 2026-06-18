@@ -13,7 +13,6 @@ export default function CTAFinal() {
       <div className="container">
         <ScrollReveal>
           <div className="cta-card">
-            <div className="cta-card-glow" aria-hidden />
             <span className="eyebrow"><span className="eyebrow-dot" />Listo para activar</span>
             <h2 className="cta-headline">Empieza hoy.<br /><span className="cta-headline-accent">Vende mañana.</span></h2>
             <p className="cta-sub">14 días gratis, sin tarjeta. Sin permanencia. Cancela cuando quieras.</p>

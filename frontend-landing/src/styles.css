@@ -1121,15 +1121,7 @@ summary:focus-visible,
   
 }
 
-.cta-card-glow {
-  position: absolute;
-  inset: -30% -10%;
-  background: none;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.cta-card > *:not(.cta-card-glow) { position: relative; z-index: 1; }
+.cta-card > * { position: relative; z-index: 1; }
 
 .cta-headline {
   font-family: 'Outfit', 'Outfit Fallback', system-ui, sans-serif;
@@ -1631,13 +1623,6 @@ html.js .reveal.is-in {
   
 }
 
-.hiw-stage-glow {
-  position: absolute;
-  inset: -10%;
-  background: none;
-  pointer-events: none;
-  z-index: 0;
-}
 
 .hiw-stage-progress {
   position: absolute;
@@ -2241,13 +2226,6 @@ html.js .reveal.is-in {
     
   }
 
-  .hiw-step-inline-glow {
-    position: absolute;
-    inset: -20%;
-    background: none;
-    pointer-events: none;
-    z-index: 0;
-  }
 
   .hiw-step-inline-scene > .hiw-scene { position: relative; z-index: 1; }
   .hiw-step-inline-scene .hiw-scene { display: flex; align-items: center; justify-content: center; }
