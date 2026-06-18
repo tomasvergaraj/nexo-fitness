@@ -87,7 +87,7 @@ function RecentSaleRow({ tx, onRefund, onReceipt }: { tx: POSTransaction; onRefu
         <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
           {tx.items.map(i => i.product_name).join(', ')}
         </p>
-        <p className="text-xs text-surface-400">
+        <p className="text-xs text-surface-500 dark:text-surface-400">
           {new Date(tx.sold_at).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })} · {paymentLabel(tx.payment_method)}
           {isPartial && <span className="ml-1 text-amber-600 dark:text-amber-400">· devuelto {formatCLP(refunded)}</span>}
         </p>
@@ -114,7 +114,7 @@ function RecentSaleRow({ tx, onRefund, onReceipt }: { tx: POSTransaction; onRefu
             Devolver
           </button>
         ) : tx.status === 'refunded' ? (
-          <span className="text-xs text-surface-400">Devuelto</span>
+          <span className="text-xs text-surface-500 dark:text-surface-400">Devuelto</span>
         ) : null}
       </div>
     </div>
@@ -160,7 +160,7 @@ function ClientPicker({ value, onChange }: { value: ClientLite | null; onChange:
           {isFetching ? (
             <div className="flex items-center justify-center py-3"><Loader2 size={16} className="animate-spin text-brand-500" /></div>
           ) : results.length === 0 ? (
-            <p className="px-3 py-3 text-xs text-surface-400">Sin resultados</p>
+            <p className="px-3 py-3 text-xs text-surface-500 dark:text-surface-400">Sin resultados</p>
           ) : results.map(c => (
             <button
               key={c.id}
@@ -169,7 +169,7 @@ function ClientPicker({ value, onChange }: { value: ClientLite | null; onChange:
               className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-surface-50 dark:hover:bg-surface-700/50"
             >
               <span className="text-sm font-medium text-surface-800 dark:text-surface-200">{c.first_name} {c.last_name}</span>
-              {c.email && <span className="text-xs text-surface-400">{c.email}</span>}
+              {c.email && <span className="text-xs text-surface-500 dark:text-surface-400">{c.email}</span>}
             </button>
           ))}
         </div>
@@ -242,10 +242,10 @@ function FiadosPanel() {
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold font-display text-surface-900 dark:text-white">{selected.client_name}</h2>
-            {selected.email && <p className="text-sm text-surface-400">{selected.email}</p>}
+            {selected.email && <p className="text-sm text-surface-500 dark:text-surface-400">{selected.email}</p>}
           </div>
           <div className="text-right">
-            <p className="text-xs uppercase tracking-wide text-surface-400">Saldo deudor</p>
+            <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Saldo deudor</p>
             <p className={cn('text-2xl font-bold', balance > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600')}>
               {formatCLP(balance)}
             </p>
@@ -295,14 +295,14 @@ function FiadosPanel() {
             Registrar abono
           </button>
           {abonoMethod === 'cash' && (
-            <p className="mt-2 text-xs text-surface-400">Un abono en efectivo entra al arqueo del turno de caja abierto.</p>
+            <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">Un abono en efectivo entra al arqueo del turno de caja abierto.</p>
           )}
         </div>
 
         {/* Límite de crédito */}
         <div className="mb-6 rounded-2xl border border-surface-200 p-4 dark:border-surface-800">
           <h3 className="mb-1 text-sm font-semibold text-surface-700 dark:text-surface-300">Límite de crédito</h3>
-          <p className="mb-3 text-xs text-surface-400">
+          <p className="mb-3 text-xs text-surface-500 dark:text-surface-400">
             Tope de deuda del socio. Vacío = sin límite. El modo (avisar o bloquear) se ajusta en Configuración.
           </p>
           <div className="flex gap-2">
@@ -328,7 +328,7 @@ function FiadosPanel() {
               <button
                 onClick={() => limitMutation.mutate({ id: selected.client_id, limit: null })}
                 disabled={limitMutation.isPending}
-                className="shrink-0 rounded-xl px-3 text-sm text-surface-400 hover:text-surface-600"
+                className="shrink-0 rounded-xl px-3 text-sm text-surface-500 dark:text-surface-400 hover:text-surface-600"
               >
                 Quitar
               </button>
@@ -343,14 +343,14 @@ function FiadosPanel() {
         ) : (
           <div className="overflow-hidden rounded-2xl border border-surface-200 dark:border-surface-800">
             {statement?.entries.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-surface-400">Sin movimientos</p>
+              <p className="px-4 py-6 text-center text-sm text-surface-500 dark:text-surface-400">Sin movimientos</p>
             ) : statement?.entries.map(e => (
               <div key={e.id} className="flex items-center justify-between gap-3 border-b border-surface-100 px-4 py-2.5 last:border-0 dark:border-surface-800">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-surface-800 dark:text-surface-200">
                     {e.kind === 'charge' ? 'Cargo (venta a crédito)' : `Abono${e.payment_method ? ` · ${paymentLabel(e.payment_method)}` : ''}`}
                   </p>
-                  <p className="text-xs text-surface-400">
+                  <p className="text-xs text-surface-500 dark:text-surface-400">
                     {new Date(e.created_at).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                     {e.created_by_name ? ` · ${e.created_by_name}` : ''}
                     {e.notes ? ` · ${e.notes}` : ''}
@@ -360,7 +360,7 @@ function FiadosPanel() {
                   <p className={cn('text-sm font-bold', e.kind === 'charge' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400')}>
                     {e.kind === 'charge' ? '+' : '−'}{formatCLP(e.amount)}
                   </p>
-                  <p className="text-xs text-surface-400">saldo {formatCLP(e.balance_after)}</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">saldo {formatCLP(e.balance_after)}</p>
                 </div>
               </div>
             ))}
@@ -377,7 +377,7 @@ function FiadosPanel() {
         <h2 className="text-lg font-bold font-display text-surface-900 dark:text-white">Deudores</h2>
         {debtors && debtors.rows.length > 0 && (
           <div className="text-right">
-            <p className="text-xs uppercase tracking-wide text-surface-400">Total por cobrar</p>
+            <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Total por cobrar</p>
             <p className="text-lg font-bold text-rose-600 dark:text-rose-400">{formatCLP(debtors.total_outstanding)}</p>
           </div>
         )}
@@ -401,7 +401,7 @@ function FiadosPanel() {
             >
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-surface-800 dark:text-surface-200">{d.client_name}</p>
-                <p className="text-xs text-surface-400">
+                <p className="text-xs text-surface-500 dark:text-surface-400">
                   {d.email ?? d.phone ?? '—'}
                   {d.last_entry_at ? ` · último mov. ${new Date(d.last_entry_at).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' })}` : ''}
                 </p>
@@ -827,7 +827,7 @@ export default function POSPage() {
                 <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
                   {item.product.name}
                 </p>
-                <p className="text-xs text-surface-400">{formatCLP(item.product.price)} c/u</p>
+                <p className="text-xs text-surface-500 dark:text-surface-400">{formatCLP(item.product.price)} c/u</p>
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -891,7 +891,7 @@ export default function POSPage() {
           </div>
         </div>
         {discountMode === 'percent' && discount > 0 && (
-          <p className="-mt-1 text-right text-xs text-surface-400">{discountInput}% = {formatCLP(discount)}</p>
+          <p className="-mt-1 text-right text-xs text-surface-500 dark:text-surface-400">{discountInput}% = {formatCLP(discount)}</p>
         )}
 
         <div className="space-y-1 text-sm">
@@ -1008,7 +1008,7 @@ export default function POSPage() {
 
         {todaySales.length > 0 && (
           <div className="mt-2">
-            <p className="text-xs font-semibold text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
+            <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
             <div className="max-h-40 overflow-y-auto">
               {todaySales.slice(0, 10).map(tx => (
                 <RecentSaleRow key={tx.id} tx={tx} onRefund={openRefund} onReceipt={openReceipt} />
@@ -1342,7 +1342,7 @@ export default function POSPage() {
                   </button>
                 ))}
                 {cashReceived > 0 && (
-                  <button type="button" onClick={() => setCashReceived(0)} className="rounded-lg px-2 py-1 text-xs text-surface-400 hover:text-surface-600">
+                  <button type="button" onClick={() => setCashReceived(0)} className="rounded-lg px-2 py-1 text-xs text-surface-500 dark:text-surface-400 hover:text-surface-600">
                     limpiar
                   </button>
                 )}
@@ -1639,7 +1639,7 @@ export default function POSPage() {
                   <div key={item.id} className="flex items-center justify-between gap-3 border-b border-surface-100 px-3 py-2.5 last:border-0 dark:border-surface-800">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-surface-800 dark:text-surface-200">{item.product_name}</p>
-                      <p className="text-xs text-surface-400">
+                      <p className="text-xs text-surface-500 dark:text-surface-400">
                         {formatCLP(item.unit_price)} c/u · {remaining} de {item.quantity} por devolver
                       </p>
                     </div>
@@ -1700,9 +1700,9 @@ export default function POSPage() {
               <div className="text-center">
                 <p className="text-base font-bold text-surface-900 dark:text-white">{gymSettings?.gym_name ?? 'Punto de venta'}</p>
                 {(gymSettings?.address || gymSettings?.city) && (
-                  <p className="text-xs text-surface-400">{[gymSettings?.address, gymSettings?.city].filter(Boolean).join(', ')}</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">{[gymSettings?.address, gymSettings?.city].filter(Boolean).join(', ')}</p>
                 )}
-                {gymSettings?.phone && <p className="text-xs text-surface-400">{gymSettings.phone}</p>}
+                {gymSettings?.phone && <p className="text-xs text-surface-500 dark:text-surface-400">{gymSettings.phone}</p>}
               </div>
               <div className="my-3 border-t border-dashed border-surface-300 dark:border-surface-600" />
               <div className="space-y-0.5 text-xs text-surface-500 dark:text-surface-400">
@@ -1717,7 +1717,7 @@ export default function POSPage() {
                   <div key={i.id} className="flex justify-between gap-3 text-sm">
                     <span className="min-w-0 text-surface-700 dark:text-surface-300">
                       {i.product_name}
-                      <span className="block text-xs text-surface-400">{i.quantity} × {formatCLP(i.unit_price)}</span>
+                      <span className="block text-xs text-surface-500 dark:text-surface-400">{i.quantity} × {formatCLP(i.unit_price)}</span>
                     </span>
                     <span className="shrink-0 font-medium text-surface-800 dark:text-surface-200">{formatCLP(i.subtotal)}</span>
                   </div>
@@ -1760,7 +1760,7 @@ export default function POSPage() {
                 <Check size={16} /> Nueva venta
               </button>
             </div>
-            <p className="text-center text-xs text-surface-400">Enter = nueva venta · P = imprimir</p>
+            <p className="text-center text-xs text-surface-500 dark:text-surface-400">Enter = nueva venta · P = imprimir</p>
           </div>
         )}
       </Modal>
