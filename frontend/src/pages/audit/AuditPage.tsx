@@ -135,7 +135,7 @@ export default function AuditPage() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Actor</span>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Actor</span>
             <select className="input" value={actorId} onChange={(e) => withPageReset(setActorId)(e.target.value)}>
               <option value="">Todos los usuarios</option>
               {filters?.actors.map((a) => (
@@ -147,7 +147,7 @@ export default function AuditPage() {
           </label>
 
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Acción</span>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Acción</span>
             <select className="input" value={action} onChange={(e) => withPageReset(setAction)(e.target.value)}>
               <option value="">Todas las acciones</option>
               {filters?.actions.map((a) => (
@@ -159,7 +159,7 @@ export default function AuditPage() {
           </label>
 
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Entidad</span>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Entidad</span>
             <select className="input" value={entityType} onChange={(e) => withPageReset(setEntityType)(e.target.value)}>
               <option value="">Todas las entidades</option>
               {filters?.entity_types.map((e) => (
@@ -173,7 +173,7 @@ export default function AuditPage() {
 
         <div className="mt-3 grid gap-3 border-t border-surface-200/70 pt-4 sm:grid-cols-2 dark:border-white/10">
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Desde</span>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Desde</span>
             <input
               type="date"
               className="input"
@@ -184,7 +184,7 @@ export default function AuditPage() {
           </label>
 
           <label className="block">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500">Hasta</span>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Hasta</span>
             <input
               type="date"
               className="input"
@@ -349,7 +349,7 @@ export default function AuditPage() {
               <DetailItem label="IP" value={selected.ip_address || '—'} mono />
             </div>
             <div>
-              <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-surface-500">Datos</p>
+              <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Datos</p>
               <pre className="max-h-[45vh] overflow-auto rounded-2xl border border-surface-200 bg-surface-50 p-4 text-xs leading-relaxed text-surface-700 dark:border-white/10 dark:bg-surface-950/40 dark:text-surface-200">
                 {JSON.stringify(selected.details, null, 2)}
               </pre>
@@ -364,7 +364,7 @@ export default function AuditPage() {
 function DetailItem({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="rounded-2xl border border-surface-200 bg-surface-50 px-4 py-3 dark:border-white/10 dark:bg-surface-950/35">
-      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500">{label}</p>
+      <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">{label}</p>
       <p className={cn('mt-1.5 text-sm font-medium text-surface-900 dark:text-white break-all', mono && 'font-mono')}>
         {value}
       </p>
