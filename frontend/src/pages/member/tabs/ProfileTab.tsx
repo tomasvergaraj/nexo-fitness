@@ -511,25 +511,25 @@ export default function ProfileTab() {
             {/* 4-col grid of support info */}
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-400">Correo</p>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-500 dark:text-surface-400">Correo</p>
                 <p className="mt-1 text-xs font-medium text-surface-700 dark:text-surface-300 break-all">
                   {supportEmail ?? '—'}
                 </p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-400">Teléfono</p>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-500 dark:text-surface-400">Teléfono</p>
                 <p className="mt-1 text-xs font-medium text-surface-700 dark:text-surface-300">
                   {supportPhone ?? '—'}
                 </p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-400">WhatsApp</p>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-500 dark:text-surface-400">WhatsApp</p>
                 <p className="mt-1 text-xs font-medium text-surface-700 dark:text-surface-300">
                   {supportWhatsAppUrl ? 'Disponible' : '—'}
                 </p>
               </div>
               <div>
-                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-400">Tus solicitudes</p>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-surface-500 dark:text-surface-400">Tus solicitudes</p>
                 <p className="mt-1 text-xs font-medium text-surface-700 dark:text-surface-300">
                   {supportInteractions.length} total · {pendingSupportInteractions.length} pendientes · {resolvedSupportInteractions} resueltas
                 </p>

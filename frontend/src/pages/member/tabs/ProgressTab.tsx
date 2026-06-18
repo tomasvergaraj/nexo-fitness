@@ -383,7 +383,7 @@ export default function ProgressTab() {
           )}
 
           {progressPhotos.length === 0 && !progressPhotosQuery.isLoading && (
-            <div className="flex flex-col items-center gap-3 py-6 text-surface-400 dark:text-surface-600">
+            <div className="flex flex-col items-center gap-3 py-6 text-surface-500 dark:text-surface-400">
               <ImageOff size={40} strokeWidth={1.5} />
             </div>
           )}

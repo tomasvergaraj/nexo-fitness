@@ -293,7 +293,7 @@ export default function MemberDrawer({ isOpen, onClose }: Props) {
                         <RefreshCcw size={16} className={cn(isSyncing && 'animate-spin')} />
                         Actualizar datos
                         {lastSyncedAt ? (
-                          <span className="ml-auto text-[10px] text-surface-400">
+                          <span className="ml-auto text-[10px] text-surface-500 dark:text-surface-400">
                             {formatRelative(lastSyncedAt.toISOString())}
                           </span>
                         ) : null}

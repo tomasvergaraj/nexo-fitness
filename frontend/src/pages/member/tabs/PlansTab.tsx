@@ -213,7 +213,7 @@ export default function PlansTab() {
                     placeholder="Gift card (opcional) — GIFT-XXXX-XXXX"
                     className="input w-full text-sm font-mono uppercase"
                   />
-                  <p className="mt-1 text-xs text-surface-400">El saldo se descuenta del total al pagar.</p>
+                  <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">El saldo se descuenta del total al pagar.</p>
                 </div>
 
                 <button
