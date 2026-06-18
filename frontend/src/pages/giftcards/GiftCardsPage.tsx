@@ -89,7 +89,7 @@ export default function GiftCardsPage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold font-display text-surface-900 dark:text-white">Gift Cards</h1>
-          <p className="text-sm text-surface-500">Emite tarjetas de regalo con saldo. Se canjean en POS y en venta de planes.</p>
+          <p className="text-sm text-surface-500 dark:text-surface-400">Emite tarjetas de regalo con saldo. Se canjean en POS y en venta de planes.</p>
         </div>
       </div>
 
@@ -130,7 +130,7 @@ export default function GiftCardsPage() {
             <input className="input" value={recipientName} onChange={(e) => setRecipientName(e.target.value)} placeholder="Nombre del destinatario (opcional)" />
           </div>
           <textarea className="input min-h-20 resize-y" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Mensaje para el destinatario (opcional)" maxLength={500} />
-          <p className="text-xs text-surface-500">
+          <p className="text-xs text-surface-500 dark:text-surface-400">
             Si indicas un email, se le envía la gift card con el código. El pago lo gestionas fuera del sistema (efectivo/transferencia).
           </p>
           <button
