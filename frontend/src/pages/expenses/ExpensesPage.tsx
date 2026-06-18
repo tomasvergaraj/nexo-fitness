@@ -215,7 +215,7 @@ export default function ExpensesPage() {
             <span className="text-xs text-surface-500 font-medium uppercase tracking-wide">Total gastos</span>
           </div>
           <p className="text-2xl font-bold text-surface-900 dark:text-white">{formatCLP(totalExpenses)}</p>
-          <p className="text-xs text-surface-400 mt-0.5">{expenses.length} registros</p>
+          <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">{expenses.length} registros</p>
         </div>
         {byCategory.slice(0, 3).map(cat => (
           <div key={cat.key} className="bg-white dark:bg-surface-800 rounded-2xl border border-surface-200 dark:border-surface-700 p-4">
@@ -224,7 +224,7 @@ export default function ExpensesPage() {
               <span className="text-xs text-surface-500 font-medium uppercase tracking-wide truncate">{cat.label}</span>
             </div>
             <p className="text-xl font-bold text-surface-900 dark:text-white">{formatCLP(cat.total)}</p>
-            <p className="text-xs text-surface-400 mt-0.5">
+            <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
               {totalExpenses > 0 ? `${Math.round((cat.total / totalExpenses) * 100)}%` : '0%'} del total
             </p>
           </div>
@@ -268,7 +268,7 @@ export default function ExpensesPage() {
           <TableScroll>
             <table className="min-w-[720px] w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-surface-400 border-b border-surface-200 dark:border-surface-800">
+                <tr className="text-left text-xs text-surface-500 dark:text-surface-400 border-b border-surface-200 dark:border-surface-800">
                   <th className="px-6 py-3 font-medium">Descripción</th>
                   <th className="px-4 py-3 font-medium">Categoría</th>
                   <th className="px-4 py-3 font-medium">Monto</th>
@@ -299,12 +299,12 @@ export default function ExpensesPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        <button onClick={() => openEdit(expense)}
-                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-400 hover:text-brand-500">
+                        <button onClick={() => openEdit(expense)} aria-label="Editar gasto" title="Editar gasto"
+                          className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 text-surface-500 dark:text-surface-400 hover:text-brand-500">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={() => deleteMutation.mutate(expense.id)}
-                          className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-400 hover:text-red-500">
+                        <button onClick={() => deleteMutation.mutate(expense.id)} aria-label="Eliminar gasto" title="Eliminar gasto"
+                          className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-500 dark:text-surface-400 hover:text-red-500">
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -316,7 +316,7 @@ export default function ExpensesPage() {
           </TableScroll>
         )}
         {!isLoading && expenses.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-12 text-surface-400">
+          <div className="flex flex-col items-center justify-center py-12 text-surface-500 dark:text-surface-400">
             <DollarSign size={32} className="mb-2 opacity-30" />
             <p className="text-sm">Sin gastos registrados</p>
           </div>
@@ -361,7 +361,7 @@ export default function ExpensesPage() {
             />
             <span className="text-sm text-surface-700 dark:text-surface-300">
               Pagado de caja
-              <span className="block text-[11px] text-surface-400">Se descuenta del efectivo esperado en el cierre de caja</span>
+              <span className="block text-[11px] text-surface-500 dark:text-surface-400">Se descuenta del efectivo esperado en el cierre de caja</span>
             </span>
           </label>
           {editing ? (
@@ -376,7 +376,7 @@ export default function ExpensesPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-surface-500">Recibo</p>
-                  <p className="text-[11px] text-surface-400">JPG, PNG o WebP · máx 5 MB · se optimiza automáticamente</p>
+                  <p className="text-[11px] text-surface-500 dark:text-surface-400">JPG, PNG o WebP · máx 5 MB · se optimiza automáticamente</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <label className="btn-secondary cursor-pointer text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5">
                       {uploadReceiptMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <ImagePlus size={13} />}
@@ -421,7 +421,7 @@ export default function ExpensesPage() {
               </div>
             </div>
           ) : (
-            <p className="text-[11px] text-surface-400 rounded-lg bg-surface-50 dark:bg-surface-800/40 px-3 py-2">
+            <p className="text-[11px] text-surface-500 dark:text-surface-400 rounded-lg bg-surface-50 dark:bg-surface-800/40 px-3 py-2">
               Crea el gasto primero; luego podrás adjuntar el recibo editándolo.
             </p>
           )}
