@@ -238,7 +238,7 @@ function PlanCard({
 
       <div className="mb-4">
         <p className="text-base font-bold text-surface-900 dark:text-white">{plan.name}</p>
-        <p className="mt-1 text-xs text-surface-500">{plan.description}</p>
+        <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{plan.description}</p>
       </div>
 
       {/* Pricing: neto + IVA breakdown */}
@@ -253,7 +253,7 @@ function PlanCard({
             </span>
           ) : null}
         </div>
-        <p className="mt-0.5 text-xs text-surface-500">neto · {periodLabel(plan.license_type)}</p>
+        <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">neto · {periodLabel(plan.license_type)}</p>
         {Number(plan.tax_rate) > 0 && (
           <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
             + IVA {Number(plan.tax_rate)}% ({formatCLP(Number(plan.tax_amount))})
@@ -353,10 +353,10 @@ function PaymentRow({ payment }: { payment: OwnerPaymentItem }) {
               </span>
             )}
           </div>
-          <p className="mt-0.5 text-xs text-surface-500">
+          <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">
             {method}{ref ? ` · ${ref}` : ''}
           </p>
-          <p className="mt-0.5 text-xs text-surface-400">
+          <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">
             {formatDate(payment.starts_at)}
             {payment.expires_at ? ` → ${formatDate(payment.expires_at)}` : ''}
           </p>
@@ -366,7 +366,7 @@ function PaymentRow({ payment }: { payment: OwnerPaymentItem }) {
         <p className="text-sm font-semibold text-surface-900 dark:text-white">
           {formatCLP(Number(payment.total_amount))}
         </p>
-        <p className="mt-0.5 text-xs text-surface-500">
+        <p className="mt-0.5 text-xs text-surface-500 dark:text-surface-400">
           {payment.paid_at ? `Pagado ${formatDate(payment.paid_at)}` : formatDate(payment.created_at)}
         </p>
       </div>
@@ -468,13 +468,13 @@ export default function SubscriptionPage() {
       <motion.div variants={fadeInUp}>
         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-500">Cuenta</p>
         <h1 className="mt-2 text-3xl font-bold font-display text-surface-900 dark:text-white">Mi Suscripción</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-500">
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-surface-500 dark:text-surface-400">
           Estado de tu plan, historial de pagos y opciones para renovar o cambiar de plan.
         </p>
       </motion.div>
 
       {billingQuery.isLoading ? (
-        <div className="flex items-center justify-center py-24 text-surface-400">
+        <div className="flex items-center justify-center py-24 text-surface-500 dark:text-surface-400">
           <Loader2 size={28} className="animate-spin" />
         </div>
       ) : billing ? (
@@ -500,7 +500,7 @@ export default function SubscriptionPage() {
                     <CreditCard size={16} className="text-violet-500" />
                     <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Planes disponibles</h2>
                   </div>
-                  <p className="mt-1 text-sm text-surface-500">Selecciona un plan para renovar o programar el cambio.</p>
+                  <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">Selecciona un plan para renovar o programar el cambio.</p>
                 </div>
 
                 {/* Promo code */}
@@ -536,12 +536,12 @@ export default function SubscriptionPage() {
               )}
 
               {plansQuery.isLoading ? (
-                <div className="flex justify-center py-12 text-surface-400">
+                <div className="flex justify-center py-12 text-surface-500 dark:text-surface-400">
                   <Loader2 size={22} className="animate-spin" />
                 </div>
               ) : plans.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-10 text-center dark:border-surface-700">
-                  <p className="text-sm text-surface-500">No hay planes disponibles</p>
+                  <p className="text-sm text-surface-500 dark:text-surface-400">No hay planes disponibles</p>
                 </div>
               ) : (
                 <div className="mt-2 grid gap-4 sm:grid-cols-2">
@@ -576,7 +576,7 @@ export default function SubscriptionPage() {
                 <RefreshCw size={16} className="text-violet-500" />
                 <div>
                   <h2 className="text-lg font-semibold text-surface-900 dark:text-white">Historial de pagos</h2>
-                  <p className="mt-0.5 text-sm text-surface-500">Todos los ciclos facturados.</p>
+                  <p className="mt-0.5 text-sm text-surface-500 dark:text-surface-400">Todos los ciclos facturados.</p>
                 </div>
                 {paymentsQuery.isFetching ? <Loader2 size={15} className="ml-auto animate-spin text-surface-400" /> : null}
               </div>
@@ -585,7 +585,7 @@ export default function SubscriptionPage() {
                 {payments.length === 0 && !paymentsQuery.isLoading ? (
                   <div className="rounded-2xl border border-dashed border-surface-300 px-4 py-10 text-center dark:border-surface-700">
                     <Receipt size={24} className="mx-auto mb-2 text-surface-300" />
-                    <p className="text-sm text-surface-500">Aún no hay pagos registrados</p>
+                    <p className="text-sm text-surface-500 dark:text-surface-400">Aún no hay pagos registrados</p>
                   </div>
                 ) : payments.map((p) => (
                   <PaymentRow key={p.id} payment={p} />
@@ -602,7 +602,7 @@ export default function SubscriptionPage() {
                   >
                     Anterior
                   </button>
-                  <span className="text-xs text-surface-500">
+                  <span className="text-xs text-surface-500 dark:text-surface-400">
                     Página {paymentsPage} de {paymentsTotal}
                   </span>
                   <button
@@ -619,7 +619,7 @@ export default function SubscriptionPage() {
           </div>
         </>
       ) : (
-        <div className="flex items-center justify-center py-24 text-surface-400">
+        <div className="flex items-center justify-center py-24 text-surface-500 dark:text-surface-400">
           <p className="text-sm">No se pudo cargar la información de suscripción.</p>
         </div>
       )}
