@@ -147,7 +147,7 @@ function CreateModal({ open, onClose, onCreated }: {
                   />
                   <div>
                     <p className="text-sm font-medium text-surface-900 dark:text-white">{s.label}</p>
-                    <p className="text-xs text-surface-500">{s.description}</p>
+                    <p className="text-xs text-surface-500 dark:text-surface-400">{s.description}</p>
                   </div>
                 </label>
               ))}
@@ -289,7 +289,7 @@ export default function ApiClientsPage() {
             <KeyRound size={24} />
             Integraciones API
           </h1>
-          <p className="mt-1 text-sm text-surface-500">
+          <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">
             Credenciales OAuth2 para wearables y apps externas. Es una herramienta técnica para owner/admin, no una pantalla para miembros.
           </p>
         </div>
@@ -332,7 +332,7 @@ export default function ApiClientsPage() {
           </div>
         </div>
       ) : clients.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-3 py-20 text-surface-400">
+        <div className="flex flex-col items-center justify-center gap-3 py-20 text-surface-500 dark:text-surface-400">
           <KeyRound size={48} strokeWidth={1.5} />
           <p className="font-medium">Sin clientes API</p>
           <p className="text-sm text-center">Crea tu primer cliente para integrar wearables o apps externas.</p>
@@ -343,7 +343,7 @@ export default function ApiClientsPage() {
             <thead>
               <tr className="border-b border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800/40">
                 {['Nombre', 'Client ID', 'Scopes', 'Límite/min', 'Estado', 'Acciones'].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-surface-500">{h}</th>
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-surface-500 dark:text-surface-400">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -367,7 +367,7 @@ export default function ApiClientsPage() {
                     <button
                       type="button"
                       onClick={() => toggleMutation.mutate({ id: c.id, is_active: !c.is_active })}
-                      className={cn('flex items-center gap-1.5 text-xs font-medium transition-colors', c.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-surface-400')}
+                      className={cn('flex items-center gap-1.5 text-xs font-medium transition-colors', c.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-surface-500 dark:text-surface-400')}
                     >
                       {c.is_active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
                       {c.is_active ? 'Activo' : 'Inactivo'}
