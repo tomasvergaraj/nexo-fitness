@@ -220,9 +220,13 @@ No son sugerencias. Si una propuesta las rompe, no la apliques.
   no como segundo protagonista.
 - **Sin emoji en títulos** ni en copy de producto.
 - **Sin `rounded-2xl` en todo.** Define un radio y respétalo.
-- **Una sola tipografía** (Plus Jakarta Sans) con **pesos contrastados** para
-  jerarquía. La personalidad sale del contraste de pesos y del espaciado, no de
-  agregar fuentes ni efectos.
+- **Sistema tipográfico acotado: dos familias self-host** — Outfit (display,
+  geométrica, headings) + Manrope (body, humanista). Emparejan en eje de
+  contraste (geométrica + humanista), no compiten. **No agregar una tercera
+  fuente.** La personalidad sale del contraste de pesos y del espaciado, no de
+  apilar fuentes ni efectos. (Histórico: el plan inicial proponía Plus Jakarta
+  Sans sola; la landing shippeó Outfit+Manrope, mejor pareja y con fallback
+  metrics afinados anti-CLS — identidad ya commiteada, se conserva.)
 - **No inventes features.** Solo los claims verificados (más abajo).
 - **Marcadores numerados (01 / 02 / 03) solo si el contenido es una secuencia
   real** (un proceso, pasos de onboarding). No de adorno.
@@ -271,7 +275,10 @@ export default {
         bg: "#F4FAFD", surface: "#FFFFFF",
         muted: "#5A6B82", border: "#E2EAF0",
       },
-      fontFamily: { sans: ['"Plus Jakarta Sans"', "ui-sans-serif", "system-ui", "sans-serif"] },
+      fontFamily: {
+        sans: ['"Manrope"', '"Manrope Fallback"', "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ['"Outfit"', '"Outfit Fallback"', "ui-sans-serif", "system-ui", "sans-serif"],
+      },
       borderRadius: { base: "0.5rem" },
     },
   },
@@ -285,14 +292,17 @@ export default {
   --color-ink: #0A1A33; --color-teal: #1F86A6; --color-green: #22B07D;
   --color-bg: #F4FAFD;  --color-surface: #FFFFFF;
   --color-muted: #5A6B82; --color-border: #E2EAF0;
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Manrope", "Manrope Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", "Outfit Fallback", ui-sans-serif, system-ui, sans-serif;
   --radius-base: 0.5rem;
 }
 ```
  
 ### Tipografía
  
-- Plus Jakarta Sans (self-host, variable). Pesos: 400 / 500 / 600 / 700.
+- Outfit (display) + Manrope (body), self-host variable, subset latin, con
+  `*-Fallback` (Arial size-adjust) para evitar CLS al cargar. Pesos: Manrope
+  400–800, Outfit 500–800.
 - Escala (tokens, no inline): `display` clamp(2.5rem, 5vw, 4rem)/700 ·
   `h1` ~2rem/700 · `h2` ~1.5rem/600 · `h3` ~1.25rem/600 · `body` 1rem/400 ·
   `small` 0.875rem/500. Contraste de pesos; no usar 400 para todo.
@@ -307,9 +317,9 @@ export default {
 - **Imágenes:** AVIF/WebP, `srcset`/`sizes`, `loading="lazy"` salvo el visual del
   hero (eager, con `width`/`height` para evitar CLS). Considerar `vite-imagetools`
   o generar los tamaños en build.
-- **Fuentes:** self-host de Plus Jakarta Sans variable, `font-display: swap`,
-  `preload` del archivo crítico, **subset**. No usar el CDN de Google Fonts en
-  prod.
+- **Fuentes:** self-host de Outfit + Manrope variables, `font-display: swap`,
+  `preload` del archivo crítico, **subset latin** + fallback con métricas
+  ajustadas (anti-CLS). No usar el CDN de Google Fonts en prod.
 - **Siempre `node_modules/.bin/vite build` tras cambios de frontend** (Nginx sirve
   `dist/`; npm no está en PATH en el server).
 ## Accesibilidad (piso, no opcional)
