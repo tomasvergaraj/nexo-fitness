@@ -77,7 +77,7 @@ export default function PlatformLeadsPage() {
                   <p><span className="font-medium text-surface-700 dark:text-surface-300">Origen:</span> {lead.source}</p>
                 </div>
                 <p className="mt-3 text-sm text-surface-500">{lead.notes || 'Sin notas comerciales todavía.'}</p>
-                <p className="mt-2 text-xs text-surface-400">Creado: {formatDateTime(lead.created_at)}</p>
+                <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">Creado: {formatDateTime(lead.created_at)}</p>
               </div>
 
               <div className="grid grid-cols-3 gap-2">

@@ -269,11 +269,11 @@ export default function PlatformFeedbackPage() {
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="block">
-                  <span className="mb-2 block text-xs font-medium uppercase tracking-[0.18em] text-surface-400">Desde</span>
+                  <span className="mb-2 block text-xs font-medium uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Desde</span>
                   <input className="input" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
                 </label>
                 <label className="block">
-                  <span className="mb-2 block text-xs font-medium uppercase tracking-[0.18em] text-surface-400">Hasta</span>
+                  <span className="mb-2 block text-xs font-medium uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Hasta</span>
                   <input className="input" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
                 </label>
               </div>
@@ -478,7 +478,7 @@ export default function PlatformFeedbackPage() {
             ) : null}
 
             <div className="rounded-[1.5rem] border border-surface-200 bg-surface-50 px-5 py-5 dark:border-white/10 dark:bg-surface-950/35">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-400">Mensaje completo</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500 dark:text-surface-400">Mensaje completo</p>
               <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-surface-700 dark:text-surface-200">
                 {selectedSubmission.message}
               </p>
@@ -522,7 +522,7 @@ function DetailMeta({
 function InfoCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[1.2rem] border border-surface-200 bg-surface-50 px-4 py-4 dark:border-white/10 dark:bg-surface-950/35">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-400">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">{label}</p>
       <p className="mt-2 text-sm font-medium text-surface-800 dark:text-surface-200">{value}</p>
     </div>
   );
