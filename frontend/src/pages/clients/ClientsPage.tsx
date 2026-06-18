@@ -2722,7 +2722,7 @@ export default function ClientsPage() {
             {Array.from({ length: 3 }).map((_, i) => <div key={i} className="shimmer h-16 rounded-2xl" />)}
           </div>
         ) : !historyData?.length ? (
-          <p className="py-6 text-center text-sm text-surface-400">Este cliente no tiene membresías registradas.</p>
+          <p className="py-6 text-center text-sm text-surface-500 dark:text-surface-400">Este cliente no tiene membresías registradas.</p>
         ) : (
           <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
             {historyData.map((m) => (
@@ -2751,13 +2751,13 @@ export default function ClientsPage() {
                       {formatMembershipPeriodStatus(m.status)}
                     </span>
                     {m.frozen_until && (
-                      <span className="text-xs text-surface-400">Hasta {formatDate(m.frozen_until)}</span>
+                      <span className="text-xs text-surface-500 dark:text-surface-400">Hasta {formatDate(m.frozen_until)}</span>
                     )}
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 text-xs text-surface-500 sm:grid-cols-2">
                   <div className="rounded-2xl bg-surface-50 px-3 py-3 dark:bg-surface-900/60">
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-400">Pago vinculado</p>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Pago vinculado</p>
                     <p className="mt-2 font-medium text-surface-700 dark:text-surface-200">
                       {m.amount != null && m.currency
                         ? formatCurrency(parseApiNumber(m.amount), m.currency)
@@ -2769,7 +2769,7 @@ export default function ClientsPage() {
                     </p>
                   </div>
                   <div className="rounded-2xl bg-surface-50 px-3 py-3 dark:bg-surface-900/60">
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-400">Trazabilidad</p>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">Trazabilidad</p>
                     <p className="mt-2">
                       {m.previous_membership_id
                         ? 'Renovación encadenada al período anterior.'
@@ -2876,7 +2876,7 @@ export default function ClientsPage() {
             placeholder="Ej: Solicitó no hacer squats por lesión de rodilla. Renovar en junio..."
             maxLength={2000}
           />
-          <p className="text-xs text-surface-400 text-right">{notesText.length}/2000</p>
+          <p className="text-xs text-surface-500 dark:text-surface-400 text-right">{notesText.length}/2000</p>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setNotesClient(null)}>
               Cancelar
