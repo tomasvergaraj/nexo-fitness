@@ -466,7 +466,7 @@ export default function MarketingPage() {
               <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">
                 {overview.scheduled_pending + overview.sending_now}
               </p>
-              <p className="mt-1 text-xs text-surface-400">{overview.total_campaigns} campaña(s) guardadas</p>
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{overview.total_campaigns} campaña(s) guardadas</p>
             </div>
 
             <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
@@ -475,7 +475,7 @@ export default function MarketingPage() {
                 <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Enviados</span>
               </div>
               <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.sent_total}</p>
-              <p className="mt-1 text-xs text-surface-400">
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                 {overview.manual_runs} manual · {overview.scheduler_runs} auto
               </p>
             </div>
@@ -486,7 +486,7 @@ export default function MarketingPage() {
                 <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Apertura</span>
               </div>
               <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.open_rate}%</p>
-              <p className="mt-1 text-xs text-surface-400">{overview.opened_total} abiertos</p>
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{overview.opened_total} abiertos</p>
             </div>
 
             <div className="rounded-2xl border border-surface-200/50 bg-white p-5 dark:border-surface-800/50 dark:bg-surface-900">
@@ -495,7 +495,7 @@ export default function MarketingPage() {
                 <span className="text-xs font-medium uppercase tracking-wide text-surface-500">Tasa de clics</span>
               </div>
               <p className="mt-3 text-3xl font-bold font-display text-surface-900 dark:text-white">{overview.click_rate}%</p>
-              <p className="mt-1 text-xs text-surface-400">{overview.clicked_total} clic(s)</p>
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">{overview.clicked_total} clic(s)</p>
             </div>
           </>
         )}
@@ -531,7 +531,7 @@ export default function MarketingPage() {
               {overview.scheduler_failures > 0 ? (
                 <p className="mt-1 text-xs text-rose-500">{overview.scheduler_failures} con error</p>
               ) : (
-                <p className="mt-1 text-xs text-surface-400">sin errores registrados</p>
+                <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">sin errores registrados</p>
               )}
             </div>
 
@@ -546,7 +546,7 @@ export default function MarketingPage() {
               {overview.failed_push_receipts > 0 ? (
                 <p className="mt-1 text-xs text-rose-500">{overview.failed_push_receipts} con error final</p>
               ) : (
-                <p className="mt-1 text-xs text-surface-400">confirmaciones en espera</p>
+                <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">confirmaciones en espera</p>
               )}
             </div>
 
@@ -558,7 +558,7 @@ export default function MarketingPage() {
               <p className="mt-2 text-2xl font-bold font-display text-surface-900 dark:text-white">
                 {overview.scheduler_failures}
               </p>
-              <p className="mt-1 text-xs text-surface-400">fallos en envío automático</p>
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">fallos en envío automático</p>
             </div>
           </>
         )}
@@ -630,15 +630,15 @@ export default function MarketingPage() {
               {/* Métricas */}
               <div className="mt-5 grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
-                  <p className="text-xs text-surface-400">Destinatarios</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">Destinatarios</p>
                   <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{campaign.total_recipients}</p>
                 </div>
                 <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
-                  <p className="text-xs text-surface-400">Enviados</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">Enviados</p>
                   <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">{campaign.total_sent}</p>
                 </div>
                 <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
-                  <p className="text-xs text-surface-400">Apertura</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">Apertura</p>
                   <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">
                     {campaign.total_sent
                       ? `${calculateRate(campaign.total_opened, campaign.total_sent)}%`
@@ -646,7 +646,7 @@ export default function MarketingPage() {
                   </p>
                 </div>
                 <div className="rounded-2xl bg-surface-50 py-3 dark:bg-surface-950/60">
-                  <p className="text-xs text-surface-400">CTR</p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">CTR</p>
                   <p className="mt-1 text-sm font-semibold text-surface-900 dark:text-white">
                     {campaign.total_sent
                       ? `${calculateRate(campaign.total_clicked, campaign.total_sent)}%`
@@ -808,7 +808,7 @@ export default function MarketingPage() {
                   <option value="sent" disabled>Enviada (sistema)</option>
                 )}
               </select>
-              <p className="mt-1 text-xs text-surface-400">
+              <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                 "Enviando" y "Enviada" los gestiona el sistema automáticamente.
               </p>
             </div>
@@ -941,7 +941,7 @@ export default function MarketingPage() {
               value={form.scheduled_at}
               onChange={(e) => setForm((f) => ({ ...f, scheduled_at: e.target.value }))}
             />
-            <p className="mt-1 text-xs text-surface-400">
+            <p className="mt-1 text-xs text-surface-500 dark:text-surface-400">
               Si eliges una fecha, la campaña se enviará automáticamente en ese momento.
             </p>
           </div>
@@ -954,31 +954,31 @@ export default function MarketingPage() {
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-400">Origen</p>
+                  <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Origen</p>
                   <p className="mt-1.5 text-sm font-semibold capitalize text-surface-900 dark:text-white">
                     {formatDispatchTrigger(editingCampaign.last_dispatch_trigger)}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-400">Intentos</p>
+                  <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Intentos</p>
                   <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
                     {editingCampaign.dispatch_attempts}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-400">Destinatarios</p>
+                  <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Destinatarios</p>
                   <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
                     {editingCampaign.total_recipients}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-400">Abiertos / CTR</p>
+                  <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Abiertos / CTR</p>
                   <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
                     {editingCampaign.total_opened} / {calculateRate(editingCampaign.total_clicked, editingCampaign.total_sent)}%
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-400">Último inicio</p>
+                  <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Último inicio</p>
                   <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
                     {editingCampaign.last_dispatch_attempted_at
                       ? formatDateTime(editingCampaign.last_dispatch_attempted_at)
@@ -986,7 +986,7 @@ export default function MarketingPage() {
                   </p>
                 </div>
                 <div className="rounded-2xl bg-white px-4 py-3 dark:bg-surface-900">
-                  <p className="text-xs uppercase tracking-wide text-surface-400">Último fin</p>
+                  <p className="text-xs uppercase tracking-wide text-surface-500 dark:text-surface-400">Último fin</p>
                   <p className="mt-1.5 text-sm font-semibold text-surface-900 dark:text-white">
                     {editingCampaign.last_dispatch_finished_at
                       ? formatDateTime(editingCampaign.last_dispatch_finished_at)
@@ -1173,7 +1173,7 @@ export default function MarketingPage() {
             {/* Barra de progreso */}
             {clientItems.length > 0 && (
               <div className="mt-3">
-                <div className="flex items-center justify-between text-xs text-surface-400">
+                <div className="flex items-center justify-between text-xs text-surface-500 dark:text-surface-400">
                   <span>
                     {broadcastForm.user_ids.length} de {clientItems.length} seleccionados
                   </span>
