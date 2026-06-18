@@ -789,7 +789,7 @@ export default function PlatformTenantsPage() {
 
       {/* Saved views */}
       <motion.div variants={fadeInUp} className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[11px] font-bold uppercase tracking-[0.16em] text-surface-400">Vistas</span>
+        <span className="mr-1 text-[11px] font-bold uppercase tracking-[0.16em] text-surface-500 dark:text-surface-400">Vistas</span>
         {PRESET_VIEWS.map((view) => {
           const active = activeViewKey === view.key;
           const count =
@@ -905,7 +905,7 @@ export default function PlatformTenantsPage() {
               ? 'Cargando cuentas…'
               : `${filteredTenants.length} visibles de ${tenants.length}`}
           </p>
-          <p className="text-xs uppercase tracking-[0.18em] text-surface-400">
+          <p className="text-xs uppercase tracking-[0.18em] text-surface-500 dark:text-surface-400">
             Última actualización: {formatDateTime(new Date())}
           </p>
         </div>
@@ -1019,13 +1019,13 @@ export default function PlatformTenantsPage() {
                               Prueba hasta {formatDate(tenant.trial_ends_at)}
                             </span>
                           ) : (
-                            <span className="text-xs text-surface-400">Sin fecha</span>
+                            <span className="text-xs text-surface-500 dark:text-surface-400">Sin fecha</span>
                           )}
                         </div>
                       </td>
                       <td className={`px-4 ${padY} text-right text-xs text-surface-600 dark:text-surface-300 tabular-nums`}>
                         <div>{tenant.max_members ?? 0} miembros</div>
-                        <div className="text-surface-400">{tenant.max_branches ?? 0} sedes</div>
+                        <div className="text-surface-500 dark:text-surface-400">{tenant.max_branches ?? 0} sedes</div>
                       </td>
                       <td className={`px-4 ${padY} text-right`}>
                         {tenant.health_level ? (
@@ -1037,7 +1037,7 @@ export default function PlatformTenantsPage() {
                             <span className="text-[10px] uppercase tracking-wider">{HEALTH_LEVEL_LABEL[tenant.health_level]}</span>
                           </span>
                         ) : (
-                          <span className="text-xs text-surface-400">—</span>
+                          <span className="text-xs text-surface-500 dark:text-surface-400">—</span>
                         )}
                       </td>
                       <td className={`px-4 ${padY} text-right`}>
@@ -1209,7 +1209,7 @@ export default function PlatformTenantsPage() {
                       </button>
                     </div>
                   ) : (
-                    <p className="mt-2 text-sm text-surface-400">Sin propietario asignado.</p>
+                    <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">Sin propietario asignado.</p>
                   )}
                 </section>
 
@@ -1339,7 +1339,7 @@ export default function PlatformTenantsPage() {
                                   {payment.expires_at ? ` → ${formatDate(payment.expires_at)}` : ''} ·
                                   {' '}{formatCurrency(payment.total_amount, payment.currency)}
                                 </p>
-                                <p className="text-[11px] text-surface-400">
+                                <p className="text-[11px] text-surface-500 dark:text-surface-400">
                                   {payment.payment_method}
                                   {payment.external_reference ? ` · ${payment.external_reference}` : ''}
                                 </p>
@@ -1682,7 +1682,7 @@ export default function PlatformTenantsPage() {
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-surface-900 dark:text-white">{flag.label}</p>
                               <p className="text-xs text-surface-500">{flag.description}</p>
-                              <p className="mt-1 font-mono text-[10px] text-surface-400">{flag.key}</p>
+                              <p className="mt-1 font-mono text-[10px] text-surface-500 dark:text-surface-400">{flag.key}</p>
                             </div>
                           </label>
                         );
