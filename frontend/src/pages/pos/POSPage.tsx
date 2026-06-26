@@ -808,90 +808,185 @@ export default function POSPage() {
 
   const cartPanelContent = (
     <>
-      {/* Cart items */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-2">
-        <h2 className="text-sm font-semibold text-surface-600 dark:text-surface-400 uppercase tracking-wide mb-3">
-          Carrito ({cart.length})
-        </h2>
-        {cart.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-surface-300 dark:text-surface-600">
-            <ShoppingCart size={32} className="mb-2" />
-            <p className="text-sm">Vacío — agrega productos</p>
-          </div>
-        ) : (
-          cart.map(item => (
-            <div key={item.product.id}
-              className="flex flex-col gap-3 rounded-xl bg-white p-3 shadow-sm dark:bg-surface-800 sm:flex-row sm:items-center"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
-                  {item.product.name}
-                </p>
-                <p className="text-xs text-surface-500 dark:text-surface-400">{formatCLP(item.product.price)} c/u</p>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => updateQty(item.product.id, -1)}
-                  className="w-6 h-6 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
-                >
-                  <Minus size={12} />
-                </button>
-                <span className="w-6 text-center text-sm font-bold text-surface-800 dark:text-white">
-                  {item.quantity}
-                </span>
-                <button
-                  onClick={() => updateQty(item.product.id, 1)}
-                  className="w-6 h-6 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
-                >
-                  <Plus size={12} />
-                </button>
-              </div>
-              <div className="text-right min-w-[56px]">
-                <p className="text-sm font-bold text-surface-800 dark:text-white">
-                  {formatCLP(item.product.price * item.quantity)}
-                </p>
-              </div>
-              <button onClick={() => removeFromCart(item.product.id)} className="self-end text-surface-300 transition-colors hover:text-red-500 sm:self-auto">
-                <X size={14} />
-              </button>
+      {/* Scrollable: cart items + sale config. El footer con Total + Cobrar
+          queda SIEMPRE pinneado abajo (ver bloque shrink-0 más abajo). */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Cart items */}
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-surface-600 dark:text-surface-400 uppercase tracking-wide">
+            Carrito ({cart.length})
+          </h2>
+          {cart.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-surface-300 dark:text-surface-600">
+              <ShoppingCart size={32} className="mb-2" />
+              <p className="text-sm">Vacío — agrega productos</p>
             </div>
-          ))
+          ) : (
+            cart.map(item => (
+              <div key={item.product.id}
+                className="flex flex-col gap-3 rounded-xl bg-white p-3 shadow-sm dark:bg-surface-800 sm:flex-row sm:items-center"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-surface-800 dark:text-surface-200 truncate">
+                    {item.product.name}
+                  </p>
+                  <p className="text-xs text-surface-500 dark:text-surface-400">{formatCLP(item.product.price)} c/u</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => updateQty(item.product.id, -1)}
+                    className="w-8 h-8 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <span className="w-7 text-center text-sm font-bold text-surface-800 dark:text-white">
+                    {item.quantity}
+                  </span>
+                  <button
+                    onClick={() => updateQty(item.product.id, 1)}
+                    className="w-8 h-8 rounded-lg bg-surface-100 dark:bg-surface-700 flex items-center justify-center hover:bg-surface-200 dark:hover:bg-surface-600"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+                <div className="text-right min-w-[56px]">
+                  <p className="text-sm font-bold text-surface-800 dark:text-white">
+                    {formatCLP(item.product.price * item.quantity)}
+                  </p>
+                </div>
+                <button onClick={() => removeFromCart(item.product.id)} className="self-end text-surface-300 transition-colors hover:text-red-500 sm:self-auto">
+                  <X size={16} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Sale config (solo con productos en carrito, para no abrumar al inicio) */}
+        {cart.length > 0 && (
+          <div className="space-y-3 border-t border-surface-200 pt-4 dark:border-surface-800">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-surface-500 shrink-0">Descuento</label>
+              <input
+                type="number"
+                min={0}
+                max={discountMode === 'percent' ? 100 : undefined}
+                value={discountInput || ''}
+                onChange={e => setDiscountInput(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="0"
+                className="input min-w-0 flex-1 text-sm"
+              />
+              <div className="flex shrink-0 overflow-hidden rounded-lg border border-surface-200 dark:border-surface-700">
+                {(['amount', 'percent'] as const).map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setDiscountMode(m)}
+                    className={cn(
+                      'px-2.5 py-1.5 text-xs font-semibold transition-colors',
+                      discountMode === m
+                        ? 'bg-brand-500 text-white'
+                        : 'bg-white text-surface-500 hover:bg-surface-50 dark:bg-surface-800 dark:hover:bg-surface-700',
+                    )}
+                  >
+                    {m === 'amount' ? '$' : '%'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {discountMode === 'percent' && discount > 0 && (
+              <p className="-mt-1 text-right text-xs text-surface-500 dark:text-surface-400">{discountInput}% = {formatCLP(discount)}</p>
+            )}
+
+            <div className="grid grid-cols-3 gap-2">
+              {PAYMENT_METHODS.map(pm => (
+                <button
+                  key={pm.value}
+                  onClick={() => selectPaymentMethod(pm.value)}
+                  className={cn(
+                    'flex-1 flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-xs font-medium transition-all',
+                    paymentMethod === pm.value
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/40 text-brand-600 dark:text-brand-400'
+                      : 'border-surface-200 dark:border-surface-700 text-surface-500 hover:border-surface-300',
+                  )}
+                >
+                  {pm.icon}
+                  {pm.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-surface-500">
+                {isCredit ? 'Socio a fiar' : 'Socio (opcional)'}
+                {isCredit && <span className="ml-1 text-rose-500">· obligatorio</span>}
+              </label>
+              <ClientPicker value={client} onChange={setClient} />
+            </div>
+
+            {isMixed && (
+              <div className="space-y-2">
+                <label className="text-xs text-surface-500">Pago mixto</label>
+                {mixedRows.map((r, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <select
+                      value={r.method}
+                      onChange={e => setMixedRow(idx, { method: e.target.value })}
+                      className="input min-w-0 flex-1 text-sm"
+                    >
+                      {ABONO_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      value={r.amount || ''}
+                      onChange={e => setMixedRow(idx, { amount: Number(e.target.value) || 0 })}
+                      placeholder="0"
+                      className="input w-24 text-sm"
+                    />
+                    {mixedRows.length > 1 && (
+                      <button type="button" onClick={() => removeMixedRow(idx)} className="text-surface-300 hover:text-red-500">
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <div className="flex items-center justify-between">
+                  <button type="button" onClick={addMixedRow} className="text-xs font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400">
+                    + Agregar método
+                  </button>
+                  <span className={cn('text-xs font-medium', mixedRemaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-surface-500')}>
+                    {formatCLP(mixedAssigned)} / {formatCLP(total)}
+                    {mixedRemaining !== 0 && <span className="text-amber-600 dark:text-amber-400"> · falta {formatCLP(mixedRemaining)}</span>}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {todaySales.length > 0 && (
+          <div className="border-t border-surface-200 pt-4 dark:border-surface-800">
+            <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
+            <div>
+              {todaySales.slice(0, 10).map(tx => (
+                <RecentSaleRow key={tx.id} tx={tx} onRefund={openRefund} onReceipt={openReceipt} />
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Totals + checkout */}
-      <div className="shrink-0 border-t border-surface-200 dark:border-surface-800 p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-surface-500 shrink-0">Descuento</label>
-          <input
-            type="number"
-            min={0}
-            max={discountMode === 'percent' ? 100 : undefined}
-            value={discountInput || ''}
-            onChange={e => setDiscountInput(Math.max(0, Number(e.target.value) || 0))}
-            placeholder="0"
-            className="input min-w-0 flex-1 text-sm"
-          />
-          <div className="flex shrink-0 overflow-hidden rounded-lg border border-surface-200 dark:border-surface-700">
-            {(['amount', 'percent'] as const).map(m => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setDiscountMode(m)}
-                className={cn(
-                  'px-2.5 py-1.5 text-xs font-semibold transition-colors',
-                  discountMode === m
-                    ? 'bg-brand-500 text-white'
-                    : 'bg-white text-surface-500 hover:bg-surface-50 dark:bg-surface-800 dark:hover:bg-surface-700',
-                )}
-              >
-                {m === 'amount' ? '$' : '%'}
-              </button>
-            ))}
-          </div>
-        </div>
-        {discountMode === 'percent' && discount > 0 && (
-          <p className="-mt-1 text-right text-xs text-surface-500 dark:text-surface-400">{discountInput}% = {formatCLP(discount)}</p>
+      {/* Footer pinneado: Total + Cobrar SIEMPRE visible, sin scroll */}
+      <div className="shrink-0 border-t border-surface-200 dark:border-surface-800 p-4 space-y-2">
+        {!hasOpenCaja && !loadingSession && (
+          <button
+            type="button"
+            onClick={() => { setCartSheetOpen(false); setOpenCajaModal(true); }}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-400"
+          >
+            <Lock size={14} /> Caja cerrada — abre la caja para cobrar
+          </button>
         )}
 
         <div className="space-y-1 text-sm">
@@ -907,86 +1002,11 @@ export default function POSPage() {
               <span>- {formatCLP(discount)}</span>
             </div>
           )}
-          <div className="flex justify-between font-bold text-lg text-surface-900 dark:text-white pt-1 border-t border-surface-100 dark:border-surface-800">
+          <div className="flex justify-between font-bold text-lg text-surface-900 dark:text-white">
             <span>Total</span>
             <span>{formatCLP(total)}</span>
           </div>
         </div>
-
-        {!hasOpenCaja && !loadingSession && (
-          <button
-            type="button"
-            onClick={() => { setCartSheetOpen(false); setOpenCajaModal(true); }}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-400"
-          >
-            <Lock size={14} /> Caja cerrada — abre la caja para cobrar
-          </button>
-        )}
-
-        <div className="grid grid-cols-3 gap-2">
-          {PAYMENT_METHODS.map(pm => (
-            <button
-              key={pm.value}
-              onClick={() => selectPaymentMethod(pm.value)}
-              className={cn(
-                'flex-1 flex flex-col items-center gap-1 py-2 px-1 rounded-xl border text-xs font-medium transition-all',
-                paymentMethod === pm.value
-                  ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/40 text-brand-600 dark:text-brand-400'
-                  : 'border-surface-200 dark:border-surface-700 text-surface-500 hover:border-surface-300',
-              )}
-            >
-              {pm.icon}
-              {pm.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="space-y-1">
-          <label className="text-xs text-surface-500">
-            {isCredit ? 'Socio a fiar' : 'Socio (opcional)'}
-            {isCredit && <span className="ml-1 text-rose-500">· obligatorio</span>}
-          </label>
-          <ClientPicker value={client} onChange={setClient} />
-        </div>
-
-        {isMixed && (
-          <div className="space-y-2">
-            <label className="text-xs text-surface-500">Pago mixto</label>
-            {mixedRows.map((r, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <select
-                  value={r.method}
-                  onChange={e => setMixedRow(idx, { method: e.target.value })}
-                  className="input min-w-0 flex-1 text-sm"
-                >
-                  {ABONO_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
-                <input
-                  type="number"
-                  min={0}
-                  value={r.amount || ''}
-                  onChange={e => setMixedRow(idx, { amount: Number(e.target.value) || 0 })}
-                  placeholder="0"
-                  className="input w-24 text-sm"
-                />
-                {mixedRows.length > 1 && (
-                  <button type="button" onClick={() => removeMixedRow(idx)} className="text-surface-300 hover:text-red-500">
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            ))}
-            <div className="flex items-center justify-between">
-              <button type="button" onClick={addMixedRow} className="text-xs font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400">
-                + Agregar método
-              </button>
-              <span className={cn('text-xs font-medium', mixedRemaining === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-surface-500')}>
-                {formatCLP(mixedAssigned)} / {formatCLP(total)}
-                {mixedRemaining !== 0 && <span className="text-amber-600 dark:text-amber-400"> · falta {formatCLP(mixedRemaining)}</span>}
-              </span>
-            </div>
-          </div>
-        )}
 
         <button
           onClick={() => {
@@ -996,26 +1016,15 @@ export default function POSPage() {
           }}
           disabled={!canCheckout}
           className={cn(
-            'w-full py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2',
+            'w-full py-3.5 rounded-2xl font-bold text-base transition-all flex items-center justify-center gap-2',
             canCheckout
               ? 'bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/25 active:scale-[0.98]'
               : 'bg-surface-100 dark:bg-surface-800 text-surface-400 cursor-not-allowed',
           )}
         >
-          {isCredit ? <User size={16} /> : <ShoppingCart size={16} />}
+          {isCredit ? <User size={18} /> : <ShoppingCart size={18} />}
           {isCredit ? 'Fiar' : 'Cobrar'} {cart.length > 0 ? formatCLP(total) : ''}
         </button>
-
-        {todaySales.length > 0 && (
-          <div className="mt-2">
-            <p className="text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wide mb-2">Últimas ventas</p>
-            <div className="max-h-40 overflow-y-auto">
-              {todaySales.slice(0, 10).map(tx => (
-                <RecentSaleRow key={tx.id} tx={tx} onRefund={openRefund} onReceipt={openReceipt} />
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </>
   );
