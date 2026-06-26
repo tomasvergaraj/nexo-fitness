@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Manrope"; src: url("fonts/manrope.woff2") format("woff2"); font-weight: 400 800; font-display: swap; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; }
+      body {
+        font-family: "Manrope", system-ui, sans-serif;
+        background: #f1f5f9;
+      }
+      :root {
+        --ink: #f8fafc; --sub: #94a3b8; --cyan: #06b6d4; --cyan-deep: #0891b2; --cyan-bright: #22d3ee;
+        --w-page: #f1f5f9; --w-card: #ffffff; --w-line: #e2e8f0; --w-ink: #0f172a; --w-sub: #475569; --w-muted: #475569;
+        --emerald: #10b981; --amber: #f59e0b; --violet: #7c3aed; --blue: #2563eb;
+      }
+      .display { font-family: "Outfit", system-ui, sans-serif; }
+      .mono { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+
+      #win {
+        position: absolute; left: 110px; top: 70px; width: 1700px; height: 940px; z-index: 2;
+        background: var(--w-page); border-radius: 22px; overflow: hidden; display: flex;
+        box-shadow: 0 30px 70px -36px rgba(15,23,42,0.30), 0 0 0 1px var(--w-line);
+      }
+
+      .side { width: 280px; flex-shrink: 0; background: var(--w-card); border-right: 1px solid var(--w-line); padding: 26px 18px; display: flex; flex-direction: column; }
+      .brand { display: flex; align-items: center; gap: 12px; padding: 6px 10px 26px; }
+      .brand img { width: 38px; height: 38px; border-radius: 10px; }
+      .brand .wm { font-family: "Outfit"; font-size: 27px; font-weight: 700; color: var(--w-ink); letter-spacing: -0.01em; }
+      .brand .wm .ac { color: var(--cyan-deep); }
+      .nav { position: relative; display: flex; flex-direction: column; gap: 10px; }
+      #navpill { position: absolute; left: 0; top: 0; width: 100%; height: 60px; border-radius: 14px; background: rgba(6,182,212,0.12); box-shadow: inset 3px 0 0 var(--cyan); z-index: 0; }
+      .nav a { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; height: 60px; padding: 0 16px; border-radius: 14px; color: var(--w-sub); font-size: 21px; font-weight: 600; }
+      .nav a svg { width: 24px; height: 24px; }
+      .nav a.on { color: var(--cyan-deep); }
+      .side .foot { margin-top: auto; display: flex; align-items: center; gap: 12px; padding: 12px; border-top: 1px solid var(--w-line); }
+      .side .foot .av { width: 42px; height: 42px; border-radius: 9999px; background: linear-gradient(135deg, #22d3ee, #0e7490); color: #fff; display: grid; place-items: center; font-family: "Outfit"; font-weight: 700; font-size: 19px; }
+      .side .foot .nm { font-size: 19px; font-weight: 600; color: var(--w-ink); }
+      .side .foot .rl { font-size: 16px; color: var(--w-muted); }
+
+      .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      .topbar { height: 84px; flex-shrink: 0; border-bottom: 1px solid var(--w-line); background: var(--w-card); display: flex; align-items: center; gap: 20px; padding: 0 32px; }
+      .search { flex: 1; max-width: 440px; height: 48px; border: 1px solid var(--w-line); border-radius: 12px; background: var(--w-page); display: flex; align-items: center; gap: 12px; padding: 0 18px; color: var(--w-muted); font-size: 19px; }
+      .search svg { width: 20px; height: 20px; }
+      .topbar .spacer { flex: 1; }
+      .pillbtn { height: 46px; padding: 0 22px; border-radius: 9999px; background: var(--cyan); color: #00121a; font-size: 19px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+      .iconbtn { width: 46px; height: 46px; border-radius: 12px; border: 1px solid var(--w-line); display: grid; place-items: center; color: var(--w-muted); }
+      .iconbtn svg { width: 22px; height: 22px; }
+
+      .content { position: relative; flex: 1; min-height: 0; }
+      .panel { position: absolute; inset: 0; padding: 36px 40px; display: flex; flex-direction: column; gap: 24px; }
+      .phead h2 { font-family: "Outfit"; font-size: 38px; font-weight: 700; color: var(--w-ink); letter-spacing: -0.01em; }
+      .phead p { font-size: 20px; color: var(--w-muted); margin-top: 2px; }
+
+      .badge { display: inline-flex; align-items: center; gap: 7px; font-size: 17px; font-weight: 600; padding: 5px 14px; border-radius: 9999px; white-space: nowrap; }
+      .b-emerald { background: #d1fae5; color: #047857; }
+      .b-amber { background: #fef3c7; color: #b45309; }
+      .b-cyan { background: #cffafe; color: #0e7490; }
+
+      .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+      .kpi { background: var(--w-card); border: 1px solid var(--w-line); border-radius: 18px; padding: 24px; }
+      .kpi .ic { width: 54px; height: 54px; border-radius: 14px; display: grid; place-items: center; margin-bottom: 18px; }
+      .kpi .lbl { font-size: 19px; color: var(--w-muted); font-weight: 500; }
+      .kpi .val { font-family: "Outfit"; font-size: 46px; font-weight: 700; color: var(--w-ink); margin-top: 4px; }
+      .kpi.signal .val { color: var(--cyan-deep); }
+      .ic-cyan { background: rgba(6,182,212,0.12); color: var(--cyan-deep); }
+      .ic-emerald { background: rgba(16,185,129,0.12); color: #059669; }
+      .ic-blue { background: rgba(37,99,235,0.12); color: var(--blue); }
+      .ic-violet { background: rgba(124,58,237,0.12); color: var(--violet); }
+
+      .charts { display: grid; grid-template-columns: 1.7fr 1fr; gap: 22px; flex: 1; min-height: 0; }
+      .card { background: var(--w-card); border: 1px solid var(--w-line); border-radius: 18px; padding: 26px 28px; display: flex; flex-direction: column; }
+      .card h3 { font-family: "Outfit"; font-size: 25px; font-weight: 700; color: var(--w-ink); }
+      .card .csub { font-size: 18px; color: var(--w-muted); margin-top: 1px; }
+      .area { flex: 1; margin-top: 16px; width: 100%; }
+      .bars { display: flex; align-items: flex-end; gap: 30px; flex: 1; margin-top: 20px; padding-bottom: 30px; }
+      .barwrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 10px; height: 100%; }
+      .barwrap .bar { width: 100%; border-radius: 8px 8px 0 0; background: var(--violet); }
+      .barwrap .bl { font-size: 17px; color: var(--w-muted); }
+
+      .tbl { background: var(--w-card); border: 1px solid var(--w-line); border-radius: 18px; overflow: hidden; }
+      .trow { display: grid; grid-template-columns: 1fr 280px 190px 170px; align-items: center; gap: 16px; padding: 20px 28px; }
+      .trow + .trow { border-top: 1px solid var(--w-line); }
+      .thead { background: var(--w-page); font-size: 17px; font-weight: 700; color: var(--w-muted); }
+      .cuser { display: flex; align-items: center; gap: 16px; min-width: 0; }
+      .cuser .av { width: 52px; height: 52px; border-radius: 9999px; background: linear-gradient(135deg, #22d3ee, #0e7490); color: #fff; display: grid; place-items: center; font-family: "Outfit"; font-weight: 700; font-size: 21px; flex-shrink: 0; }
+      .cuser .nm { font-size: 22px; font-weight: 600; color: var(--w-ink); }
+      .cuser .em { font-size: 17px; color: var(--w-muted); margin-top: 2px; }
+      .tcell { font-size: 19px; color: var(--w-sub); }
+      .tcell .small { font-size: 16px; color: var(--w-muted); }
+      .chips { display: flex; gap: 12px; }
+      .chip { font-size: 18px; font-weight: 600; padding: 9px 20px; border-radius: 9999px; background: var(--w-card); border: 1px solid var(--w-line); color: var(--w-sub); }
+      .chip.on { background: var(--cyan); border-color: var(--cyan); color: #fff; }
+
+      .clsgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; }
+      .cls { display: flex; background: var(--w-card); border: 1px solid var(--w-line); border-radius: 16px; overflow: hidden; }
+      .cls .stripe { width: 10px; flex-shrink: 0; }
+      .cls .cbody { flex: 1; padding: 22px 24px; }
+      .cls .r1 { display: flex; align-items: center; justify-content: space-between; }
+      .cls .nm { font-size: 27px; font-weight: 700; color: var(--w-ink); }
+      .cls .meta { font-size: 18px; color: var(--w-muted); margin-top: 8px; }
+      .cls .occ { height: 9px; border-radius: 9999px; background: #e2e8f0; margin-top: 16px; overflow: hidden; }
+      .cls .occ i { display: block; height: 100%; border-radius: 9999px; }
+
+      .pos { display: grid; grid-template-columns: 1fr 400px; gap: 24px; flex: 1; min-height: 0; }
+      .prodgrid { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: min-content; gap: 18px; align-content: start; }
+      .prod { background: var(--w-card); border: 1px solid var(--w-line); border-radius: 16px; padding: 22px; }
+      .prod .ph { height: 70px; border-radius: 12px; background: linear-gradient(135deg, #ecfeff, #e2e8f0); margin-bottom: 16px; }
+      .prod .pn { font-size: 20px; font-weight: 600; color: var(--w-ink); line-height: 1.25; }
+      .prod .pp { font-family: "JetBrains Mono"; font-size: 21px; font-weight: 600; color: #0e7490; margin-top: 8px; }
+      .cart { background: var(--w-card); border: 1px solid var(--w-line); border-radius: 18px; padding: 26px; display: flex; flex-direction: column; }
+      .cart h3 { font-family: "Outfit"; font-size: 26px; font-weight: 700; color: var(--w-ink); }
+      .citem { display: flex; align-items: center; gap: 14px; padding: 16px 0; }
+      .citem + .citem { border-top: 1px solid var(--w-line); }
+      .citem .nm { flex: 1; }
+      .citem .pn { font-size: 19px; font-weight: 600; color: var(--w-ink); }
+      .citem .qp { font-size: 16px; color: var(--w-muted); margin-top: 2px; }
+      .citem .amt { font-family: "JetBrains Mono"; font-size: 20px; font-weight: 500; color: var(--w-ink); }
+      .cart .tot { display: flex; align-items: baseline; justify-content: space-between; margin-top: auto; padding-top: 20px; border-top: 2px solid var(--w-line); }
+      .cart .tot .t { font-family: "Outfit"; font-size: 28px; font-weight: 700; color: var(--w-ink); }
+      .cart .tot .v { font-family: "JetBrains Mono"; font-size: 38px; font-weight: 700; color: #0e7490; }
+      .cart .pay { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; padding: 16px 20px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 14px; }
+      .cart .pay .wp { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 600; color: var(--w-ink); }
+      .cart .pay .wp .pill { font-size: 15px; font-weight: 700; color: #fff; background: #0f172a; padding: 4px 10px; border-radius: 7px; }
+      .cart .pay .ok { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; color: #047857; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="14" data-width="1920" data-height="1080">
+
+      <div id="win">
+        <aside class="side">
+          <div class="brand"><img src="assets/icon.png" alt="" /><span class="wm">Nexo<span class="ac">Fitness</span></span></div>
+          <nav class="nav">
+            <div id="navpill"></div>
+            <a class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>Dashboard</a>
+            <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path></svg>Clientes</a>
+            <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Clases</a>
+            <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>Punto de venta</a>
+            <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>Reportes</a>
+          </nav>
+          <div class="foot"><div class="av">CN</div><div><div class="nm">Club Norte</div><div class="rl">Dueño</div></div></div>
+        </aside>
+
+        <div class="main">
+          <div class="topbar">
+            <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>Buscar socios, clases o productos…</div>
+            <div class="spacer"></div>
+            <span class="pillbtn">Empezar prueba gratis</span>
+            <div class="iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg></div>
+          </div>
+
+          <div class="content" data-layout-allow-overlap data-layout-allow-occlusion>
+            <!-- DASHBOARD (start) -->
+            <section id="c-dash" class="panel clip" data-start="0" data-duration="3.7" data-track-index="3">
+              <div class="phead"><h2>Dashboard</h2><p>Resumen operativo del negocio · hoy</p></div>
+              <div class="kpis">
+                <div class="kpi signal"><div class="ic ic-cyan"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg></div><div class="lbl">Ingresos del día</div><div class="val">$640.000</div></div>
+                <div class="kpi"><div class="ic ic-emerald"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg></div><div class="lbl">Miembros activos</div><div class="val">248</div></div>
+                <div class="kpi"><div class="ic ic-blue"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg></div><div class="lbl">Check-ins hoy</div><div class="val">86</div></div>
+                <div class="kpi"><div class="ic ic-violet"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line></svg></div><div class="lbl">Clases hoy</div><div class="val">14</div></div>
+              </div>
+              <div class="charts">
+                <div class="card"><h3>Ingresos comparados</h3><div class="csub">Hoy · semana · mes</div>
+                  <svg class="area" viewBox="0 0 600 220" preserveAspectRatio="none">
+                    <defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06b6d4" stop-opacity="0.32"></stop><stop offset="1" stop-color="#06b6d4" stop-opacity="0"></stop></linearGradient></defs>
+                    <path d="M0,170 C80,150 130,90 200,110 C270,130 320,60 400,72 C470,82 520,40 600,30 L600,220 L0,220 Z" fill="url(#ag)"></path>
+                    <path d="M0,170 C80,150 130,90 200,110 C270,130 320,60 400,72 C470,82 520,40 600,30" fill="none" stroke="#06b6d4" stroke-width="3" vector-effect="non-scaling-stroke"></path>
+                  </svg>
+                </div>
+                <div class="card"><h3>Operación del día</h3><div class="csub">Clases · reservas · check-ins</div>
+                  <div class="bars">
+                    <div class="barwrap"><div class="bar" style="height:34%"></div><div class="bl">Clases</div></div>
+                    <div class="barwrap"><div class="bar" style="height:62%"></div><div class="bl">Reservas</div></div>
+                    <div class="barwrap"><div class="bar" style="height:100%"></div><div class="bl">Check-ins</div></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- CLIENTES -->
+            <section id="c-cli" class="panel clip" data-start="3.2" data-duration="3.9" data-track-index="4">
+              <div class="phead"><h2>Clientes</h2><p>248 clientes registrados</p></div>
+              <div class="chips"><span class="chip on">Todos</span><span class="chip">Activos</span><span class="chip">Por vencer</span><span class="chip">Vencidos</span><span class="chip">Usan app</span></div>
+              <div class="tbl">
+                <div class="trow thead"><span>Cliente</span><span>Contacto</span><span>Estado</span><span>Registrado</span></div>
+                <div class="trow"><div class="cuser"><div class="av">MR</div><div><div class="nm">Martina Rojas</div><div class="em">martina.rojas@gmail.com</div></div></div><div class="tcell">+56 9 8421 3390<div class="small">Socia · Plan anual</div></div><div><span class="badge b-emerald">Activo</span></div><div class="tcell">12 mar 2026</div></div>
+                <div class="trow"><div class="cuser"><div class="av">DC</div><div><div class="nm">Diego Castro</div><div class="em">diego.castro@gmail.com</div></div></div><div class="tcell">+56 9 7765 1182<div class="small">Socio · Plan mensual</div></div><div><span class="badge b-amber">Vence en 3d</span></div><div class="tcell">04 ene 2026</div></div>
+                <div class="trow"><div class="cuser"><div class="av">FS</div><div><div class="nm">Fernanda Silva</div><div class="em">fernanda.silva@gmail.com</div></div></div><div class="tcell">+56 9 5530 8841<div class="small">Socia · Plan trimestral</div></div><div><span class="badge b-emerald">Activo</span></div><div class="tcell">28 feb 2026</div></div>
+                <div class="trow"><div class="cuser"><div class="av">TL</div><div><div class="nm">Tomás León</div><div class="em">tomas.leon@gmail.com</div></div></div><div class="tcell">+56 9 6610 2204<div class="small">Socio · Plan mensual</div></div><div><span class="badge b-cyan">Usa app</span></div><div class="tcell">19 may 2026</div></div>
+              </div>
+            </section>
+
+            <!-- CLASES -->
+            <section id="c-cls" class="panel clip" data-start="6.6" data-duration="3.9" data-track-index="3">
+              <div class="phead"><h2>Clases</h2><p>Hoy · Sucursal Centro</p></div>
+              <div class="clsgrid">
+                <div class="cls"><div class="stripe" style="background:#06b6d4"></div><div class="cbody"><div class="r1"><span class="nm">Funcional</span><span class="badge b-cyan">Programada</span></div><div class="meta">18:00 - 19:00 · María González · 12/15</div><div class="occ"><i style="width:80%;background:#f59e0b"></i></div></div></div>
+                <div class="cls"><div class="stripe" style="background:#f59e0b"></div><div class="cbody"><div class="r1"><span class="nm">Spinning</span><span class="badge b-amber">En curso</span></div><div class="meta">19:00 - 20:00 · Camila Díaz · 20/20</div><div class="occ"><i style="width:100%;background:#ef4444"></i></div></div></div>
+                <div class="cls"><div class="stripe" style="background:#7c3aed"></div><div class="cbody"><div class="r1"><span class="nm">Yoga</span><span class="badge b-cyan">Programada</span></div><div class="meta">20:00 - 21:00 · Antonia Vera · 8/20</div><div class="occ"><i style="width:40%;background:#10b981"></i></div></div></div>
+                <div class="cls"><div class="stripe" style="background:#10b981"></div><div class="cbody"><div class="r1"><span class="nm">CrossFit</span><span class="badge b-cyan">Programada</span></div><div class="meta">21:00 - 22:00 · Pablo Reyes · 6/12</div><div class="occ"><i style="width:50%;background:#10b981"></i></div></div></div>
+              </div>
+            </section>
+
+            <!-- POS -->
+            <section id="c-pos" class="panel clip" data-start="10.0" data-duration="3.9" data-track-index="4">
+              <div class="phead"><h2>Punto de Venta</h2><p>Caja abierta · Sucursal Centro</p></div>
+              <div class="pos">
+                <div class="prodgrid">
+                  <div class="prod"><div class="ph"></div><div class="pn">Whey Protein Iso 1kg</div><div class="pp">$32.990</div></div>
+                  <div class="prod"><div class="ph"></div><div class="pn">Pre-Workout C4 270g</div><div class="pp">$24.990</div></div>
+                  <div class="prod"><div class="ph"></div><div class="pn">Creatina 300g</div><div class="pp">$18.990</div></div>
+                  <div class="prod"><div class="ph"></div><div class="pn">Bebida isotónica</div><div class="pp">$2.290</div></div>
+                  <div class="prod"><div class="ph"></div><div class="pn">Barra de proteína</div><div class="pp">$2.490</div></div>
+                  <div class="prod"><div class="ph"></div><div class="pn">Polera Nexo Dry-Fit</div><div class="pp">$14.990</div></div>
+                </div>
+                <div class="cart">
+                  <h3>Carrito</h3>
+                  <div class="citem"><div class="nm"><div class="pn">Whey Protein Iso 1kg</div><div class="qp">1 × $32.990</div></div><div class="amt">$32.990</div></div>
+                  <div class="citem"><div class="nm"><div class="pn">Pre-Workout C4 270g</div><div class="qp">1 × $24.990</div></div><div class="amt">$24.990</div></div>
+                  <div class="citem"><div class="nm"><div class="pn">Bebida isotónica</div><div class="qp">2 × $2.290</div></div><div class="amt">$4.580</div></div>
+                  <div class="tot"><span class="t">Total</span><span class="v">$62.560</span></div>
+                  <div class="pay"><span class="wp"><span class="pill">WebPay</span> Pago aprobado</span><span class="ok"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#047857" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>Venta registrada</span></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- DASHBOARD (loop end — identical to start) -->
+            <section id="c-dash2" class="panel clip" data-start="13.4" data-duration="0.6" data-track-index="3">
+              <div class="phead"><h2>Dashboard</h2><p>Resumen operativo del negocio · hoy</p></div>
+              <div class="kpis">
+                <div class="kpi signal"><div class="ic ic-cyan"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg></div><div class="lbl">Ingresos del día</div><div class="val">$640.000</div></div>
+                <div class="kpi"><div class="ic ic-emerald"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg></div><div class="lbl">Miembros activos</div><div class="val">248</div></div>
+                <div class="kpi"><div class="ic ic-blue"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg></div><div class="lbl">Check-ins hoy</div><div class="val">86</div></div>
+                <div class="kpi"><div class="ic ic-violet"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line></svg></div><div class="lbl">Clases hoy</div><div class="val">14</div></div>
+              </div>
+              <div class="charts">
+                <div class="card"><h3>Ingresos comparados</h3><div class="csub">Hoy · semana · mes</div>
+                  <svg class="area" viewBox="0 0 600 220" preserveAspectRatio="none">
+                    <path d="M0,170 C80,150 130,90 200,110 C270,130 320,60 400,72 C470,82 520,40 600,30 L600,220 L0,220 Z" fill="url(#ag)"></path>
+                    <path d="M0,170 C80,150 130,90 200,110 C270,130 320,60 400,72 C470,82 520,40 600,30" fill="none" stroke="#06b6d4" stroke-width="3" vector-effect="non-scaling-stroke"></path>
+                  </svg>
+                </div>
+                <div class="card"><h3>Operación del día</h3><div class="csub">Clases · reservas · check-ins</div>
+                  <div class="bars">
+                    <div class="barwrap"><div class="bar" style="height:34%"></div><div class="bl">Clases</div></div>
+                    <div class="barwrap"><div class="bar" style="height:62%"></div><div class="bl">Reservas</div></div>
+                    <div class="barwrap"><div class="bar" style="height:100%"></div><div class="bl">Check-ins</div></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const STRIDE = 70;
+
+      function swap(out, inn, T) {
+        tl.to(out, { xPercent: -4, opacity: 0, filter: "blur(12px)", duration: 0.5, ease: "power2.inOut" }, T);
+        tl.fromTo(inn, { xPercent: 4, opacity: 0, filter: "blur(12px)" }, { xPercent: 0, opacity: 1, filter: "blur(0px)", duration: 0.55, ease: "power2.out" }, T);
+      }
+      swap("#c-dash", "#c-cli", 3.2);
+      swap("#c-cli", "#c-cls", 6.6);
+      swap("#c-cls", "#c-pos", 10.0);
+      swap("#c-pos", "#c-dash2", 13.4);
+
+      tl.to("#navpill", { y: STRIDE * 1, duration: 0.5, ease: "power2.inOut" }, 3.2);
+      tl.to("#navpill", { y: STRIDE * 2, duration: 0.5, ease: "power2.inOut" }, 6.6);
+      tl.to("#navpill", { y: STRIDE * 3, duration: 0.5, ease: "power2.inOut" }, 10.0);
+      tl.to("#navpill", { y: STRIDE * 0, duration: 0.5, ease: "power2.inOut" }, 13.4);
+
+      const navItems = document.querySelectorAll(".nav a");
+      function activate(idx, T) {
+        navItems.forEach((a, i) => tl.set(a, { color: i === idx ? "#0891b2" : "#475569" }, T));
+      }
+      activate(1, 3.45); activate(2, 6.85); activate(3, 10.25); activate(0, 13.65);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
