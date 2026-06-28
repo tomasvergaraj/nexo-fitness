@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import {
   Package, TrendingDown, ShoppingBag, Truck, Plus, Edit2, Trash2,
   AlertTriangle, Loader2, ArrowUp, ArrowDown, Check, X, RefreshCw, Tag,
-  ImagePlus, ImageOff,
+  ImagePlus, ImageOff, RotateCcw,
 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { posApi } from '@/services/api';
@@ -98,6 +98,12 @@ function ProductsTab() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => posApi.deleteProduct(id),
     onSuccess: () => { toast.success('Producto desactivado'); queryClient.invalidateQueries({ queryKey: ['pos-products-all'] }); },
+    onError: (err) => toast.error(getApiError(err)),
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: (id: string) => posApi.updateProduct(id, { is_active: true }),
+    onSuccess: () => { toast.success('Producto reactivado'); queryClient.invalidateQueries({ queryKey: ['pos-products-all'] }); queryClient.invalidateQueries({ queryKey: ['pos-products'] }); },
     onError: (err) => toast.error(getApiError(err)),
   });
 
@@ -271,9 +277,15 @@ function ProductsTab() {
                       <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 text-surface-400 hover:text-brand-500">
                         <Edit2 size={14} />
                       </button>
-                      <button onClick={() => deleteMutation.mutate(p.id)} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-400 hover:text-red-500">
-                        <Trash2 size={14} />
-                      </button>
+                      {p.is_active ? (
+                        <button onClick={() => deleteMutation.mutate(p.id)} disabled={deleteMutation.isPending} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20 text-surface-400 hover:text-red-500" title="Desactivar">
+                          <Trash2 size={14} />
+                        </button>
+                      ) : (
+                        <button onClick={() => reactivateMutation.mutate(p.id)} disabled={reactivateMutation.isPending} className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/20 text-surface-400 hover:text-emerald-600" title="Reactivar">
+                          <RotateCcw size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
